@@ -182,6 +182,10 @@ function K.render()
     for i = 1, #K.widgets do
         K.widgets[i](ass, w, h)
     end
+    -- Default canvas is 720px tall. These coordinates are window pixels,
+    -- so the canvas must match the window or the UI slides off it.
+    K.overlay.res_x = w
+    K.overlay.res_y = h
     K.overlay.data = ass.text
     K.overlay.z = 20
     K.overlay:update()
