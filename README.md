@@ -1,7 +1,7 @@
 # yucha
 
 <p align="center">
-  <img src="assets/banner.svg" alt="yucha — in active development" width="880">
+  <img src="assets/banner.png" alt="yucha — in active development" width="880">
 </p>
 
 > **In active development.** There is no release and nothing here is ready to install. The player is still being built.
