@@ -4,7 +4,7 @@
   <img src="assets/banner.png" alt="yucha — in active development" width="880">
 </p>
 
-> **In active development.** There is no 1.0 release. A test AppImage exists for trying the player. The window is still plain on purpose. Flatpak waits until 1.0.
+> **In active development.** There is no 1.0 release. Alpha AppImages are on the releases page. The window is still plain on purpose. Flatpak waits until 1.0.
 
 yucha is a media player for watching the same file at the same time as other people. Playback is [mpv](https://mpv.io/). Rooms, sync, and chat come from the [Syncplay](https://github.com/Syncplay/syncplay) client. Syncplay's own window is not used. The controls live in the mpv window: a button for the server, username, password, and room; the next launch reconnects with what was saved; chat sits on the side of the picture.
 
@@ -21,9 +21,9 @@ python3 -m yucha
 
 Drop a video on the window. The first launch opens the room panel, because nothing is saved yet. The login is written to `~/.config/yucha/config.json` (mode 0600). The next launch leaves the panel closed, connects with the saved server, username, password, and room, and draws **connected** at the bottom right of the picture. Chat lines show on the right, vertically centered, for five seconds, with no box behind them.
 
-## Test AppImage
+## AppImage
 
-x86_64 only. This is a test build, not 1.0. It carries its own Python, the Syncplay client, and an mpv 0.41.0 binary, so the machine does not need those installed. What is bundled, and under which license, is in [packaging/appimage/BUNDLED.txt](packaging/appimage/BUNDLED.txt).
+Alpha builds for x86_64 are on the [releases page](https://github.com/yrmuq/yucha/releases). Each version stays there. The image carries its own Python, the Syncplay client, and an mpv 0.41.0 binary, so the machine does not need those installed. What is bundled, and under which license, is in [packaging/appimage/BUNDLED.txt](packaging/appimage/BUNDLED.txt).
 
 ```sh
 chmod +x yucha-x86_64.AppImage
@@ -36,7 +36,7 @@ On Bazzite, Gear Lever (from Bazaar) can add it to the menu. If the file refuses
 ./yucha-x86_64.AppImage --appimage-extract-and-run
 ```
 
-Rebuild it from this repository with `packaging/appimage/build.sh`. The script downloads CPython, the mpv AppImage it wraps, and appimagetool. The result is `dist/yucha-x86_64.AppImage`, which is not committed.
+A version tag `vX.Y.Z` makes GitHub build the image and attach it to that release. The release title is `yucha X.Y.Z alpha`. To rebuild the same image on your own machine, run `packaging/appimage/build.sh`. It downloads CPython, the mpv AppImage it wraps, and appimagetool. The result is `dist/yucha-x86_64.AppImage`, which is not committed.
 
 ## What is on the window
 
@@ -44,7 +44,7 @@ Rebuild it from this repository with `packaging/appimage/build.sh`. The script d
 2. A button in the bottom-right corner opens the room panel.
 3. The panel slides out: server, port, username, password, room, and a message field.
 4. No saved login: the panel opens by itself. Saved login: it stays closed, the client connects, **connected** stays at the bottom right, and a chat line appears for five seconds. Each new chat message is drawn the same way.
-5. A gear in the panel opens settings: chat color, chat font size, and a dark or light theme.
+5. A gear in the panel opens settings: theme, chat color, chat size, and interface size.
 
 The interface is a small set of Lua modules (`ui/mpv/`). A module registers a widget and an action. It does not own the mouse or the keyboard. Themes are two palettes. A new control is another module, not a rewrite of the player.
 

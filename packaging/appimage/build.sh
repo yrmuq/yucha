@@ -60,7 +60,7 @@ rm -rf "$EXTRACT"
 mkdir -p "$EXTRACT"
 (
     cd "$EXTRACT"
-    "$MPV_FILE" --appimage-extract >/dev/null
+    APPIMAGE_EXTRACT_AND_RUN=1 "$MPV_FILE" --appimage-extract >/dev/null
 )
 # The pkgforge runtime extracts into ./AppDir and also drops a relative
 # symlink squashfs-root -> ./AppDir. Move the real directory, not the link.
