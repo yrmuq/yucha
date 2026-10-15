@@ -4,7 +4,7 @@
   <img src="assets/banner.png" alt="yucha — in active development" width="880">
 </p>
 
-> **In active development.** There is no release and nothing here is packaged yet. The first player runs; the window is still plain on purpose.
+> **In active development.** There is no 1.0 release. A test AppImage exists for trying the player. The window is still plain on purpose. Flatpak waits until 1.0.
 
 yucha is a media player for watching the same file at the same time as other people. Playback is [mpv](https://mpv.io/). Rooms, sync, and chat come from the [Syncplay](https://github.com/Syncplay/syncplay) client. Syncplay's own window is not used. The controls live in the mpv window: a button for the server, username, password, and room; the next launch reconnects with what was saved; chat sits on the side of the picture.
 
@@ -21,6 +21,23 @@ python3 -m yucha
 
 Drop a video on the window. The first launch opens the room panel, because nothing is saved yet. The login is written to `~/.config/yucha/config.json` (mode 0600). The next launch leaves the panel closed, connects with the saved server, username, password, and room, and draws **connected** at the bottom right of the picture. Chat lines show on the right, vertically centered, for five seconds, with no box behind them.
 
+## Test AppImage
+
+x86_64 only. This is a test build, not 1.0. It carries its own Python, the Syncplay client, and an mpv 0.41.0 binary, so the machine does not need those installed. What is bundled, and under which license, is in [packaging/appimage/BUNDLED.txt](packaging/appimage/BUNDLED.txt).
+
+```sh
+chmod +x yucha-x86_64.AppImage
+./yucha-x86_64.AppImage
+```
+
+On Bazzite, Gear Lever (from Bazaar) can add it to the menu. If the file refuses to start because FUSE is missing, run:
+
+```sh
+./yucha-x86_64.AppImage --appimage-extract-and-run
+```
+
+Rebuild it from this repository with `packaging/appimage/build.sh`. The script downloads CPython, the mpv AppImage it wraps, and appimagetool. The result is `dist/yucha-x86_64.AppImage`, which is not committed.
+
 ## What is on the window
 
 1. mpv is the only window. The Syncplay client runs beside it and keeps pause, seek, and position in sync. The protocol is the existing Syncplay client, not a rewrite.
@@ -33,7 +50,7 @@ The interface is a small set of Lua modules (`ui/mpv/`). A module registers a wi
 
 ## Status
 
-This is the first working stage. The layout is functional, not finished. Playlist controls, a file dialog, a Flatpak, and a more careful look are not in this tree yet.
+This is the first working stage. The layout is functional, not finished. Playlist controls, a file dialog, and a more careful look are not in this tree yet. Flatpak is planned for 1.0, not before.
 
 Saved passwords are stored the same way Syncplay stores them: plaintext in the user config file, readable only by that user. Do not commit that file.
 

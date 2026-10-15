@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=yucha
+GenericName=Watch together
+Comment=mpv window with Syncplay rooms
+Exec=yucha
+Icon=yucha
+Categories=AudioVideo;Video;Player;
+Terminal=false
+StartupWMClass=mpv

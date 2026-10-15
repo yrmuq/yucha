@@ -1,0 +1,11 @@
+#!/bin/sh
+# Copyright (C) 2026 yrmuq
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Start the bundled mpv. The outer AppImage's APPIMAGE variable must not
+# leak in: mpv's own AppImage hooks would treat yucha's file as theirs.
+set -eu
+unset APPIMAGE
+unset ARGV0
+unset APPDIR
+HERE="$(dirname "$(readlink -f "$0")")"
+exec "$HERE/mpv-bundle/AppRun" "$@"

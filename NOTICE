@@ -24,6 +24,17 @@ Unmodified source snapshots are in this repository:
                         own code, under yucha/ and ui/mpv/, is what
                         draws the controls in the mpv window.
 
+  A test AppImage built by packaging/appimage/build.sh is not a
+  release. It bundles CPython 3.12.15, the unmodified Syncplay
+  client, and a prebuilt mpv 0.41.0 binary taken from
+  pkgforge-dev/mpv-AppImage release
+  v0.41.0@2026-10-07_1791382432 (anylinux x86_64). That binary is
+  GPL-2.0-or-later. Corresponding source for it is the source
+  published with that build and the mpv project. third_party/mpv
+  in this repository is a source snapshot; it is not a claim that
+  it is the exact tree which produced that binary. The image
+  carries the same statement in BUNDLED.txt.
+
 Copyright headers and license files stay inside each snapshot.
 This notice stays with every copy of yucha.
 

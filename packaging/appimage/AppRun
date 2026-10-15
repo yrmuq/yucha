@@ -1,0 +1,11 @@
+#!/bin/sh
+# Copyright (C) 2026 yrmuq
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Entry point for the test AppImage. The image is not a release.
+set -eu
+HERE="$(dirname "$(readlink -f "$0")")"
+export YUCHA_MPV="${YUCHA_MPV:-$HERE/mpv-launch}"
+export PYTHONPATH="$HERE/payload${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONNOUSERSITE=1
+export PYTHONDONTWRITEBYTECODE=1
+exec "$HERE/python/bin/python3" -m yucha "$@"

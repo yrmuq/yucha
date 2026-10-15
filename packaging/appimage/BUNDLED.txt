@@ -1,0 +1,40 @@
+yucha test AppImage
+Copyright (C) 2026 yrmuq
+SPDX-License-Identifier: GPL-3.0-or-later
+
+This file is a test build, not a 1.0 release. The program as a whole is
+GPL-3.0-or-later. The license text is LICENSE next to this file. NOTICE
+is the attribution file. Neither one is modified to add these notes.
+
+What this image contains:
+
+  yucha
+    Source: https://github.com/yrmuq/yucha
+    License: GPL-3.0-or-later
+
+  Syncplay 1.7.7 client, unmodified
+    Source: https://github.com/Syncplay/syncplay
+            and third_party/syncplay in the yucha repository
+    License: Apache-2.0, plus the per-file ISC, BSD, and MIT notices
+            that stay on those files. Syncplay's license is
+            third_party/syncplay/LICENSE. Its third-party notices are
+            third_party/syncplay/syncplay/resources/third-party-notices.txt.
+    yucha does not patch these files and does not open Syncplay's window.
+
+  mpv 0.41.0 binary
+    File bundled here: mpv-v0.41.0-anylinux-x86_64.AppImage
+    Build: https://github.com/pkgforge-dev/mpv-AppImage/releases/tag/v0.41.0@2026-10-07_1791382432
+    Upstream: https://github.com/mpv-player/mpv
+    License: GPL-2.0-or-later
+    This binary is not produced by compiling third_party/mpv in the
+    yucha repository. Corresponding source for this binary is the
+    source published with that mpv-AppImage build and the mpv project.
+    The result is not called mpv, and the mpv logo is not used.
+
+  CPython 3.12.15
+    Build: https://github.com/astral-sh/python-build-standalone/releases/tag/20261013
+    License: Python Software Foundation License
+    File: cpython-3.12.15+20261013-x86_64-unknown-linux-gnu-install_only.tar.gz
+
+Python dependencies (Twisted and its TLS stack) are installed from PyPI
+into the bundled interpreter. Their licenses stay with those packages.
