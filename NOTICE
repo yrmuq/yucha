@@ -13,9 +13,19 @@ file. It does not change the GPL.
 yucha is an independent project. It is not mpv and it is not Syncplay.
 Those names are used only to identify upstream code.
 
-The components below are not all vendored in this repository yet.
-When a component is added, its copyright headers and license files
-stay with it, and this notice stays with every copy of yucha.
+Unmodified source snapshots are in this repository:
+
+  third_party/mpv       mpv source. The version file in that tree
+                        reads 0.41.0. yucha does not compile it and
+                        does not patch it. Playback uses an mpv binary
+                        on PATH, or the path in YUCHA_MPV.
+  third_party/syncplay  Syncplay 1.7.7. yucha does not patch these
+                        files. The Qt window is never started. yucha's
+                        own code, under yucha/ and ui/mpv/, is what
+                        draws the controls in the mpv window.
+
+Copyright headers and license files stay inside each snapshot.
+This notice stays with every copy of yucha.
 
 ------------------------------------------------------------------------
 mpv
@@ -65,18 +75,23 @@ the Apache-2.0 conditions that still apply to the Syncplay material:
 
   * keep the copyright, patent, trademark, and attribution notices
   * keep a copy of the Apache License, Version 2.0 with that material
-  * state that yucha changed the files, and name what changed
-    (the intended change is to drop Syncplay's own window and drive
-    the same client from yucha's player interface)
+    (third_party/syncplay/LICENSE)
+  * the snapshot is unmodified, so there is no changed file inside it
+    that needs a "yucha modified this file" line. The different behavior
+    (no Syncplay window; the controls are the mpv script) lives in
+    yucha/ and ui/mpv/, which are yucha's own GPL-3.0-or-later code
   * if Syncplay ships a NOTICE or third-party-notices file, reproduce
-    the attributions it contains
+    the attributions it contains. That file is
+    third_party/syncplay/syncplay/resources/third-party-notices.txt
+    and it stays with the snapshot
 
 Some Syncplay files are not Apache-2.0. In particular, interface
 scripts such as syncplayintf.lua are under the ISC license, and other
-files are BSD or MIT, as written in the file header or in Debian's
-copyright listing for the package. Those notices stay on those files.
-They are compatible with GPL-3.0-or-later and are not relicensed by
-being shipped inside yucha.
+files are BSD or MIT, as written in the file header. Those notices stay
+on those files. They are compatible with GPL-3.0-or-later and are not
+relicensed by being shipped inside yucha. yucha loads syncplayintf.lua
+from the snapshot so pause and position still reach the client. Chat
+on screen is drawn by ui/mpv/chat.lua, not by that script.
 
 Do not present yucha as the official Syncplay client, and do not use
 the Syncplay logo as the logo of yucha.
