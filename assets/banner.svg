@@ -1,7 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="200" viewBox="0 0 1200 200" role="img" aria-label="yucha, in active development">
-  <rect width="1200" height="200" fill="#12141a"/>
-  <rect width="1200" height="6" fill="#e0a045"/>
-  <text x="56" y="98" fill="#f3efe6" font-family="Georgia, 'Times New Roman', serif" font-size="72">yucha</text>
-  <text x="56" y="142" fill="#e0a045" font-family="Arial, Helvetica, sans-serif" font-size="18" letter-spacing="3.5">IN ACTIVE DEVELOPMENT</text>
-  <text x="56" y="172" fill="#9a958c" font-family="Arial, Helvetica, sans-serif" font-size="16">Not a release. The player is still being built.</text>
-</svg>
