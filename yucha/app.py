@@ -107,8 +107,14 @@ class App(object):
             try:
                 size = int(command.get("chatFontSize"))
             except (TypeError, ValueError):
-                size = appearance["chatFontSize"]
+                size = appearance.get("chatFontSize") or 18
             appearance["chatFontSize"] = max(12, min(48, size))
+            if command.get("uiFontSize") is not None:
+                try:
+                    ui = int(command.get("uiFontSize"))
+                except (TypeError, ValueError):
+                    ui = appearance.get("uiFontSize") or 16
+                appearance["uiFontSize"] = max(12, min(32, ui))
             self.store.save()
 
     def serve_commands(self):

@@ -43,6 +43,7 @@ DEFAULTS = {
         "theme": "dark",
         "chatColor": "#F4F1EA",
         "chatFontSize": 18,
+        "uiFontSize": 16,
     },
 }
 

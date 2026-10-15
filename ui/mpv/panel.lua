@@ -3,8 +3,6 @@
 -- Slide-out room panel. Fields and the connect action live here.
 -- The corner button only calls the "toggle-panel" action.
 
-local OPEN_W = 340
-
 local fields = {
     {id = "host", label = "Server"},
     {id = "port", label = "Port"},
@@ -17,6 +15,7 @@ local fields = {
 local focus = nil
 local shown = 0
 local target = 0
+local scroll = 0
 
 local function clamp_text(value)
     if #value > 240 then
@@ -129,6 +128,7 @@ return function(K)
             K.cfg.theme = ev.appearance.theme or K.cfg.theme
             K.cfg.chatColor = ev.appearance.chatColor or K.cfg.chatColor
             K.cfg.chatFontSize = tonumber(ev.appearance.chatFontSize) or K.cfg.chatFontSize
+            K.cfg.uiFontSize = tonumber(ev.appearance.uiFontSize) or K.cfg.uiFontSize
         end
         target = ev.openPanel and 1 or 0
         shown = target
@@ -142,79 +142,146 @@ return function(K)
         if shown < 0.02 then
             return
         end
+        local m = K.m
         local pal = K.palette()
-        local margin = 18
-        local button = 46
-        local height = math.min(560, h - button - margin * 3)
-        local y = h - margin - button - 12 - height
-        if y < 12 then y = 12 end
-        local x = math.floor(w - (OPEN_W * shown) - 12)
-        K.rect(ass, x, y, OPEN_W, height, pal.bg, pal.bg_alpha)
-        K.hit(x, y, OPEN_W, height, function()
-            set_focus(nil)
-        end)
+        local pad = m.pad
+        local gap = m.gap
+        local width = m.panel_w
+        local max_w = w - m.margin * 2
+        if max_w > m.field_h * 4 and width > max_w then
+            width = max_w
+        end
 
-        K.text(ass, x + 16, y + 14, 7, 20, pal.fg, "Room", "")
-        local gear = 28
-        local gx = x + OPEN_W - 16 - gear
-        local gy = y + 12
+        local function row_gap()
+            return math.max(2, math.floor(gap / 2))
+        end
+
+        local body = 0
+        for i = 1, #fields do
+            body = body + m.label + row_gap() + m.field_h + gap
+            if fields[i].chat then
+                body = body + m.field_h + gap
+            end
+        end
+        local has_status = (K.conn == "failed" and K.conn_text ~= "")
+            or K.conn == "connecting" or K.conn == "connected"
+        if has_status then
+            body = body + m.label + gap
+        end
+        body = body + m.btn_h + gap + m.hint + pad
+
+        local header = pad + math.max(m.title, m.gear) + gap
+        local avail = h - m.margin * 2 - m.corner - gap
+        if avail < header + m.field_h then
+            avail = header + m.field_h
+        end
+        local viewport = math.min(header + body, avail)
+        local max_scroll = math.max(0, body - (viewport - header))
+        if scroll < 0 then scroll = 0 end
+        if scroll > max_scroll then scroll = max_scroll end
+
+        local function wheel(dir)
+            scroll = scroll + dir * (m.field_h + gap)
+            if scroll < 0 then scroll = 0 end
+            if scroll > max_scroll then scroll = max_scroll end
+        end
+
+        local y = math.floor(h - m.margin - m.corner - gap - viewport)
+        if y < m.margin then y = m.margin end
+        local x = math.floor(w - m.margin - width * shown)
+
+        K.rect(ass, x, y, width, viewport, pal.bg, pal.bg_alpha)
+        K.hit(x, y, width, viewport, function()
+            set_focus(nil)
+        end, wheel)
+
+        K.text(ass, x + pad, y + pad, 7, m.title, pal.fg, "Room", "")
+        local gear = m.gear
+        local gx = x + width - pad - gear
+        local gy = y + math.floor((header - gear) / 2)
         K.rect(ass, gx, gy, gear, gear, pal.field, pal.field_alpha)
-        K.gear(ass, gx + 5, gy + 5, gear - 10, pal.fg, pal.bg)
+        local tooth = math.max(2, math.floor(gear * 0.18))
+        K.gear(ass, gx + tooth, gy + tooth, gear - tooth * 2, pal.fg, pal.bg)
         K.hit(gx, gy, gear, gear, function()
             K.do_("toggle-settings")
-        end)
+        end, wheel)
 
-        local fy = y + 52
+        local clip = {x, y + header, x + width, y + viewport}
+
+        local function vishit(hx, hy, hw, hh, fn)
+            local x0 = math.max(hx, clip[1])
+            local y0 = math.max(hy, clip[2])
+            local x1 = math.min(hx + hw, clip[3])
+            local y1 = math.min(hy + hh, clip[4])
+            if x1 - x0 >= 2 and y1 - y0 >= 2 then
+                K.hit(x0, y0, x1 - x0, y1 - y0, fn, wheel)
+            end
+        end
+
+        local fy = y + header - scroll
         for i = 1, #fields do
             local field = fields[i]
-            K.text(ass, x + 16, fy, 7, 13, pal.muted, field.label, "")
-            fy = fy + 18
-            local fh = 28
-            local fw = OPEN_W - 32
+            K.text(ass, x + pad, fy, 7, m.label, pal.muted, field.label, "", clip)
+            fy = fy + m.label + row_gap()
+            local fh = m.field_h
+            local fw = width - pad * 2
             local focused = focus == field.id
-            K.rect(ass, x + 16, fy, fw, fh, focused and pal.accent or pal.field, pal.field_alpha)
+            K.rect(ass, x + pad, fy, fw, fh, focused and pal.accent or pal.field, pal.field_alpha, clip)
             local value = display(field)
-            if value == "" then
-                K.text(ass, x + 24, fy + 6, 7, 15, pal.muted, "", "")
-            else
-                K.text(ass, x + 24, fy + 6, 7, 15, pal.fg, value, "")
+            if value ~= "" then
+                local ty = fy + math.floor((fh - m.font) / 2)
+                K.text(ass, x + pad + math.floor(pad / 2), ty, 7, m.font, pal.fg, value, "", clip)
             end
             local id = field.id
-            K.hit(x + 16, fy, fw, fh, function()
+            vishit(x + pad, fy, fw, fh, function()
                 set_focus(id)
             end)
-            fy = fy + fh + 8
+            fy = fy + fh + gap
             if field.chat then
-                local sw, sh = 72, 28
-                local sx = x + OPEN_W - 16 - sw
-                K.rect(ass, sx, fy, sw, sh, pal.button, "00")
-                K.text(ass, sx + sw / 2, fy + sh / 2, 5, 14, pal.button_fg, "Send", "")
-                K.hit(sx, fy, sw, sh, function()
+                local sw, sh = m.send_w, m.field_h
+                local sx = x + width - pad - sw
+                K.rect(ass, sx, fy, sw, sh, pal.button, "00", clip)
+                K.text(ass, sx + sw / 2, fy + sh / 2, 5, m.label, pal.button_fg, "Send", "", clip)
+                vishit(sx, fy, sw, sh, function()
                     K.do_("send-chat")
                 end)
-                fy = fy + sh + 8
+                fy = fy + sh + gap
             end
         end
 
-        if K.conn == "failed" and K.conn_text ~= "" then
-            K.text(ass, x + 16, fy, 7, 13, "#E07474", K.conn_text, "")
-            fy = fy + 22
-        elseif K.conn == "connecting" then
-            K.text(ass, x + 16, fy, 7, 13, pal.muted, "Connecting...", "")
-            fy = fy + 22
-        elseif K.conn == "connected" then
-            K.text(ass, x + 16, fy, 7, 13, pal.accent, "connected", "")
-            fy = fy + 22
+        if has_status then
+            local text, color = "", pal.muted
+            if K.conn == "failed" then
+                text, color = K.conn_text, "#E07474"
+            elseif K.conn == "connecting" then
+                text = "Connecting..."
+            else
+                text, color = "connected", pal.accent
+            end
+            K.text(ass, x + pad, fy, 7, m.label, color, text, "", clip)
+            fy = fy + m.label + gap
         end
 
-        local bw = OPEN_W - 32
-        local bh = 34
-        local by = math.min(fy, y + height - bh - 28)
-        K.rect(ass, x + 16, by, bw, bh, pal.button, "00")
-        K.text(ass, x + 16 + bw / 2, by + bh / 2, 5, 16, pal.button_fg, "Connect", "")
-        K.hit(x + 16, by, bw, bh, function()
+        local bw = width - pad * 2
+        local bh = m.btn_h
+        K.rect(ass, x + pad, fy, bw, bh, pal.button, "00", clip)
+        K.text(ass, x + pad + bw / 2, fy + bh / 2, 5, m.button_font, pal.button_fg, "Connect", "", clip)
+        vishit(x + pad, fy, bw, bh, function()
             K.do_("connect")
         end)
-        K.text(ass, x + 16, y + height - 20, 7, 12, pal.muted, "Drop a video on this window.", "")
+        fy = fy + bh + gap
+        K.text(ass, x + pad, fy, 7, m.hint, pal.muted, "Drop a video on this window.", "", clip)
+
+        if max_scroll > 0 then
+            local track_y = y + header
+            local track_h = viewport - header
+            local thumb_h = math.floor(track_h * track_h / (track_h + max_scroll))
+            if thumb_h < gap * 2 then thumb_h = gap * 2 end
+            if thumb_h > track_h then thumb_h = track_h end
+            local travel = track_h - thumb_h
+            local thumb_y = track_y + math.floor(travel * scroll / max_scroll)
+            local tw = math.max(2, math.floor(gap / 2))
+            K.rect(ass, x + width - math.floor(pad / 2) - tw, thumb_y, tw, thumb_h, pal.muted, "55")
+        end
     end)
 end

@@ -7,6 +7,15 @@ local function bgr(hex)
     return hex:sub(5, 6) .. hex:sub(3, 4) .. hex:sub(1, 2)
 end
 
+local function clip_tag(clip)
+    if not clip then
+        return ""
+    end
+    return string.format("\\clip(%d,%d,%d,%d)",
+        math.floor(clip[1]), math.floor(clip[2]),
+        math.floor(clip[3]), math.floor(clip[4]))
+end
+
 local function esc(text)
     text = tostring(text or "")
     return (text:gsub("\\", "\\\\"):gsub("{", "\\{"):gsub("}", "\\}"))
@@ -16,11 +25,11 @@ return function(K)
     K.bgr = bgr
     K.esc = esc
 
-    function K.rect(ass, x, y, w, h, hex, alpha)
+    function K.rect(ass, x, y, w, h, hex, alpha, clip)
         ass:new_event()
         ass:append(string.format(
-            "{\\pos(0,0)\\an7\\bord0\\shad0\\1c&H%s&\\1a&H%s&\\p1}m %d %d l %d %d l %d %d l %d %d{\\p0}",
-            bgr(hex), alpha or "00",
+            "{\\pos(0,0)\\an7\\bord0\\shad0\\1c&H%s&\\1a&H%s&%s\\p1}m %d %d l %d %d l %d %d l %d %d{\\p0}",
+            bgr(hex), alpha or "00", clip_tag(clip),
             math.floor(x), math.floor(y),
             math.floor(x + w), math.floor(y),
             math.floor(x + w), math.floor(y + h),
@@ -28,11 +37,12 @@ return function(K)
         ))
     end
 
-    function K.text(ass, x, y, align, size, hex, text, extra)
+    function K.text(ass, x, y, align, size, hex, text, extra, clip)
         ass:new_event()
         ass:append(string.format(
-            "{\\pos(%d,%d)\\an%d\\bord0\\shad0\\fnSans\\fs%d\\1c&H%s&%s}%s",
-            math.floor(x), math.floor(y), align or 7, size or 16, bgr(hex), extra or "", esc(text)
+            "{\\pos(%d,%d)\\an%d\\bord0\\shad0\\fnSans\\fs%d\\1c&H%s&%s%s}%s",
+            math.floor(x), math.floor(y), align or 7, math.floor(size or 16),
+            bgr(hex), extra or "", clip_tag(clip), esc(text)
         ))
     end
 

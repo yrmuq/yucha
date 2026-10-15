@@ -17,6 +17,7 @@ local K = {
         theme = "dark",
         chatColor = "#F4F1EA",
         chatFontSize = 18,
+        uiFontSize = 16,
         host = "syncplay.pl",
         port = "8999",
         name = "",
@@ -29,6 +30,8 @@ local K = {
     wants_esc = false,
     runtime = "",
     event_pos = 0,
+    screen_scale = 1,
+    m = nil,
 }
 
 local MAX_HITS = 32
@@ -68,8 +71,8 @@ function K.widget(draw)
     K.widgets[#K.widgets + 1] = draw
 end
 
-function K.hit(x, y, w, h, fn)
-    K.hits[#K.hits + 1] = {x = x, y = y, w = w, h = h, fn = fn}
+function K.hit(x, y, w, h, fn, wheel)
+    K.hits[#K.hits + 1] = {x = x, y = y, w = w, h = h, fn = fn, wheel = wheel}
 end
 
 function K.palette()
@@ -96,6 +99,40 @@ function K.size()
     if w < 2 then w = 1280 end
     if h < 2 then h = 720 end
     return w, h
+end
+
+-- Sizes are the 1080p design, multiplied by the screen scale and the
+-- interface size. The window size is not part of this.
+function K.refresh_metrics()
+    local scale = K.screen_scale or 1
+    if scale < 1 then scale = 1 end
+    if scale > 4 then scale = 4 end
+    local font = tonumber(K.cfg.uiFontSize) or 16
+    if font < 12 then font = 12 end
+    if font > 32 then font = 32 end
+    local function dp(n)
+        return math.max(1, math.floor(n * font / 16 * scale + 0.5))
+    end
+    local chat = tonumber(K.cfg.chatFontSize) or 18
+    K.m = {
+        scale = scale,
+        ui = font,
+        font = dp(15),
+        label = dp(13),
+        title = dp(20),
+        hint = dp(12),
+        button_font = dp(16),
+        chat = math.max(1, math.floor(chat * scale + 0.5)),
+        pad = dp(16),
+        gap = dp(8),
+        field_h = dp(28),
+        btn_h = dp(34),
+        panel_w = dp(340),
+        corner = dp(46),
+        margin = dp(18),
+        gear = dp(28),
+        send_w = dp(72),
+    }
 end
 
 function K.focus(handler)
@@ -177,6 +214,7 @@ end
 
 function K.render()
     local w, h = K.size()
+    K.refresh_metrics()
     K.hits = {}
     local ass = assdraw.ass_new()
     for i = 1, #K.widgets do
@@ -197,7 +235,7 @@ function K.render()
     end
     for i = 1, n do
         local hit = K.hits[i]
-        hit_fns[i] = hit.fn
+        hit_fns[i] = hit
         local section = "yucha-hit-" .. i
         mp.set_mouse_area(hit.x, hit.y, hit.x + hit.w, hit.y + hit.h, section)
         mp.enable_key_bindings(section)
@@ -216,9 +254,21 @@ function K.start()
         local slot = i
         mp.set_key_bindings({
             {"mbtn_left", function()
-                local fn = hit_fns[slot]
-                if fn then
-                    fn()
+                local hit = hit_fns[slot]
+                if hit and hit.fn then
+                    hit.fn()
+                end
+            end},
+            {"wheel_up", function()
+                local hit = hit_fns[slot]
+                if hit and hit.wheel then
+                    hit.wheel(-1)
+                end
+            end},
+            {"wheel_down", function()
+                local hit = hit_fns[slot]
+                if hit and hit.wheel then
+                    hit.wheel(1)
                 end
             end},
         }, "yucha-hit-" .. i, "force")
@@ -239,6 +289,12 @@ function K.start()
         end},
     }, "yucha-text", "force")
     mp.disable_key_bindings("yucha-text")
+
+    mp.observe_property("display-hidpi-scale", "number", function(_, value)
+        if type(value) == "number" and value >= 1 then
+            K.screen_scale = value
+        end
+    end)
 
     mp.add_periodic_timer(0.05, function()
         K.poll_events()

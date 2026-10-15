@@ -47,11 +47,11 @@ return function(K)
         if #lines == 0 then
             return
         end
-        local size = tonumber(K.cfg.chatFontSize) or 18
-        local step = size + 10
+        local size = K.m.chat
+        local step = size + math.max(4, K.m.gap)
         local total = #lines * step
         local y = math.floor((h - total) / 2)
-        local x = w - 28
+        local x = w - K.m.margin
         local color = K.cfg.chatColor or "#F4F1EA"
         for i = 1, #lines do
             local line = lines[i]

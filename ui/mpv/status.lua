@@ -15,11 +15,10 @@ return function(K)
         if K.conn ~= "connected" then
             return
         end
-        local margin = 18
-        local button = 46
-        local x = w - margin - button - 12
-        local y = h - margin - math.floor(button / 2)
-        K.text(ass, x + 1, y + 1, 6, 16, "#000000", "connected", "\\alpha&H50&")
-        K.text(ass, x, y, 6, 16, K.palette().accent, "connected", "")
+        local m = K.m
+        local x = w - m.margin - m.corner - m.gap
+        local y = h - m.margin - math.floor(m.corner / 2)
+        K.text(ass, x + 1, y + 1, 6, m.button_font, "#000000", "connected", "\\alpha&H50&")
+        K.text(ass, x, y, 6, m.button_font, K.palette().accent, "connected", "")
     end)
 end
