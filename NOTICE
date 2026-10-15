@@ -1,0 +1,91 @@
+yucha
+Copyright (C) 2026 yrmuq
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+The license text is the verbatim GNU GPL v3 in the file LICENSE.
+That document is not modified. This NOTICE is a separate attribution
+file. It does not change the GPL.
+
+yucha is an independent project. It is not mpv and it is not Syncplay.
+Those names are used only to identify upstream code.
+
+The components below are not all vendored in this repository yet.
+When a component is added, its copyright headers and license files
+stay with it, and this notice stays with every copy of yucha.
+
+------------------------------------------------------------------------
+mpv
+------------------------------------------------------------------------
+
+Playback is provided by mpv.
+
+  Project:   https://mpv.io/
+  Source:    https://github.com/mpv-player/mpv
+  Copyright: the mpv authors (see the Copyright file in the mpv source)
+  License:   GNU General Public License, version 2 or later
+             https://github.com/mpv-player/mpv/blob/master/LICENSE.GPL
+
+mpv is GPL-2.0-or-later by default. "Or later" permits distributing a
+combination that includes mpv under GPL-3.0-or-later, which is the
+license of yucha. Building mpv with -Dgpl=false is a different license
+(LGPL-2.1-or-later) and is not the build yucha uses.
+
+Some individual mpv files are under BSD, MIT, ISC, or other terms.
+Those per-file notices must be kept. Files without a copyright header
+are, per the mpv Copyright file, usually LGPL-2.1-or-later.
+
+If yucha ships an mpv binary, the corresponding mpv source must be
+made available under that same license. Do not present yucha as the
+official mpv player.
+
+------------------------------------------------------------------------
+Syncplay
+------------------------------------------------------------------------
+
+Rooms, playback sync, chat, and the shared playlist come from the
+Syncplay client.
+
+  Project:   https://syncplay.pl/
+  Source:    https://github.com/Syncplay/syncplay
+  Copyright: Syncplay contributors
+             Initial concept and core internals: Uriziel
+             GUI and current lead: Et0h
+             Original SyncPlay code: Tomasz Kowalczyk (Fluxid)
+  License:   Apache License, Version 2.0
+             https://www.apache.org/licenses/LICENSE-2.0
+             https://github.com/Syncplay/syncplay/blob/master/LICENSE
+
+Apache-2.0 code may be included in a GPL-3.0-or-later program. The
+combination is distributed under GPL-3.0-or-later. That does not remove
+the Apache-2.0 conditions that still apply to the Syncplay material:
+
+  * keep the copyright, patent, trademark, and attribution notices
+  * keep a copy of the Apache License, Version 2.0 with that material
+  * state that yucha changed the files, and name what changed
+    (the intended change is to drop Syncplay's own window and drive
+    the same client from yucha's player interface)
+  * if Syncplay ships a NOTICE or third-party-notices file, reproduce
+    the attributions it contains
+
+Some Syncplay files are not Apache-2.0. In particular, interface
+scripts such as syncplayintf.lua are under the ISC license, and other
+files are BSD or MIT, as written in the file header or in Debian's
+copyright listing for the package. Those notices stay on those files.
+They are compatible with GPL-3.0-or-later and are not relicensed by
+being shipped inside yucha.
+
+Do not present yucha as the official Syncplay client, and do not use
+the Syncplay logo as the logo of yucha.
+
+------------------------------------------------------------------------
+Other third-party code
+------------------------------------------------------------------------
+
+Dependencies pulled in later (Python libraries, Flatpak runtime
+modules, fonts, icons) must be added to this file or to a
+third-party notices file next to them, with their copyright and
+license, before a release.
