@@ -82,9 +82,11 @@ class Picture(QOpenGLWidget):
             terminal="no",
             hwdec="auto-safe",
             input_ipc_server=str(self.ipc_path),
-            script=str(SCRIPT),
             term_playing_msg=PLAYING_MSG,
         )
+        # "script" is only a command-line alias. libmpv does not accept it
+        # as an option, and the player quit before the window opened.
+        self.mpv.command("load-script", str(SCRIPT))
         for _ in range(50):
             if self.ipc_path.exists():
                 return

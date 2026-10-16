@@ -74,8 +74,19 @@ jobs:
             echo "release notes must not include run commands or a test-build banner" >&2
             exit 1
           fi
-          gh release create "$TAG" dist/yucha-x86_64.AppImage \
-            --repo "$GITHUB_REPOSITORY" \
-            --prerelease \
-            --title "yucha ${VER} alpha" \
-            --notes-file notes.md
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/yucha-x86_64.AppImage \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+            gh release edit "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --prerelease \
+              --title "yucha ${VER} alpha" \
+              --notes-file notes.md
+          else
+            gh release create "$TAG" dist/yucha-x86_64.AppImage \
+              --repo "$GITHUB_REPOSITORY" \
+              --prerelease \
+              --title "yucha ${VER} alpha" \
+              --notes-file notes.md
+          fi
