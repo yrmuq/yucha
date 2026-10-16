@@ -9,7 +9,17 @@ import time
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QCursor, QFont, QFontMetrics, QPainter, QPainterPath, QPen
+from PySide6.QtGui import (
+    QBrush,
+    QColor,
+    QCursor,
+    QFont,
+    QFontMetrics,
+    QPainter,
+    QPainterPath,
+    QPalette,
+    QPen,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -27,6 +37,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSlider,
     QSpinBox,
+    QStyledItemDelegate,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -142,6 +153,43 @@ def _stylesheet(theme, accent=None):
     }}
     QListWidget::item {{
         padding: 4px 6px;
+        background: transparent;
+    }}
+    QTextEdit#roomchat {{
+        background: {field};
+        color: {fg};
+        border: 1px solid {border};
+        border-radius: 8px;
+    }}
+    QWidget#panel QScrollBar:vertical {{
+        background: transparent;
+        width: 6px;
+        margin: 0px;
+    }}
+    QWidget#panel QScrollBar:horizontal {{
+        background: transparent;
+        height: 6px;
+        margin: 0px;
+    }}
+    QWidget#panel QScrollBar::handle:vertical {{
+        background: {muted};
+        min-height: 24px;
+        border-radius: 3px;
+    }}
+    QWidget#panel QScrollBar::handle:horizontal {{
+        background: {muted};
+        min-width: 24px;
+        border-radius: 3px;
+    }}
+    QWidget#panel QScrollBar::add-line:vertical, QWidget#panel QScrollBar::sub-line:vertical,
+    QWidget#panel QScrollBar::add-line:horizontal, QWidget#panel QScrollBar::sub-line:horizontal {{
+        height: 0px;
+        width: 0px;
+        background: none;
+    }}
+    QWidget#panel QScrollBar::add-page:vertical, QWidget#panel QScrollBar::sub-page:vertical,
+    QWidget#panel QScrollBar::add-page:horizontal, QWidget#panel QScrollBar::sub-page:horizontal {{
+        background: none;
     }}
     QScrollArea#userfiles {{
         background: transparent;
@@ -320,7 +368,7 @@ def _spans_html(spans, me, mine, other):
         safe = html.escape(span["v"], quote=False).replace("\n", "<br>")
         if span["k"] == "nick":
             color = mine if span["v"] == me else other
-            bits.append('<span style="color: {};">{}</span>'.format(color, safe))
+            bits.append('<span style="color: {}; font-weight: 700;">{}</span>'.format(color, safe))
         else:
             bits.append(safe)
     return "".join(bits)
@@ -358,6 +406,56 @@ class ClickBox(QWidget):
         super().mouseReleaseEvent(event)
 
 
+class FileDelegate(QStyledItemDelegate):
+    """The first row, when it is the current file, follows the list's top corners."""
+
+    def paint(self, painter, option, index):
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        color = _role_color(index.data(Qt.ItemDataRole.BackgroundRole))
+        if color is not None and color.alpha() > 0:
+            if index.row() == 0:
+                painter.fillPath(_top_round(option.rect, 8), color)
+            else:
+                painter.fillRect(option.rect, color)
+        ink = _role_color(index.data(Qt.ItemDataRole.ForegroundRole))
+        if ink is None:
+            ink = option.palette.color(QPalette.ColorRole.Text)
+        painter.setPen(ink)
+        painter.drawText(
+            option.rect.adjusted(6, 0, -6, 0),
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+            index.data() or "",
+        )
+        painter.restore()
+
+
+def _role_color(value):
+    if isinstance(value, QColor):
+        return value
+    if isinstance(value, QBrush):
+        return value.color()
+    return None
+
+
+def _top_round(rect, radius):
+    box = QPainterPath()
+    left = rect.left()
+    top = rect.top()
+    right = rect.right() + 1
+    bottom = rect.bottom() + 1
+    curve = min(radius, (right - left) / 2, bottom - top)
+    box.moveTo(left, bottom)
+    box.lineTo(left, top + curve)
+    box.arcTo(left, top, curve * 2, curve * 2, 180, -90)
+    box.lineTo(right - curve, top)
+    box.arcTo(right - curve * 2, top, curve * 2, curve * 2, 90, -90)
+    box.lineTo(right, bottom)
+    box.closeSubpath()
+    return box
+
+
 class FileList(QListWidget):
     """The episode list. A left click plays a row. A right click removes it."""
 
@@ -368,6 +466,7 @@ class FileList(QListWidget):
         super().__init__()
         self.setSelectionMode(QListWidget.SelectionMode.NoSelection)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setItemDelegate(FileDelegate(self))
 
     def mousePressEvent(self, event):
         item = self.itemAt(event.position().toPoint())
@@ -381,6 +480,34 @@ class FileList(QListWidget):
             event.accept()
             return
         super().mousePressEvent(event)
+
+
+class ColumnLines(QWidget):
+    """Lines over the user list. Mouse clicks pass through."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.rows = 0
+        self.row_h = 0
+        self.top = 0
+        self.split_x = 0
+        self.color = QColor("#34363F")
+
+    def paintEvent(self, event):
+        if self.row_h <= 0:
+            return
+        painter = QPainter(self)
+        painter.setPen(QPen(self.color, 1))
+        bottom = self.height() - self.top
+        if self.split_x:
+            painter.drawLine(self.split_x, self.top, self.split_x, bottom)
+        for index in range(1, self.rows):
+            y = self.top + index * self.row_h
+            painter.drawLine(8, y, self.width() - 8, y)
+        painter.end()
 
 
 class UserTable(QWidget):
@@ -413,13 +540,18 @@ class UserTable(QWidget):
         self.names.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         row.addWidget(self.names, 1)
         row.addWidget(self.files_scroll, 2)
+        self._row_h = 0
+        self._line = QColor("#34363F")
+        self._lines = ColumnLines(self)
 
-    def set_people(self, people, me, mine, other):
+    def set_people(self, people, me, mine, other, line):
         self._clear(self.names_col)
         self._clear(self.files_col)
         self._full_names = []
         metrics = QFontMetrics(self.font())
         row_h = metrics.height() + 8
+        self._row_h = row_h
+        self._line = QColor(line)
         widest = 1
         for person in people:
             name = person["name"]
@@ -449,10 +581,26 @@ class UserTable(QWidget):
         margins = self.layout().contentsMargins()
         self.setFixedHeight(content_h + bar_h + margins.top() + margins.bottom())
         self._elide_names()
+        self._place_lines()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._elide_names()
+        self._place_lines()
+
+    def _place_lines(self):
+        if not hasattr(self, "_lines"):
+            return
+        left = self.names.geometry().right()
+        right = self.files_scroll.geometry().left()
+        self._lines.rows = len(self._full_names)
+        self._lines.row_h = self._row_h
+        self._lines.top = self.layout().contentsMargins().top()
+        self._lines.split_x = int((left + right) / 2) if right > left else left
+        self._lines.color = self._line
+        self._lines.setGeometry(self.rect())
+        self._lines.raise_()
+        self._lines.update()
 
     def _elide_names(self):
         width = max(1, self.names.width() - 4)
@@ -511,6 +659,7 @@ class IconButton(QPushButton):
         self.kind = kind
         self._ink = QColor("#F3EFE6")
         self._ink_on = QColor("#F7F4EE")
+        self._accent = QColor("#9A3A52")
         self.setObjectName("icon")
         self.setFixedSize(40, 36)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -521,9 +670,10 @@ class IconButton(QPushButton):
             self.kind = kind
             self.update()
 
-    def set_ink(self, ink, ink_on):
+    def set_ink(self, ink, ink_on, accent):
         self._ink = QColor(ink)
         self._ink_on = QColor(ink_on)
+        self._accent = QColor(accent)
         self.update()
 
     def paintEvent(self, event):
@@ -557,14 +707,22 @@ class IconButton(QPushButton):
             painter.setBrush(QColor("#3EAD62" if self.isChecked() else "#C4453C"))
             painter.drawEllipse(QPointF(cx, cy), 7, 7)
         elif kind == "chat":
+            painter.setPen(QPen(self._ink, 1.6))
+            if self.isChecked():
+                painter.setBrush(self._accent)
             painter.drawRoundedRect(int(cx - 8), int(cy - 6), 16, 11, 2, 2)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
             path = QPainterPath()
             path.moveTo(cx - 3, cy + 5)
             path.lineTo(cx - 6, cy + 8)
             path.lineTo(cx + 1, cy + 5)
             painter.drawPath(path)
         elif kind == "room":
+            painter.setPen(QPen(self._ink, 1.6))
+            if self.isChecked():
+                painter.setBrush(self._accent)
             painter.drawRoundedRect(int(cx - 8), int(cy - 7), 16, 14, 2, 2)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawLine(QPointF(cx + 3, cy - 7), QPointF(cx + 3, cy + 7))
         elif kind == "send":
             painter.setBrush(color)
@@ -869,6 +1027,7 @@ class MainWindow(QMainWindow):
         chat_title.setObjectName("heading")
         side.addWidget(chat_title)
         self.chat = QTextEdit()
+        self.chat.setObjectName("roomchat")
         self.chat.setReadOnly(True)
         side.addWidget(self.chat, 1)
         self.stage.installEventFilter(self)
@@ -941,7 +1100,7 @@ class MainWindow(QMainWindow):
         QApplication.instance().setFont(font)
         pal = _palette(theme, appearance.get("accentColor"))
         for button in (self.play, self.ready, self.chat_btn, self.room, self.gear, self.bar_send):
-            button.set_ink(pal["button_fg"], pal["on_fg"])
+            button.set_ink(pal["button_fg"], pal["on_fg"], pal["accent"])
         self._refresh_banner()
         self._refresh_files()
         self._paint_chat()
@@ -1283,7 +1442,9 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "room_users"):
             return
         me, mine, other = self._nick_colors()
-        self.room_users.set_people(self._users, me, mine, other)
+        appearance = self.app.store.data["appearance"]
+        border = _palette(appearance.get("theme"), appearance.get("accentColor"))["border"]
+        self.room_users.set_people(self._users, me, mine, other, border)
         me = str(self.app.store.data["connection"].get("name") or "")
         mine = next((person for person in self._users if person["name"] == me), None)
         if mine is not None and hasattr(self, "ready"):
