@@ -107,6 +107,9 @@ class App(object):
             accent = str(command.get("accentColor") or "")
             if len(accent) == 7 and accent.startswith("#"):
                 appearance["accentColor"] = accent
+            second = str(command.get("accentColor2") or "")
+            if len(second) == 7 and second.startswith("#"):
+                appearance["accentColor2"] = second
             try:
                 size = int(command.get("chatFontSize"))
             except (TypeError, ValueError):

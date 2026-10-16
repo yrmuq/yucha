@@ -292,7 +292,7 @@ def _status_spans(text):
         (r"^Reverting speed back to normal$", lambda m: (
             ("text", "1×"),
         )),
-        (r"^(.+?) is playing '(.+)' \(.*\)$", lambda m: (
+        (r"^(.+?) is playing '(.+?)' \([^)]*\)(?: in room: '.*')?$", lambda m: (
             ("nick", m.group(1)),
             ("text", " ▶ " + m.group(2)),
         )),
@@ -304,12 +304,13 @@ def _status_spans(text):
     return None
 
 
-def _spans_html(spans, accent):
+def _spans_html(spans, me, mine, other):
     bits = []
     for span in spans:
-        safe = html.escape(span["v"]).replace("\n", "<br>")
+        safe = html.escape(span["v"], quote=False).replace("\n", "<br>")
         if span["k"] == "nick":
-            bits.append('<span style="color: {};">{}</span>'.format(accent, safe))
+            color = mine if span["v"] == me else other
+            bits.append('<span style="color: {};">{}</span>'.format(color, safe))
         else:
             bits.append(safe)
     return "".join(bits)
@@ -399,7 +400,7 @@ class UserTable(QWidget):
         row.addWidget(self.names, 1)
         row.addWidget(self.files_scroll, 2)
 
-    def set_people(self, people, accent):
+    def set_people(self, people, me, mine, other):
         self._clear(self.names_col)
         self._clear(self.files_col)
         self._full_names = []
@@ -413,7 +414,8 @@ class UserTable(QWidget):
             nick.setWordWrap(False)
             nick.setFixedHeight(row_h)
             nick.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
-            nick.setStyleSheet("color: {}; background: transparent;".format(accent))
+            color = mine if name == me else other
+            nick.setStyleSheet("color: {}; background: transparent;".format(color))
             self.names_col.addWidget(nick)
             filename = person.get("file") or ""
             label = QLabel(filename)
@@ -582,6 +584,7 @@ class SettingsDialog(QDialog):
         self.theme.setCurrentIndex(0 if current != "light" else 1)
         self.color = QLineEdit(str(appearance.get("chatColor") or "#F4F1EA"))
         self.accent = QLineEdit(str(appearance.get("accentColor") or "#9A3A52"))
+        self.accent2 = QLineEdit(str(appearance.get("accentColor2") or "#1F6A8A"))
         self.chat_size = QSpinBox()
         self.chat_size.setRange(12, 48)
         self.chat_size.setValue(int(appearance.get("chatFontSize") or 18))
@@ -591,6 +594,7 @@ class SettingsDialog(QDialog):
         layout.addRow("Theme", self.theme)
         layout.addRow("Chat color", self.color)
         layout.addRow("Accent color", self.accent)
+        layout.addRow("Second accent", self.accent2)
         layout.addRow("Chat size", self.chat_size)
         layout.addRow("Interface size", self.ui_size)
         self.autoplay = QCheckBox("Play the next episode automatically")
@@ -612,10 +616,14 @@ class SettingsDialog(QDialog):
         accent = self.accent.text().strip()
         if len(accent) != 7 or not accent.startswith("#"):
             accent = "#9A3A52"
+        accent2 = self.accent2.text().strip()
+        if len(accent2) != 7 or not accent2.startswith("#"):
+            accent2 = "#1F6A8A"
         self.values = {
             "theme": self.theme.currentData(),
             "chatColor": color,
             "accentColor": accent,
+            "accentColor2": accent2,
             "chatFontSize": self.chat_size.value(),
             "uiFontSize": self.ui_size.value(),
             "autoplayNext": self.autoplay.isChecked(),
@@ -1242,12 +1250,21 @@ class MainWindow(QMainWindow):
         self._users = people
         self._paint_users()
 
+    def _nick_colors(self):
+        appearance = self.app.store.data["appearance"]
+        theme = appearance.get("theme") or "dark"
+        mine = _palette(theme, appearance.get("accentColor"))["accent"]
+        other = str(appearance.get("accentColor2") or "#1F6A8A")
+        if len(other) != 7 or not other.startswith("#"):
+            other = "#1F6A8A"
+        me = str(self.app.store.data["connection"].get("name") or "")
+        return me, mine, other
+
     def _paint_users(self):
         if not hasattr(self, "room_users"):
             return
-        appearance = self.app.store.data["appearance"]
-        accent = _palette(appearance.get("theme"), appearance.get("accentColor"))["accent"]
-        self.room_users.set_people(self._users, accent)
+        me, mine, other = self._nick_colors()
+        self.room_users.set_people(self._users, me, mine, other)
         me = str(self.app.store.data["connection"].get("name") or "")
         mine = next((person for person in self._users if person["name"] == me), None)
         if mine is not None and hasattr(self, "ready"):
@@ -1258,11 +1275,10 @@ class MainWindow(QMainWindow):
     def _paint_chat(self):
         if not hasattr(self, "chat"):
             return
-        appearance = self.app.store.data["appearance"]
-        accent = _palette(appearance.get("theme"), appearance.get("accentColor"))["accent"]
+        me, mine, other = self._nick_colors()
         self.chat.clear()
         for spans in self._chat_lines:
-            self.chat.append(_spans_html(spans, accent))
+            self.chat.append(_spans_html(spans, me, mine, other))
 
     def _add_chat(self, user, text):
         if not text or _hidden_line(text):
@@ -1271,6 +1287,8 @@ class MainWindow(QMainWindow):
             spans = [{"k": "nick", "v": user}, {"k": "text", "v": ": " + text}]
         else:
             spans = _status_spans(text) or [{"k": "text", "v": text}]
+            if any(span["k"] == "nick" and span["v"] in ("", "None") for span in spans):
+                return
         self._chat_lines.append(spans)
         self._osd.append((time.monotonic(), spans))
         self._paint_chat()
@@ -1351,6 +1369,11 @@ class MainWindow(QMainWindow):
         page = _palette(theme, appearance.get("accentColor"))
         color = _bgr(page["fg"])
         accent = _bgr(page["accent"])
+        other = str(appearance.get("accentColor2") or "#1F6A8A")
+        if len(other) != 7 or not other.startswith("#"):
+            other = "#1F6A8A"
+        accent2 = _bgr(other)
+        me = str(self.app.store.data["connection"].get("name") or "")
         width = max(1, self.video.width())
         height = max(1, self.video.height())
         people = []
@@ -1377,9 +1400,10 @@ class MainWindow(QMainWindow):
             text_y = y + pad
             for person in people:
                 dot = "00FF00" if person["ready"] else "0000FF"
+                ink = accent if person["name"] == me else accent2
                 lines.append(
                     "{{\\an7\\pos({},{})\\bord0\\shad0\\fs{}\\1c&H{}&}}{} {{\\1c&H{}&}}●".format(
-                        ready_x + pad, text_y, size, accent, _ass_escape(person["name"]), dot
+                        ready_x + pad, text_y, size, ink, _ass_escape(person["name"]), dot
                     )
                 )
                 text_y += row_h
@@ -1402,7 +1426,10 @@ class MainWindow(QMainWindow):
             for line in wrapped:
                 bits = []
                 for span in line:
-                    ink = accent if span["k"] == "nick" else color
+                    if span["k"] == "nick":
+                        ink = accent if span["v"] == me else accent2
+                    else:
+                        ink = color
                     bits.append("{{\\1c&H{}&}}{}".format(ink, _ass_escape(span["v"])))
                 body.append("".join(bits))
             lines.append(
