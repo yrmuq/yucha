@@ -44,6 +44,8 @@ class PlayerUI(object):
 
     def showMessage(self, message, noTimestamp=False, isMotd=False):
         text = "" if message is None else str(message)
+        if text == getMessage("ready-to-unpause-notification"):
+            return
         chat = _CHAT.match(text)
         if chat:
             self.bridge.emit({

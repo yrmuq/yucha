@@ -114,12 +114,16 @@ def _stylesheet(theme, accent=None):
         border-radius: 8px;
     }}
     QWidget#banner QLabel {{ background: transparent; }}
-    QPushButton#icon {{
+    QPushButton#icon, QPushButton#baricon {{
         padding: 0px;
         min-width: 40px;
         max-width: 40px;
         min-height: 36px;
         max-height: 36px;
+    }}
+    QPushButton#baricon, QPushButton#baricon:hover, QPushButton#baricon:pressed, QPushButton#baricon:checked {{
+        background: transparent;
+        border: none;
     }}
     QSlider::groove:horizontal {{ height: 6px; background: {border}; }}
     QSlider::sub-page:horizontal {{ background: {accent}; }}
@@ -134,6 +138,7 @@ def _stylesheet(theme, accent=None):
         background: {field};
         color: {fg};
         border: 1px solid {border};
+        border-radius: 8px;
     }}
     QListWidget::item {{
         padding: 4px 6px;
@@ -144,6 +149,11 @@ def _stylesheet(theme, accent=None):
     }}
     QScrollArea#userfiles QWidget {{
         background: transparent;
+    }}
+    QWidget#usersbox {{
+        background: {field};
+        border: 1px solid {border};
+        border-radius: 8px;
     }}
     """.format(**p)
 
@@ -378,9 +388,11 @@ class UserTable(QWidget):
 
     def __init__(self):
         super().__init__()
+        self.setObjectName("usersbox")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._full_names = []
         row = QHBoxLayout(self)
-        row.setContentsMargins(0, 0, 0, 0)
+        row.setContentsMargins(8, 6, 8, 6)
         row.setSpacing(8)
         self.names = QWidget()
         self.names_col = QVBoxLayout(self.names)
@@ -396,7 +408,9 @@ class UserTable(QWidget):
         self.files_col = QVBoxLayout(self.files_host)
         self.files_col.setContentsMargins(0, 0, 0, 0)
         self.files_col.setSpacing(0)
+        self.files_scroll.viewport().setAutoFillBackground(False)
         self.files_scroll.setWidget(self.files_host)
+        self.names.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         row.addWidget(self.names, 1)
         row.addWidget(self.files_scroll, 2)
 
@@ -428,10 +442,12 @@ class UserTable(QWidget):
             widest = max(widest, wide)
             self.files_col.addWidget(label)
         count = len(people)
-        content_h = count * row_h
-        self.files_host.setFixedSize(widest, max(1, content_h))
-        bar_h = self.files_scroll.horizontalScrollBar().sizeHint().height()
-        self.setFixedHeight((content_h + bar_h) if count else 0)
+        rows = max(2, count)
+        content_h = rows * row_h
+        self.files_host.setFixedSize(widest, max(1, count * row_h))
+        bar_h = self.files_scroll.horizontalScrollBar().sizeHint().height() if count else 0
+        margins = self.layout().contentsMargins()
+        self.setFixedHeight(content_h + bar_h + margins.top() + margins.bottom())
         self._elide_names()
 
     def resizeEvent(self, event):
@@ -537,8 +553,8 @@ class IconButton(QPushButton):
             painter.drawRoundedRect(int(cx - 6), int(cy - 7), 4, 14, 1, 1)
             painter.drawRoundedRect(int(cx + 2), int(cy - 7), 4, 14, 1, 1)
         elif kind == "ready":
-            if self.isChecked():
-                painter.setBrush(color)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor("#3EAD62" if self.isChecked() else "#C4453C"))
             painter.drawEllipse(QPointF(cx, cy), 7, 7)
         elif kind == "chat":
             painter.drawRoundedRect(int(cx - 8), int(cy - 6), 16, 11, 2, 2)
@@ -759,6 +775,8 @@ class MainWindow(QMainWindow):
         self.room.clicked.connect(self._toggle_room)
         for widget in (self.play, self.elapsed, self.slider, self.total, self.ready, self.chat_btn, self.room):
             bar.addWidget(widget)
+        for button in (self.play, self.ready, self.chat_btn, self.room):
+            button.setObjectName("baricon")
         bar.setStretchFactor(self.slider, 1)
 
         self.chat_line = QWidget(column)
@@ -1066,7 +1084,8 @@ class MainWindow(QMainWindow):
                 row.setForeground(QColor(pal["on_fg"]))
             self.files.addItem(row)
         row_h = max(24, QFontMetrics(self.files.font()).height() + 12)
-        self.files.setFixedHeight(self.files.count() * row_h + 2 * self.files.frameWidth())
+        rows = max(2, self.files.count())
+        self.files.setFixedHeight(rows * row_h + 2 * self.files.frameWidth())
 
     def _toggle_ready(self):
         client = getattr(self.app, "client", None)
@@ -1388,8 +1407,11 @@ class MainWindow(QMainWindow):
         y = 16
         pad = 8
         if people:
-            widest = max(metrics.horizontalAdvance(person["name"] + " ●") for person in people)
-            ready_w = min(max(80, width - 16), widest + pad * 2)
+            widest = max(metrics.horizontalAdvance(person["name"]) for person in people)
+            inner = max(72, int(widest * 3 / 2))
+            ready_w = min(max(96, width - 16), inner + pad * 2)
+            inner = ready_w - pad * 2
+            name_col = int(inner * 2 / 3)
             ready_h = pad * 2 + len(people) * row_h
             ready_x = max(8, width - 8 - ready_w)
             lines.append(
@@ -1398,12 +1420,19 @@ class MainWindow(QMainWindow):
                 )
             )
             text_y = y + pad
+            dot_x = ready_x + pad + name_col + max(0, (inner - name_col - metrics.horizontalAdvance("●")) / 2)
             for person in people:
                 dot = "00FF00" if person["ready"] else "0000FF"
                 ink = accent if person["name"] == me else accent2
+                shown = metrics.elidedText(person["name"], Qt.TextElideMode.ElideRight, name_col)
                 lines.append(
-                    "{{\\an7\\pos({},{})\\bord0\\shad0\\fs{}\\1c&H{}&}}{} {{\\1c&H{}&}}●".format(
-                        ready_x + pad, text_y, size, ink, _ass_escape(person["name"]), dot
+                    "{{\\an7\\pos({},{})\\bord0\\shad0\\fs{}\\1c&H{}&}}{}".format(
+                        ready_x + pad, text_y, size, ink, _ass_escape(shown)
+                    )
+                )
+                lines.append(
+                    "{{\\an7\\pos({},{})\\bord0\\shad0\\fs{}\\1c&H{}&}}●".format(
+                        int(dot_x), text_y, size, dot
                     )
                 )
                 text_y += row_h
