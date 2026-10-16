@@ -61,7 +61,7 @@ jobs:
               exit 1
               ;;
           esac
-          git fetch origin "refs/tags/${TAG}:refs/tags/${TAG}" || true
+          git fetch origin "+refs/tags/${TAG}:refs/tags/${TAG}"
           git tag -l --format='%(contents)' "$TAG" > notes.md
           if ! grep -q '[^[:space:]]' notes.md; then
             echo "the annotated tag message is the release notes, and it is empty" >&2
