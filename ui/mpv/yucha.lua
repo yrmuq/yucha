@@ -32,7 +32,7 @@ local modules = {
     "status.lua",
     "panel.lua",
     "settings.lua",
-    "corner.lua",
+    "bar.lua",
 }
 for i = 1, #modules do
     dofile(dir .. modules[i])(K)

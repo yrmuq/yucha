@@ -41,10 +41,10 @@ A version tag `vX.Y.Z` makes GitHub build the image and attach it to that releas
 ## What is on the window
 
 1. mpv is the only window. The Syncplay client runs beside it and keeps pause, seek, and position in sync. The protocol is the existing Syncplay client, not a rewrite.
-2. A button in the bottom-right corner opens the room panel.
-3. The panel slides out: server, port, username, password, room, and a message field.
-4. No saved login: the panel opens by itself. Saved login: it stays closed, the client connects, **connected** stays at the bottom right, and a chat line appears for five seconds. Each new chat message is drawn the same way.
-5. A gear in the panel opens settings: theme, chat color, chat size, and interface size.
+2. A button at the right end of the playback bar opens the room panel.
+3. The panel is a full-height column. The video moves aside while it opens. The fields keep their text inside the box, and Ctrl+V pastes into the focused field.
+4. No saved login: the panel opens by itself. Saved login: it stays closed, the client connects, **connected** stays on the picture, and a chat line appears for five seconds. Each new chat message is drawn the same way.
+5. A gear in the panel opens settings: theme, chat color, chat size, and interface size. The playback bar uses that theme and hides after 3 seconds. The loop button repeats the current file.
 
 The interface is a small set of Lua modules (`ui/mpv/`). A module registers a widget and an action. It does not own the mouse or the keyboard. Themes are two palettes. A new control is another module, not a rewrite of the player.
 

@@ -135,6 +135,7 @@ def player_args(runtime):
     args = [
         "--script={0}".format(script),
         "--script-opts={0}".format(opts),
+        "--osc=no",
         "--geometry=1280x720",
     ]
     vo = os.environ.get("YUCHA_VO")

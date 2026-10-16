@@ -50,8 +50,10 @@ return function(K)
         local size = K.m.chat
         local step = size + math.max(4, K.m.gap)
         local total = #lines * step
-        local y = math.floor((h - total) / 2)
-        local x = w - K.m.margin
+        local bottom = h - (K.bar_cover or 0)
+        local y = math.floor((bottom - total) / 2)
+        if y < K.m.gap then y = K.m.gap end
+        local x = w - (K.dock or 0) - K.m.margin
         local color = K.cfg.chatColor or "#F4F1EA"
         for i = 1, #lines do
             local line = lines[i]

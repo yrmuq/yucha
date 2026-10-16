@@ -16,9 +16,9 @@ return function(K)
             return
         end
         local m = K.m
-        local x = w - m.margin - m.corner - m.gap
-        local y = h - m.margin - math.floor(m.corner / 2)
-        K.text(ass, x + 1, y + 1, 6, m.button_font, "#000000", "connected", "\\alpha&H50&")
-        K.text(ass, x, y, 6, m.button_font, K.palette().accent, "connected", "")
+        local x = w - (K.dock or 0) - m.margin
+        local y = h - (K.bar_cover or 0) - m.gap
+        K.text(ass, x + 1, y + 1, 9, m.label, "#000000", "connected", "\\alpha&H50&")
+        K.text(ass, x, y, 9, m.label, K.palette().accent, "connected", "")
     end)
 end

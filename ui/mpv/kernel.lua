@@ -11,6 +11,7 @@ local K = {
     listeners = {},
     actions = {},
     widgets = {},
+    layouts = {},
     hits = {},
     themes = {},
     cfg = {
@@ -34,7 +35,7 @@ local K = {
     m = nil,
 }
 
-local MAX_HITS = 32
+local MAX_HITS = 48
 local hit_fns = {}
 
 function K.on(name, fn)
@@ -69,6 +70,10 @@ end
 
 function K.widget(draw)
     K.widgets[#K.widgets + 1] = draw
+end
+
+function K.layout(fn)
+    K.layouts[#K.layouts + 1] = fn
 end
 
 function K.hit(x, y, w, h, fn, wheel)
@@ -132,6 +137,7 @@ function K.refresh_metrics()
         margin = dp(18),
         gear = dp(28),
         send_w = dp(72),
+        bar = dp(64),
     }
 end
 
@@ -147,6 +153,9 @@ function K.focus(handler)
                     return
                 end
                 local text = info.key_text
+                if info.key_name and info.key_name:find("+", 1, true) then
+                    return
+                end
                 if text ~= "\n" and text ~= "\r" and text ~= "\027" then
                     K.text_handler("char", text)
                 end
@@ -166,6 +175,74 @@ function K.sync_keys()
     else
         mp.disable_key_bindings("yucha-text")
     end
+end
+
+local function clipboard_text()
+    pcall(function()
+        mp.commandv("update-clipboard", "text", "200")
+    end)
+    local text = mp.get_property("clipboard/text") or ""
+    return (text:gsub("[%z\r\n]", ""))
+end
+
+function K.paste()
+    local handler = K.text_handler
+    if not handler then
+        return
+    end
+    local text = clipboard_text()
+    if text ~= "" then
+        handler("paste", text)
+        return
+    end
+    local cmds = {
+        {"wl-paste", "-n"},
+        {"xclip", "-selection", "clipboard", "-o"},
+        {"xsel", "--clipboard", "--output"},
+    }
+    local generation = 0
+    local function try(i)
+        if not handler or K.text_handler ~= handler or i > #cmds then
+            return
+        end
+        generation = generation + 1
+        local gen = generation
+        local req
+        req = mp.command_native_async({
+            _name = "subprocess",
+            playback_only = false,
+            capture_stdout = true,
+            args = cmds[i],
+        }, function(success, result)
+            if gen ~= generation then
+                return
+            end
+            generation = generation + 1
+            local out = ""
+            if success and result and result.status == 0 and result.stdout then
+                out = tostring(result.stdout)
+            end
+            out = out:gsub("[%z\r\n]", "")
+            if out ~= "" and K.text_handler == handler then
+                handler("paste", out)
+            else
+                try(i + 1)
+            end
+        end)
+        mp.add_timeout(0.4, function()
+            if gen ~= generation then
+                return
+            end
+            generation = generation + 1
+            if req then
+                pcall(function()
+                    mp.abort_async_command(req)
+                end)
+            end
+            try(i + 1)
+        end)
+    end
+    try(1)
 end
 
 local function take_events(data, previous)
@@ -215,6 +292,11 @@ end
 function K.render()
     local w, h = K.size()
     K.refresh_metrics()
+    K.dock = 0
+    K.bar_cover = 0
+    for i = 1, #K.layouts do
+        K.layouts[i](w, h)
+    end
     K.hits = {}
     local ass = assdraw.ass_new()
     for i = 1, #K.widgets do
@@ -287,6 +369,9 @@ function K.start()
                 K.emit("escape")
             end
         end},
+        {"ctrl+v", function() K.paste() end},
+        {"ctrl+V", function() K.paste() end},
+        {"shift+ins", function() K.paste() end},
     }, "yucha-text", "force")
     mp.disable_key_bindings("yucha-text")
 
