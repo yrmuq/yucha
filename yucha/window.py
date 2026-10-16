@@ -3,9 +3,11 @@
 """The yucha window. Fields and buttons are real widgets. mpv only draws
 the picture into the video area."""
 
+import re
 import time
+from pathlib import Path
 
-from PySide6.QtCore import QEvent, QPoint, QPointF, Qt, QTimer
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QCursor, QFont, QFontMetrics, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QApplication,
@@ -15,6 +17,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QPushButton,
     QSlider,
@@ -34,6 +38,7 @@ PANEL_WIDTH = 380
 BAR_HEIGHT = 72
 CHAT_EXTRA = 52
 SEEK_STEPS = 100000
+CHAT_BOX = 300
 
 
 def _palette(theme, accent=None):
@@ -117,6 +122,14 @@ def _stylesheet(theme, accent=None):
         margin: -4px 0;
         border-radius: 7px;
     }}
+    QListWidget {{
+        background: {field};
+        color: {fg};
+        border: 1px solid {border};
+    }}
+    QListWidget::item {{
+        padding: 4px 6px;
+    }}
     """.format(**p)
 
 
@@ -146,6 +159,75 @@ def _bgr(hex_color):
     if len(color) != 6:
         color = "F4F1EA"
     return color[4:6] + color[2:4] + color[0:2]
+
+
+def _natural(text):
+    parts = re.split(r"(\d+)", str(text).lower())
+    key = []
+    for part in parts:
+        if part.isdigit():
+            key.append(int(part))
+        elif part:
+            key.append(part)
+    return key
+
+
+def _chunks(word, metrics, width):
+    if metrics.horizontalAdvance(word) <= width:
+        return [word]
+    pieces = []
+    buf = ""
+    for char in word:
+        trial = buf + char
+        if buf and metrics.horizontalAdvance(trial) > width:
+            pieces.append(buf)
+            buf = char
+        else:
+            buf = trial
+    if buf:
+        pieces.append(buf)
+    return pieces or [word]
+
+
+def _wrap_plain(text, metrics, first_width, width):
+    words = str(text).split()
+    if not words:
+        return [""]
+    lines = []
+    current = ""
+    limit = first_width
+    for word in words:
+        for piece in _chunks(word, metrics, width):
+            trial = piece if not current else current + " " + piece
+            if current and metrics.horizontalAdvance(trial) > limit:
+                lines.append(current)
+                current = piece
+                limit = width
+            else:
+                current = trial
+    if current:
+        lines.append(current)
+    return lines
+
+
+class FileList(QListWidget):
+    """The episode list. A right click removes a row."""
+
+    removed = Signal(str)
+
+    def __init__(self):
+        super().__init__()
+        self.setSelectionMode(QListWidget.SelectionMode.NoSelection)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.RightButton:
+            item = self.itemAt(event.position().toPoint())
+            if item is not None:
+                self.removed.emit(item.data(Qt.ItemDataRole.UserRole) or "")
+            event.accept()
+            return
+        super().mousePressEvent(event)
 
 
 class SeekBar(QSlider):
@@ -382,6 +464,9 @@ class MainWindow(QMainWindow):
         self._pos_when = time.monotonic()
         self._speed = 1.0
         self._paused = True
+        self._playlist = []
+        self._current_path = ""
+        self._eof_seen = False
         self._volume_until = 0
         self.setWindowTitle("yucha")
         self.resize(1280, 720)
@@ -416,6 +501,7 @@ class MainWindow(QMainWindow):
         self.video = Picture(self.app.runtime)
         self.video.fullscreenRequested.connect(self._toggle_full)
         self.video.volumeChanged.connect(self._show_volume)
+        self.video.filesDropped.connect(self._add_dropped)
         col.addWidget(self.video, 1)
 
         self.bar = QWidget(column)
@@ -512,6 +598,10 @@ class MainWindow(QMainWindow):
         self.reconnect.hide()
         side.addWidget(self.reconnect)
 
+        self.files = FileList()
+        self.files.removed.connect(self._remove_file)
+        side.addWidget(self.files, 1)
+
         self.status = QLabel("")
         self.status.setWordWrap(True)
         side.addWidget(self.status)
@@ -591,6 +681,7 @@ class MainWindow(QMainWindow):
         for button in (self.play, self.loop, self.chat_btn, self.room, self.gear, self.bar_send):
             button.set_ink(pal["button_fg"], pal["on_fg"])
         self._refresh_banner()
+        self._refresh_files()
 
     def set_player(self, player):
         listener = getattr(player, "_listener", None) if player is not None else None
@@ -638,7 +729,89 @@ class MainWindow(QMainWindow):
         self.volume_box.raise_()
 
     def _toggle_pause(self):
+        eof = self._get("eof-reached")
+        if eof in (True, "yes", "true", 1) and len(self._playlist) == 1:
+            self._cmd("seek", "0", "absolute")
+            self._set("pause", "no")
+            self._paused = False
+            self._pos_at = 0
+            self._pos_when = time.monotonic()
+            self._eof_seen = True
+            return
         self._cmd("cycle", "pause")
+
+    def _add_dropped(self, paths):
+        dropped = []
+        known = {item["path"] for item in self._playlist}
+        for path in paths:
+            if not path:
+                continue
+            dropped.append(path)
+            if path not in known:
+                self._playlist.append({"path": path, "name": Path(path).name})
+                known.add(path)
+        self._playlist.sort(key=lambda item: _natural(item["name"]))
+        if not dropped:
+            self._refresh_files()
+            return
+        wanted = set(dropped)
+        start = next((item["path"] for item in self._playlist if item["path"] in wanted), "")
+        if start:
+            self._play_path(start)
+        else:
+            self._refresh_files()
+
+    def _play_path(self, path):
+        self._current_path = path
+        self._eof_seen = True
+        self._paused = False
+        self._pos_at = 0
+        self._pos_when = time.monotonic()
+        if self.video.mpv is not None:
+            try:
+                self.video.mpv.command("loadfile", path, "replace", "start=0")
+            except Exception:
+                pass
+        self._refresh_files()
+
+    def _remove_file(self, path):
+        if not path:
+            return
+        was_current = path == self._current_path
+        index = next((i for i, item in enumerate(self._playlist) if item["path"] == path), -1)
+        self._playlist = [item for item in self._playlist if item["path"] != path]
+        if not was_current:
+            self._refresh_files()
+            return
+        if not self._playlist:
+            self._current_path = ""
+            self._cmd("stop")
+            self._refresh_files()
+            return
+        nxt = min(max(index, 0), len(self._playlist) - 1)
+        self._play_path(self._playlist[nxt]["path"])
+
+    def _advance(self):
+        if len(self._playlist) <= 1:
+            return
+        index = next((i for i, item in enumerate(self._playlist) if item["path"] == self._current_path), -1)
+        if index < 0 or index + 1 >= len(self._playlist):
+            return
+        self._play_path(self._playlist[index + 1]["path"])
+
+    def _refresh_files(self):
+        if not hasattr(self, "files"):
+            return
+        appearance = self.app.store.data["appearance"]
+        pal = _palette(appearance.get("theme"), appearance.get("accentColor"))
+        self.files.clear()
+        for item in self._playlist:
+            row = QListWidgetItem(item["name"])
+            row.setData(Qt.ItemDataRole.UserRole, item["path"])
+            if item["path"] == self._current_path:
+                row.setBackground(QColor(pal["accent"]))
+                row.setForeground(QColor(pal["on_fg"]))
+            self.files.addItem(row)
 
     def _toggle_loop(self):
         current = self._get("loop-file")
@@ -844,6 +1017,14 @@ class MainWindow(QMainWindow):
         self.total.setText(_clock(self._duration))
         loop = self._get("loop-file")
         self.loop.setChecked(loop in ("inf", "yes", "always"))
+        eof = self._get("eof-reached")
+        ended = eof in (True, "yes", "true", 1) and self._duration > 0
+        if ended:
+            if not self._eof_seen:
+                self._eof_seen = True
+                self._advance()
+        else:
+            self._eof_seen = False
         self._move_knob()
 
     def _shown_position(self):
@@ -877,10 +1058,10 @@ class MainWindow(QMainWindow):
         measure = QFont(self.font())
         measure.setPointSize(max(10, min(48, point)))
         size = max(14, QFontMetrics(measure).height())
+        measure.setPixelSize(size)
+        metrics = QFontMetrics(measure)
         color = _bgr(appearance.get("chatColor"))
         accent = _bgr(_palette(theme, appearance.get("accentColor"))["accent"])
-        # Logical window pixels, not the 4K frame. The text then matches the
-        # size of the text in the window.
         width = max(1, self.video.width())
         height = max(1, self.video.height())
         people = []
@@ -889,34 +1070,55 @@ class MainWindow(QMainWindow):
                 continue
             people.append((name, ready))
         lines = []
-        step = size + 8
-        x = max(16, width - 280)
-        y = 20
+        step = metrics.height() + 4
+        box_w = min(CHAT_BOX, max(160, width - 24))
+        x = max(8, width - 8 - box_w)
+        y = 16
         for name, ready in people:
+            if y > height - BAR_HEIGHT - 16:
+                break
             dot = "00FF00" if ready else "0000FF"
             lines.append(
-                "{{\\pos({},{})\\an7\\bord1\\shad0\\fs{}\\1c&H{}&}}{{\\1c&H{}&}}● {{\\1c&H{}&}}{}".format(
-                    x, y, size, color, dot, color, _ass_escape(name)
+                "{{\\pos({},{})\\an7\\bord1\\shad0\\fs{}\\1c&H{}&}}{} {{\\1c&H{}&}}●".format(
+                    x, y, size, color, _ass_escape(name), dot
                 )
             )
             y += step
-        floor = max(24, height - BAR_HEIGHT - 16)
-        y = max(y + step, int(height / 2))
+        if people:
+            y += 8
+        floor = max(24, height - BAR_HEIGHT - 8)
+        pad = 8
+        inner = max(40, box_w - pad * 2)
+        page = _palette(theme)
         for _born, user, text in self._osd:
-            if y > floor:
+            nick = (user + ": ") if user else ""
+            nick_w = metrics.horizontalAdvance(nick) if nick else 0
+            first_width = max(24, inner - nick_w)
+            wrapped = _wrap_plain(text, metrics, first_width, inner)
+            block_h = pad * 2 + max(1, len(wrapped)) * metrics.height()
+            if y + block_h > floor:
                 break
-            if user:
-                body = "{{\\1c&H{}&}}{}: {{\\1c&H{}&}}{}".format(
-                    accent, _ass_escape(user), color, _ass_escape(text)
-                )
-            else:
-                body = _ass_escape(text)
             lines.append(
-                "{{\\pos({},{})\\an6\\bord1\\shad0\\fs{}\\1c&H{}&}}{}".format(
-                    max(20, width - 24), y, size, color, body
+                "{{\\an7\\pos({},{})\\bord0\\shad0\\1c&H{}&\\p1}}m 0 0 l {} 0 {} {} 0 {}".format(
+                    x, y, _bgr(page["bg"]), box_w, box_w, block_h, block_h
                 )
             )
-            y += step
+            body = []
+            for index, part in enumerate(wrapped):
+                if index == 0 and user:
+                    body.append(
+                        "{{\\1c&H{}&}}{}{{\\1c&H{}&}}{}".format(
+                            accent, _ass_escape(nick), color, _ass_escape(part)
+                        )
+                    )
+                else:
+                    body.append(_ass_escape(part))
+            lines.append(
+                "{{\\an7\\pos({},{})\\p0\\bord0\\shad0\\q2\\fs{}\\1c&H{}&}}{}".format(
+                    x + pad, y + pad, size, color, "\\N".join(body)
+                )
+            )
+            y += block_h + 6
         data = "\n".join(lines)
         if data == getattr(self, "_osd_sent", None):
             return

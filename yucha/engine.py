@@ -48,6 +48,7 @@ class Picture(QOpenGLWidget):
 
     fullscreenRequested = Signal()
     volumeChanged = Signal(int)
+    filesDropped = Signal(list)
 
     def __init__(self, runtime, parent=None):
         super().__init__(parent)
@@ -190,14 +191,13 @@ class Picture(QOpenGLWidget):
 
     def dropEvent(self, event):
         urls = event.mimeData().urls()
-        if not urls or self.mpv is None:
-            return
-        path = urls[0].toLocalFile() or urls[0].toString()
-        if path:
-            try:
-                self.mpv.command("loadfile", path, "replace", "start=0")
-            except Exception:
-                pass
+        paths = []
+        for url in urls:
+            path = url.toLocalFile() or url.toString()
+            if path:
+                paths.append(path)
+        if paths:
+            self.filesDropped.emit(paths)
         event.acceptProposedAction()
 
     def _pause(self):
