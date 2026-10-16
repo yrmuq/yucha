@@ -98,6 +98,10 @@ def _stylesheet(theme, accent=None):
         color: {on_fg};
     }}
     QLabel#muted {{ color: {muted}; }}
+    QLabel#heading {{
+        font-weight: 700;
+        background: transparent;
+    }}
     QWidget#bar, QWidget#chatline {{ border-top: 1px solid {border}; }}
     QWidget#panel {{ border-left: 1px solid {border}; }}
     QWidget#banner {{
@@ -210,10 +214,50 @@ def _wrap_plain(text, metrics, first_width, width):
     return lines
 
 
+def _round_box(width, height, radius):
+    radius = int(min(radius, width / 2, height / 2))
+    if radius < 2:
+        return "m 0 0 l {w} 0 {w} {h} 0 {h}".format(w=width, h=height)
+    curve = radius * 0.5522847498
+    return " ".join([
+        "m {r} 0".format(r=_n(radius)),
+        "l {x} 0".format(x=_n(width - radius)),
+        "b {c1} 0 {w} {c2} {w} {r}".format(
+            c1=_n(width - radius + curve), w=_n(width), c2=_n(curve), r=_n(radius)
+        ),
+        "l {w} {y}".format(w=_n(width), y=_n(height - radius)),
+        "b {w} {c1} {c2} {h} {x} {h}".format(
+            w=_n(width), c1=_n(height - radius + curve), c2=_n(width - radius + curve),
+            h=_n(height), x=_n(width - radius),
+        ),
+        "l {x} {h}".format(x=_n(radius), h=_n(height)),
+        "b {c1} {h} 0 {c2} 0 {y}".format(
+            c1=_n(radius - curve), h=_n(height), c2=_n(height - radius + curve), y=_n(height - radius),
+        ),
+        "l 0 {y}".format(y=_n(radius)),
+        "b 0 {c1} {c2} 0 {r} 0".format(c1=_n(radius - curve), c2=_n(curve), r=_n(radius)),
+    ])
+
+
+def _n(value):
+    return str(int(round(value)))
+
+
+class ClickBox(QWidget):
+    clicked = Signal()
+
+    def mouseReleaseEvent(self, event):
+        inside = self.rect().contains(event.position().toPoint())
+        if event.button() == Qt.MouseButton.LeftButton and inside:
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
+
+
 class FileList(QListWidget):
-    """The episode list. A right click removes a row."""
+    """The episode list. A left click plays a row. A right click removes it."""
 
     removed = Signal(str)
+    chosen = Signal(str)
 
     def __init__(self):
         super().__init__()
@@ -221,10 +265,14 @@ class FileList(QListWidget):
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.RightButton:
-            item = self.itemAt(event.position().toPoint())
-            if item is not None:
-                self.removed.emit(item.data(Qt.ItemDataRole.UserRole) or "")
+        item = self.itemAt(event.position().toPoint())
+        path = item.data(Qt.ItemDataRole.UserRole) if item is not None else ""
+        if item is not None and event.button() == Qt.MouseButton.RightButton:
+            self.removed.emit(path or "")
+            event.accept()
+            return
+        if item is not None and event.button() == Qt.MouseButton.LeftButton and path:
+            self.chosen.emit(path)
             event.accept()
             return
         super().mousePressEvent(event)
@@ -564,31 +612,27 @@ class MainWindow(QMainWindow):
         side = QVBoxLayout(self.panel)
         side.setContentsMargins(16, 16, 16, 16)
         side.setSpacing(8)
-        header = QHBoxLayout()
-        title = QLabel("Panel")
-        header.addWidget(title)
-        header.addStretch(1)
-        settings = QPushButton("Settings")
-        settings.clicked.connect(self._open_settings)
-        header.addWidget(settings)
-        side.addLayout(header)
 
         banner_row = QHBoxLayout()
         banner_row.setSpacing(8)
-        self.banner = QWidget()
+        self.banner = ClickBox()
         self.banner.setObjectName("banner")
         self.banner.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.banner.setAutoFillBackground(True)
         self.banner.setFixedHeight(44)
+        self.banner.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.banner.clicked.connect(self._open_connection)
         inside = QHBoxLayout(self.banner)
         inside.setContentsMargins(14, 0, 14, 0)
         self.banner_text = QLabel("Not configured")
         self.banner_dot = QLabel("●")
+        self.banner_text.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.banner_dot.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         inside.addWidget(self.banner_text)
         inside.addStretch(1)
         inside.addWidget(self.banner_dot)
         self.gear = IconButton("gear")
-        self.gear.clicked.connect(self._open_connection)
+        self.gear.clicked.connect(self._open_settings)
         banner_row.addWidget(self.banner, 1)
         banner_row.addWidget(self.gear)
         side.addLayout(banner_row)
@@ -598,14 +642,21 @@ class MainWindow(QMainWindow):
         self.reconnect.hide()
         side.addWidget(self.reconnect)
 
+        playlist_title = QLabel("Playlist")
+        playlist_title.setObjectName("heading")
+        side.addWidget(playlist_title)
         self.files = FileList()
         self.files.removed.connect(self._remove_file)
+        self.files.chosen.connect(self._play_path)
         side.addWidget(self.files, 1)
 
         self.status = QLabel("")
         self.status.setWordWrap(True)
         side.addWidget(self.status)
 
+        chat_title = QLabel("Chat")
+        chat_title.setObjectName("heading")
+        side.addWidget(chat_title)
         self.chat = QTextEdit()
         self.chat.setReadOnly(True)
         side.addWidget(self.chat, 1)
@@ -767,7 +818,12 @@ class MainWindow(QMainWindow):
         self._paused = False
         self._pos_at = 0
         self._pos_when = time.monotonic()
-        if self.video.mpv is not None:
+        client = getattr(self.app, "client", None)
+        player = getattr(client, "_player", None) if client is not None else None
+        if player is not None:
+            from twisted.internet import reactor
+            reactor.callFromThread(client.openFile, path, True)
+        elif self.video.mpv is not None:
             try:
                 self.video.mpv.command("loadfile", path, "replace", "start=0")
             except Exception:
@@ -1060,8 +1116,9 @@ class MainWindow(QMainWindow):
         size = max(14, QFontMetrics(measure).height())
         measure.setPixelSize(size)
         metrics = QFontMetrics(measure)
-        color = _bgr(appearance.get("chatColor"))
-        accent = _bgr(_palette(theme, appearance.get("accentColor"))["accent"])
+        page = _palette(theme, appearance.get("accentColor"))
+        color = _bgr(page["fg"])
+        accent = _bgr(page["accent"])
         width = max(1, self.video.width())
         height = max(1, self.video.height())
         people = []
@@ -1089,7 +1146,6 @@ class MainWindow(QMainWindow):
         floor = max(24, height - BAR_HEIGHT - 8)
         pad = 8
         inner = max(40, box_w - pad * 2)
-        page = _palette(theme)
         for _born, user, text in self._osd:
             nick = (user + ": ") if user else ""
             nick_w = metrics.horizontalAdvance(nick) if nick else 0
@@ -1099,8 +1155,8 @@ class MainWindow(QMainWindow):
             if y + block_h > floor:
                 break
             lines.append(
-                "{{\\an7\\pos({},{})\\bord0\\shad0\\1c&H{}&\\p1}}m 0 0 l {} 0 {} {} 0 {}".format(
-                    x, y, _bgr(page["bg"]), box_w, box_w, block_h, block_h
+                "{{\\an7\\pos({},{})\\bord0\\shad0\\1c&H{}&\\p1}}{}".format(
+                    x, y, _bgr(page["bg"]), _round_box(box_w, block_h, 8)
                 )
             )
             body = []
