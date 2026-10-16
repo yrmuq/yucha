@@ -119,6 +119,9 @@ def _stylesheet(theme, accent=None):
         font-weight: 700;
         background: transparent;
     }}
+    QLabel#alone {{
+        background: transparent;
+    }}
     QWidget#bar, QWidget#chatline {{ border-top: 1px solid {border}; }}
     QWidget#panel {{ border-left: 1px solid {border}; }}
     QWidget#banner {{
@@ -623,8 +626,12 @@ class UserTable(QWidget):
         self._line = QColor("#34363F")
         self._lines = ColumnLines(self)
         self.alone = QLabel("alone", self)
+        self.alone.setObjectName("alone")
         self.alone.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.alone.setAutoFillBackground(False)
+        self.alone.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.alone.hide()
+        self._text_css = ""
 
     def set_people(self, people, me, mine, other, line):
         self._clear(self.names_col)
@@ -638,6 +645,8 @@ class UserTable(QWidget):
         self._line = faded
         self._alone = len(people) == 1
         margins = self.layout().contentsMargins()
+        if self._text_css:
+            self.alone.setStyleSheet("background: transparent; font-size: {};".format(self._text_css))
         if self._alone:
             self.names.hide()
             self.files_scroll.hide()
@@ -664,14 +673,23 @@ class UserTable(QWidget):
             nick.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
             nick.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             color = mine if name == me else other
-            nick.setStyleSheet("color: {}; background: transparent; font-weight: 700;".format(color))
+            nick.setStyleSheet(
+                "color: {}; background: transparent; font-weight: 700;{}".format(
+                    color,
+                    " font-size: {};".format(self._text_css) if self._text_css else "",
+                )
+            )
             self.names_col.addWidget(nick)
             filename = person.get("file") or ""
             label = QLabel(filename)
             label.setWordWrap(False)
             label.setFixedHeight(row_h)
             label.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
-            label.setStyleSheet("background: transparent;")
+            label.setStyleSheet(
+                "background: transparent;{}".format(
+                    " font-size: {};".format(self._text_css) if self._text_css else ""
+                )
+            )
             wide = max(1, metrics.horizontalAdvance(filename) + 8)
             label.setFixedWidth(wide)
             widest = max(widest, wide)
@@ -1137,6 +1155,7 @@ class MainWindow(QMainWindow):
         playlist_title.setObjectName("heading")
         side.addWidget(playlist_title)
         self.files = FileList()
+        self.files.setObjectName("playlist")
         self.files.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.files.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.files.removed.connect(self._remove_file)
@@ -1239,14 +1258,28 @@ class MainWindow(QMainWindow):
         font = QFont()
         font.setPointSize(max(1, min(32, size)))
         QApplication.instance().setFont(font)
-        shared = QFont(self.chat.document().defaultFont())
-        if shared.pointSize() < 1:
-            shared = QFont(self.chat.font())
-        if shared.pointSize() < 1:
-            shared = font
-        self.files.setFont(shared)
-        self.room_users.setFont(shared)
-        self.room_users.alone.setFont(shared)
+        seen = QFont(self.chat.currentFont())
+        if seen.pointSize() > 0:
+            text_css = "{}pt".format(seen.pointSize())
+        elif seen.pixelSize() > 0:
+            text_css = "{}px".format(seen.pixelSize())
+        else:
+            text_css = "{}pt".format(font.pointSize())
+            seen.setPointSize(font.pointSize())
+        self.room_users._text_css = text_css
+        self.chat.document().setDefaultFont(seen)
+        self.setStyleSheet(
+            self.styleSheet()
+            + """
+            QListWidget#playlist, QWidget#usersbox, QWidget#usersbox QLabel, QLabel#alone {{
+                font-size: {size};
+            }}
+            """.format(size=text_css)
+        )
+        self.files.setFont(seen)
+        self.room_users.setFont(seen)
+        self.room_users.alone.setFont(seen)
+        self.room_users.alone.setStyleSheet("background: transparent; font-size: {};".format(text_css))
         pal = _palette(theme, appearance.get("accentColor"))
         for button in (self.play, self.ready, self.chat_btn, self.room, self.gear, self.bar_send):
             button.set_ink(pal["button_fg"], pal["on_fg"], pal["accent"])
