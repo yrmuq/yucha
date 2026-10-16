@@ -48,6 +48,7 @@ class Picture(QOpenGLWidget):
 
     fullscreenRequested = Signal()
     volumeChanged = Signal(int)
+    arrowPressed = Signal(int)
     filesDropped = Signal(list)
 
     def __init__(self, runtime, parent=None):
@@ -158,8 +159,13 @@ class Picture(QOpenGLWidget):
         super().mousePressEvent(event)
 
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key.Key_Space and not event.isAutoRepeat():
+        key = event.key()
+        if key == Qt.Key.Key_Space and not event.isAutoRepeat():
             self._pause()
+            event.accept()
+            return
+        if key in (Qt.Key.Key_Left, Qt.Key.Key_Right, Qt.Key.Key_Up, Qt.Key.Key_Down):
+            self.arrowPressed.emit(int(key))
             event.accept()
             return
         super().keyPressEvent(event)

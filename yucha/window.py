@@ -57,6 +57,7 @@ BAR_HEIGHT = 72
 CHAT_EXTRA = 52
 SEEK_STEPS = 100000
 CHAT_BOX = 300
+VOLUME_MAX = 130
 
 
 def _palette(theme, accent=None):
@@ -218,6 +219,16 @@ def _clock(seconds):
     if hours:
         return "{}:{:02d}:{:02d}".format(hours, minutes, secs)
     return "{}:{:02d}".format(minutes, secs)
+
+
+def _megabytes(size):
+    try:
+        value = float(size)
+    except (TypeError, ValueError):
+        return ""
+    if value <= 0:
+        return ""
+    return "{} MB".format(int(round(value / 1048576.0)))
 
 
 def _ass_escape(text):
@@ -507,6 +518,7 @@ class ColumnLines(QWidget):
         self.row_h = 0
         self.top = 0
         self.split_x = 0
+        self.split2_x = 0
         self.color = QColor("#34363F")
 
     def paintEvent(self, event):
@@ -517,6 +529,8 @@ class ColumnLines(QWidget):
         bottom = self.height() - self.top
         if self.split_x:
             painter.drawLine(self.split_x, self.top, self.split_x, bottom)
+        if self.split2_x:
+            painter.drawLine(self.split2_x, self.top, self.split2_x, bottom)
         for index in range(1, self.rows):
             y = self.top + index * self.row_h
             painter.drawLine(8, y, self.width() - 8, y)
@@ -618,8 +632,14 @@ class UserTable(QWidget):
         self.files_scroll.viewport().installEventFilter(self)
         self.names.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.names.installEventFilter(self)
+        self.sizes = QWidget()
+        self.sizes_col = QVBoxLayout(self.sizes)
+        self.sizes_col.setContentsMargins(0, 0, 0, 0)
+        self.sizes_col.setSpacing(0)
+        self.sizes.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         row.addWidget(self.names, 1)
         row.addWidget(self.files_scroll, 2)
+        row.addWidget(self.sizes, 0)
         self._row_h = 0
         self._line = QColor("#34363F")
         self._lines = ColumnLines(self)
@@ -628,6 +648,7 @@ class UserTable(QWidget):
     def set_people(self, people, me, mine, other, line):
         self._clear(self.names_col)
         self._clear(self.files_col)
+        self._clear(self.sizes_col)
         self._full_names = []
         metrics = QFontMetrics(self.font())
         row_h = metrics.height() + 8
@@ -672,10 +693,21 @@ class UserTable(QWidget):
             label.setFixedWidth(wide)
             widest = max(widest, wide)
             self.files_col.addWidget(label)
+            size = QLabel(_megabytes(person.get("size")))
+            size.setWordWrap(False)
+            size.setFixedHeight(row_h)
+            size.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight)
+            size.setStyleSheet(
+                "background: transparent;{}".format(
+                    " font-size: {};".format(self._text_css) if self._text_css else ""
+                )
+            )
+            self.sizes_col.addWidget(size)
         count = len(people)
         rows = max(2, count)
         content_h = rows * row_h
         self.files_host.setFixedSize(widest, max(1, count * row_h))
+        self.sizes.setMinimumWidth(metrics.horizontalAdvance("0000 MB") + 8)
         self.setFixedHeight(content_h + margins.top() + margins.bottom())
         self._elide_names()
         self._place_lines()
@@ -706,10 +738,13 @@ class UserTable(QWidget):
             return
         left = self.names.geometry().right()
         right = self.files_scroll.geometry().left()
+        file_right = self.files_scroll.geometry().right()
+        size_left = self.sizes.geometry().left()
         self._lines.rows = len(self._full_names)
         self._lines.row_h = self._row_h
         self._lines.top = self.layout().contentsMargins().top()
         self._lines.split_x = int((left + right) / 2) if right > left else left
+        self._lines.split2_x = int((file_right + size_left) / 2) if size_left > file_right else 0
         self._lines.color = self._line
         self._lines.setGeometry(self.rect())
         self._lines.show()
@@ -1023,6 +1058,7 @@ class MainWindow(QMainWindow):
         self.video = Picture(self.app.runtime)
         self.video.fullscreenRequested.connect(self._toggle_full)
         self.video.volumeChanged.connect(self._show_volume)
+        self.video.arrowPressed.connect(self._on_arrow)
         self.video.filesDropped.connect(self._add_dropped)
         col.addWidget(self.video, 1)
 
@@ -1034,6 +1070,7 @@ class MainWindow(QMainWindow):
         self.play = IconButton("play")
         self.elapsed = QLabel("0:00")
         self.slider = SeekBar(Qt.Orientation.Horizontal)
+        self.slider.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.slider.setRange(0, SEEK_STEPS)
         self.total = QLabel("0:00")
         self.ready = IconButton("ready")
@@ -1074,7 +1111,7 @@ class MainWindow(QMainWindow):
         volume_row = QHBoxLayout(self.volume_box)
         volume_row.setContentsMargins(12, 8, 12, 8)
         self.volume = QSlider(Qt.Orientation.Horizontal)
-        self.volume.setRange(0, 100)
+        self.volume.setRange(0, VOLUME_MAX)
         self.volume.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.volume_text = QLabel("0")
         volume_row.addWidget(self.volume, 1)
@@ -1299,12 +1336,67 @@ class MainWindow(QMainWindow):
         self._place_overlays()
 
     def _show_volume(self, level):
-        level = max(0, min(100, int(level)))
+        ceiling = self._volume_ceiling()
+        level = max(0, min(ceiling, int(level)))
+        if self.volume.maximum() != ceiling:
+            self.volume.setRange(0, ceiling)
         self.volume.setValue(level)
         self.volume_text.setText(str(level))
         self._volume_until = time.monotonic() + VOLUME_LIFE
         self.volume_box.show()
         self.volume_box.raise_()
+
+    def _volume_ceiling(self):
+        raw = self._get("volume-max")
+        try:
+            return max(101, int(round(float(raw))))
+        except (TypeError, ValueError):
+            return VOLUME_MAX
+
+    def _typing(self):
+        return isinstance(QApplication.focusWidget(), (QLineEdit, QTextEdit, QSpinBox))
+
+    def keyPressEvent(self, event):
+        if not self._typing() and self._on_arrow(int(event.key())):
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def _on_arrow(self, key):
+        if self._typing():
+            return False
+        if key == int(Qt.Key.Key_Left):
+            self._seek_by(-5)
+        elif key == int(Qt.Key.Key_Right):
+            self._seek_by(5)
+        elif key == int(Qt.Key.Key_Up):
+            self._volume_step(10)
+        elif key == int(Qt.Key.Key_Down):
+            self._volume_step(-10)
+        else:
+            return False
+        return True
+
+    def _seek_by(self, delta):
+        shown = self._shown_position() + delta
+        if self._duration > 0:
+            shown = min(self._duration, shown)
+        shown = max(0.0, shown)
+        self._pos_at = shown
+        self._pos_when = time.monotonic()
+        self._cmd("seek", str(delta), "relative")
+        self._move_knob()
+
+    def _volume_step(self, delta):
+        ceiling = self._volume_ceiling()
+        raw = self._get("volume")
+        try:
+            level = int(round(float(raw)))
+        except (TypeError, ValueError):
+            level = 0
+        level = max(0, min(ceiling, level + int(delta)))
+        self._set("volume", level)
+        self._show_volume(level)
 
     def _place_edge_scrolls(self):
         if not hasattr(self, "user_scroll") or not self._panel_open:
@@ -1586,6 +1678,7 @@ class MainWindow(QMainWindow):
                 "name": name,
                 "ready": ready,
                 "file": str(person.get("file") or ""),
+                "size": person.get("size"),
             })
             if ready:
                 ready_names.add(name)
