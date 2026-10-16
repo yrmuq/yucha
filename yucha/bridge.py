@@ -54,3 +54,28 @@ class Bridge(object):
             except ValueError:
                 continue
         return commands
+
+    def read_new(self, pos):
+        """Events written since byte offset pos. Returns (events, new_pos)."""
+        try:
+            raw = self.events_path.read_bytes()
+        except OSError:
+            return [], pos
+        if pos < 0 or pos > len(raw):
+            pos = 0
+        chunk = raw[pos:]
+        cut = chunk.rfind(b"\n")
+        if cut < 0:
+            return [], pos
+        chunk = chunk[:cut + 1]
+        pos += len(chunk)
+        events = []
+        for line in chunk.decode("utf-8", "replace").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                events.append(json.loads(line))
+            except ValueError:
+                continue
+        return events, pos

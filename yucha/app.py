@@ -137,8 +137,39 @@ class App(object):
 
 
 def main():
+    import os
+
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication
+
+    from yucha.window import MainWindow
+
+    # xcb so the video can be a child of this window. Wayland has no --wid.
+    os.environ["QT_QPA_PLATFORM"] = os.environ.get("YUCHA_QT_PLATFORM") or "xcb"
+    qt = QApplication([])
+    qt.setApplicationName("yucha")
     app = App()
-    launch_player(app.client, app.runtime)
+    window = MainWindow(app)
+    window.show()
+    qt.processEvents()
+    wid = window.video_win_id()
+    if wid <= 0:
+        raise SystemExit("yucha could not create the video area.")
+    player = launch_player(app.client, app.runtime, wid)
+    window.set_player(player)
     app.boot()
     app.serve_commands()
-    reactor.run()
+
+    def tick():
+        try:
+            reactor.iterate(0)
+        except Exception as exc:
+            if not getattr(tick, "reported", False):
+                tick.reported = True
+                print("yucha: {}".format(exc), file=sys.stderr)
+
+    timer = QTimer()
+    timer.timeout.connect(tick)
+    timer.start(10)
+    qt.aboutToQuit.connect(timer.stop)
+    qt.exec()

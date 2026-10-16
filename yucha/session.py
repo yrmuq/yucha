@@ -128,25 +128,38 @@ def mpv_path():
     return chosen
 
 
-def player_args(runtime):
-    script = ROOT / "ui" / "mpv" / "yucha.lua"
-    intf = ROOT / "third_party" / "syncplay" / "syncplay" / "resources" / "syncplayintf.lua"
-    opts = "yucha-syncplayintf={0},yucha-runtime={1}".format(intf, runtime)
-    args = [
-        "--script={0}".format(script),
-        "--script-opts={0}".format(opts),
-        "--osc=no",
-        "--geometry=1280x720",
-    ]
-    vo = os.environ.get("YUCHA_VO")
-    if vo:
-        args.append("--vo={0}".format(vo))
+def player_args(runtime, wid=None):
+    args = ["--osc=no"]
+    if wid:
+        conf = Path(runtime) / "input.conf"
+        # f and double-click would fullscreen mpv's own child window and
+        # pull the picture out of ours. Fullscreen is the yucha window.
+        conf.write_text(
+            "f ignore\nF ignore\nMBTN_LEFT_DBL ignore\n",
+            encoding="utf-8",
+        )
+        context = os.environ.get("YUCHA_GPU_CONTEXT") or "x11egl"
+        args.extend([
+            "--wid={}".format(int(wid)),
+            "--vo={}".format(os.environ.get("YUCHA_VO") or "gpu"),
+            "--gpu-context={}".format(context),
+            "--no-border",
+            "--window-dragging=no",
+            "--input-conf={}".format(conf),
+            "--cursor-autohide=1000",
+        ])
+        if "egl" in context:
+            args.append("--gpu-api=opengl")
+    else:
+        vo = os.environ.get("YUCHA_VO")
+        if vo:
+            args.append("--vo={}".format(vo))
     ao = os.environ.get("YUCHA_AO")
     if ao:
-        args.append("--ao={0}".format(ao))
+        args.append("--ao={}".format(ao))
     log_path = os.environ.get("YUCHA_LOG")
     if log_path:
-        args.append("--log-file={0}".format(log_path))
+        args.append("--log-file={}".format(log_path))
     return args
 
 
@@ -172,9 +185,11 @@ def store_runtime_placeholder():
     return ""
 
 
-def launch_player(client, runtime):
-    client._config["playerArgs"] = player_args(runtime)
-    MpvPlayer.run(
+def launch_player(client, runtime, wid):
+    # mpv would otherwise open its own Wayland window and ignore --wid.
+    os.environ.pop("WAYLAND_DISPLAY", None)
+    client._config["playerArgs"] = player_args(runtime, wid)
+    player = MpvPlayer.run(
         client,
         client._config["playerPath"],
         "",
@@ -182,6 +197,7 @@ def launch_player(client, runtime):
     )
     # Network start must not spawn a second mpv.
     client._playerClass = None
+    return player
 
 
 def apply_login(client, host, port, name, room, password):

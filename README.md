@@ -4,9 +4,9 @@
   <img src="assets/banner.png" alt="yucha — in active development" width="880">
 </p>
 
-> **In active development.** There is no 1.0 release. Alpha AppImages are on the releases page. The window is still plain on purpose. Flatpak waits until 1.0.
+> **In active development.** There is no 1.0 release. Alpha AppImages are on the releases page. Flatpak waits until 1.0.
 
-yucha is a media player for watching the same file at the same time as other people. Playback is [mpv](https://mpv.io/). Rooms, sync, and chat come from the [Syncplay](https://github.com/Syncplay/syncplay) client. Syncplay's own window is not used. The controls live in the mpv window: a button for the server, username, password, and room; the next launch reconnects with what was saved; chat sits on the side of the picture.
+yucha is a media player for watching the same file at the same time as other people. Playback is [mpv](https://mpv.io/). Rooms, sync, and chat come from the [Syncplay](https://github.com/Syncplay/syncplay) client. Syncplay's own window is not used. yucha draws the window: ordinary text fields for the server, username, password, and room, and ordinary buttons for playback. mpv only draws the picture inside that window.
 
 yucha is an independent project. It is not part of mpv and it is not part of Syncplay. Their names appear here only to identify the code it is built from.
 
@@ -19,7 +19,7 @@ python3 -m pip install -r requirements.txt
 python3 -m yucha
 ```
 
-Drop a video on the window. The first launch opens the room panel, because nothing is saved yet. The login is written to `~/.config/yucha/config.json` (mode 0600). The next launch leaves the panel closed, connects with the saved server, username, password, and room, and draws **connected** at the bottom right of the picture. Chat lines show on the right, vertically centered, for five seconds, with no box behind them.
+Drop a video on the picture. The first launch opens the room panel, because nothing is saved yet. The fields are ordinary text fields: Ctrl+V pastes, and holding Backspace deletes. The login is written to `~/.config/yucha/config.json` (mode 0600). The next launch leaves the panel closed and connects with the saved server, username, password, and room. **connected** stays on the picture. Chat lines show on the right of the picture for five seconds, and they also stay in the panel.
 
 ## AppImage
 
@@ -40,13 +40,13 @@ A version tag `vX.Y.Z` makes GitHub build the image and attach it to that releas
 
 ## What is on the window
 
-1. mpv is the only window. The Syncplay client runs beside it and keeps pause, seek, and position in sync. The protocol is the existing Syncplay client, not a rewrite.
-2. A button at the right end of the playback bar opens the room panel.
-3. The panel is a full-height column. The video moves aside while it opens. The fields keep their text inside the box, and Ctrl+V pastes into the focused field.
-4. No saved login: the panel opens by itself. Saved login: it stays closed, the client connects, **connected** stays on the picture, and a chat line appears for five seconds. Each new chat message is drawn the same way.
-5. A gear in the panel opens settings: theme, chat color, chat size, and interface size. The playback bar uses that theme and hides after 3 seconds. The loop button repeats the current file.
+1. One window. The picture is mpv, embedded in it. The Syncplay client runs beside that and keeps pause, seek, and position in sync. The protocol is the existing Syncplay client, not a rewrite.
+2. The **Room** button at the right end of the playback bar opens the room panel. The panel is a full-height column of ordinary fields.
+3. The bar has Play, the seek slider, Loop, and Full. It uses the theme and hides after 3 seconds without the mouse. Loop repeats the current file while the button is on.
+4. No saved login: the panel opens by itself. Saved login: it stays closed and the client connects.
+5. **Settings** in the panel sets the theme, chat color, chat size, and interface size.
 
-The interface is a small set of Lua modules (`ui/mpv/`). A module registers a widget and an action. It does not own the mouse or the keyboard. Themes are two palettes. A new control is another module, not a rewrite of the player.
+On a Wayland desktop the window is shown through XWayland. That is what lets the picture sit inside the same window as the fields.
 
 ## Status
 

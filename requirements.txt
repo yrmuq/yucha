@@ -2,3 +2,4 @@ twisted[tls]>=22.4.0
 pem>=21.2.0
 certifi>=2018.11.29
 service-identity>=21.1.0
+PySide6>=6.6,<6.13
