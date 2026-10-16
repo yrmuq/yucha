@@ -35,6 +35,8 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QPushButton,
     QScrollArea,
+    QScrollBar,
+    QSizePolicy,
     QSlider,
     QSpinBox,
     QStyledItemDelegate,
@@ -161,34 +163,34 @@ def _stylesheet(theme, accent=None):
         border: 1px solid {border};
         border-radius: 8px;
     }}
-    QWidget#panel QScrollBar:vertical {{
+    QWidget#panel QScrollBar#edgescroll:vertical {{
         background: transparent;
-        width: 6px;
+        width: 3px;
         margin: 0px;
     }}
-    QWidget#panel QScrollBar:horizontal {{
+    QWidget#panel QScrollBar#edgescroll:horizontal {{
         background: transparent;
-        height: 6px;
+        height: 3px;
         margin: 0px;
     }}
-    QWidget#panel QScrollBar::handle:vertical {{
+    QWidget#panel QScrollBar#edgescroll::handle:vertical {{
         background: {muted};
-        min-height: 24px;
-        border-radius: 3px;
+        min-height: 18px;
+        border-radius: 1px;
     }}
-    QWidget#panel QScrollBar::handle:horizontal {{
+    QWidget#panel QScrollBar#edgescroll::handle:horizontal {{
         background: {muted};
-        min-width: 24px;
-        border-radius: 3px;
+        min-width: 18px;
+        border-radius: 1px;
     }}
-    QWidget#panel QScrollBar::add-line:vertical, QWidget#panel QScrollBar::sub-line:vertical,
-    QWidget#panel QScrollBar::add-line:horizontal, QWidget#panel QScrollBar::sub-line:horizontal {{
+    QWidget#panel QScrollBar#edgescroll::add-line:vertical, QWidget#panel QScrollBar#edgescroll::sub-line:vertical,
+    QWidget#panel QScrollBar#edgescroll::add-line:horizontal, QWidget#panel QScrollBar#edgescroll::sub-line:horizontal {{
         height: 0px;
         width: 0px;
         background: none;
     }}
-    QWidget#panel QScrollBar::add-page:vertical, QWidget#panel QScrollBar::sub-page:vertical,
-    QWidget#panel QScrollBar::add-page:horizontal, QWidget#panel QScrollBar::sub-page:horizontal {{
+    QWidget#panel QScrollBar#edgescroll::add-page:vertical, QWidget#panel QScrollBar#edgescroll::sub-page:vertical,
+    QWidget#panel QScrollBar#edgescroll::add-page:horizontal, QWidget#panel QScrollBar#edgescroll::sub-page:horizontal {{
         background: none;
     }}
     QScrollArea#userfiles {{
@@ -318,6 +320,14 @@ _TIME = r"\d+:\d+(?::\d+)?"
 def _hidden_line(text):
     low = str(text).lower()
     return "persistent rooms" in low or "not a known media directory" in low
+
+
+def _startup_line(text):
+    return (
+        text.startswith("Attempting to connect to ")
+        or text.startswith("Attempting secure connection")
+        or text.startswith("Successfully reached ")
+    )
 
 
 def _status_spans(text):
@@ -510,8 +520,73 @@ class ColumnLines(QWidget):
         painter.end()
 
 
+class EdgeScroll(QScrollBar):
+    """A thin bar that sits just outside a field and hides after a second."""
+
+    def __init__(self, orientation, parent):
+        super().__init__(orientation, parent)
+        self.setObjectName("edgescroll")
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._native = None
+        self._timer = QTimer(self)
+        self._timer.setInterval(200)
+        self._timer.timeout.connect(self._tick)
+        self._until = 0
+        self.hide()
+        self.sliderMoved.connect(self.bump)
+
+    def attach(self, native):
+        self._native = native
+        native.rangeChanged.connect(self.sync)
+        native.valueChanged.connect(self._from_native)
+        self.valueChanged.connect(self._from_self)
+        self.sync()
+
+    def sync(self, *_args):
+        native = self._native
+        if native is None:
+            return
+        self.blockSignals(True)
+        self.setMinimum(native.minimum())
+        self.setMaximum(native.maximum())
+        self.setPageStep(native.pageStep())
+        self.setSingleStep(max(1, native.singleStep()))
+        self.setValue(native.value())
+        self.blockSignals(False)
+        if self.maximum() <= self.minimum():
+            self.hide()
+
+    def _from_native(self, value):
+        if self.value() != value:
+            self.blockSignals(True)
+            self.setValue(value)
+            self.blockSignals(False)
+
+    def _from_self(self, value):
+        native = self._native
+        if native is not None and native.value() != value:
+            native.setValue(value)
+
+    def bump(self, *_args):
+        if self.maximum() <= self.minimum():
+            self.hide()
+            return
+        self._until = time.monotonic() + 1.0
+        self.show()
+        self.raise_()
+        if not self._timer.isActive():
+            self._timer.start()
+
+    def _tick(self):
+        if time.monotonic() >= self._until:
+            self.hide()
+            self._timer.stop()
+
+
 class UserTable(QWidget):
     """Nicks stay put. File names sit in the wider column and scroll sideways."""
+
+    wheeled = Signal()
 
     def __init__(self):
         super().__init__()
@@ -529,7 +604,7 @@ class UserTable(QWidget):
         self.files_scroll.setObjectName("userfiles")
         self.files_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.files_scroll.setWidgetResizable(False)
-        self.files_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.files_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.files_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.files_host = QWidget()
         self.files_col = QVBoxLayout(self.files_host)
@@ -537,7 +612,9 @@ class UserTable(QWidget):
         self.files_col.setSpacing(0)
         self.files_scroll.viewport().setAutoFillBackground(False)
         self.files_scroll.setWidget(self.files_host)
+        self.files_scroll.viewport().installEventFilter(self)
         self.names.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.names.installEventFilter(self)
         row.addWidget(self.names, 1)
         row.addWidget(self.files_scroll, 2)
         self._row_h = 0
@@ -559,7 +636,8 @@ class UserTable(QWidget):
             nick = QLabel(name)
             nick.setWordWrap(False)
             nick.setFixedHeight(row_h)
-            nick.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+            nick.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            nick.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             color = mine if name == me else other
             nick.setStyleSheet("color: {}; background: transparent;".format(color))
             self.names_col.addWidget(nick)
@@ -577,11 +655,26 @@ class UserTable(QWidget):
         rows = max(2, count)
         content_h = rows * row_h
         self.files_host.setFixedSize(widest, max(1, count * row_h))
-        bar_h = self.files_scroll.horizontalScrollBar().sizeHint().height() if count else 0
         margins = self.layout().contentsMargins()
-        self.setFixedHeight(content_h + bar_h + margins.top() + margins.bottom())
+        self.setFixedHeight(content_h + margins.top() + margins.bottom())
         self._elide_names()
         self._place_lines()
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Type.Wheel and watched in (self.names, self.files_scroll.viewport()):
+            self._scroll_files(event)
+            return True
+        return super().eventFilter(watched, event)
+
+    def wheelEvent(self, event):
+        self._scroll_files(event)
+        event.accept()
+
+    def _scroll_files(self, event):
+        bar = self.files_scroll.horizontalScrollBar()
+        delta = event.angleDelta().y() or event.angleDelta().x()
+        bar.setValue(bar.value() - delta)
+        self.wheeled.emit()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -1029,7 +1122,17 @@ class MainWindow(QMainWindow):
         self.chat = QTextEdit()
         self.chat.setObjectName("roomchat")
         self.chat.setReadOnly(True)
+        self.chat.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         side.addWidget(self.chat, 1)
+        self.user_scroll = EdgeScroll(Qt.Orientation.Horizontal, self.panel)
+        self.file_scroll = EdgeScroll(Qt.Orientation.Vertical, self.panel)
+        self.chat_scroll = EdgeScroll(Qt.Orientation.Vertical, self.panel)
+        self.user_scroll.attach(self.room_users.files_scroll.horizontalScrollBar())
+        self.file_scroll.attach(self.files.verticalScrollBar())
+        self.chat_scroll.attach(self.chat.verticalScrollBar())
+        self.room_users.wheeled.connect(self.user_scroll.bump)
+        self.files.viewport().installEventFilter(self)
+        self.chat.viewport().installEventFilter(self)
         self.stage.installEventFilter(self)
         self._place_overlays()
 
@@ -1041,6 +1144,11 @@ class MainWindow(QMainWindow):
     def eventFilter(self, watched, event):
         if watched is self.stage and event.type() == QEvent.Type.Resize:
             self._place_overlays()
+        elif event.type() == QEvent.Type.Wheel:
+            if hasattr(self, "files") and watched is self.files.viewport():
+                self.file_scroll.bump()
+            elif hasattr(self, "chat") and watched is self.chat.viewport():
+                self.chat_scroll.bump()
         return super().eventFilter(watched, event)
 
     def showEvent(self, event):
@@ -1071,6 +1179,7 @@ class MainWindow(QMainWindow):
             self.chat_line.show()
         else:
             self.chat_line.hide()
+        self._place_edge_scrolls()
         box_width, box_height = 280, 48
         self.volume_box.setGeometry(
             max(0, (width - box_width) // 2),
@@ -1150,6 +1259,21 @@ class MainWindow(QMainWindow):
         self._volume_until = time.monotonic() + VOLUME_LIFE
         self.volume_box.show()
         self.volume_box.raise_()
+
+    def _place_edge_scrolls(self):
+        if not hasattr(self, "user_scroll") or not self._panel_open:
+            return
+        layout = self.panel.layout()
+        if layout is not None:
+            layout.activate()
+        box = self.room_users.geometry()
+        self.user_scroll.setGeometry(box.x() + 8, box.bottom() + 1, max(12, box.width() - 16), 3)
+        for widget, bar in ((self.files, self.file_scroll), (self.chat, self.chat_scroll)):
+            geo = widget.geometry()
+            bar.setGeometry(geo.right() + 1, geo.y() + 6, 3, max(12, geo.height() - 12))
+        for bar in (self.user_scroll, self.file_scroll, self.chat_scroll):
+            if bar.isVisible():
+                bar.raise_()
 
     def _toggle_pause(self):
         eof = self._get("eof-reached")
@@ -1245,6 +1369,7 @@ class MainWindow(QMainWindow):
         row_h = max(24, QFontMetrics(self.files.font()).height() + 12)
         rows = max(2, self.files.count())
         self.files.setFixedHeight(rows * row_h + 2 * self.files.frameWidth())
+        self._place_edge_scrolls()
 
     def _toggle_ready(self):
         client = getattr(self.app, "client", None)
@@ -1451,6 +1576,7 @@ class MainWindow(QMainWindow):
             self.ready.blockSignals(True)
             self.ready.setChecked(bool(mine["ready"]))
             self.ready.blockSignals(False)
+        self._place_edge_scrolls()
 
     def _paint_chat(self):
         if not hasattr(self, "chat"):
@@ -1470,7 +1596,8 @@ class MainWindow(QMainWindow):
             if any(span["k"] == "nick" and span["v"] in ("", "None") for span in spans):
                 return
         self._chat_lines.append(spans)
-        self._osd.append((time.monotonic(), spans))
+        if not _startup_line(text):
+            self._osd.append((time.monotonic(), spans))
         self._paint_chat()
 
     def _refresh_transport(self):
@@ -1581,19 +1708,19 @@ class MainWindow(QMainWindow):
                 )
             )
             text_y = y + pad
-            dot_x = ready_x + pad + name_col + max(0, (inner - name_col - metrics.horizontalAdvance("●")) / 2)
             for person in people:
                 dot = "00FF00" if person["ready"] else "0000FF"
                 ink = accent if person["name"] == me else accent2
-                shown = metrics.elidedText(person["name"], Qt.TextElideMode.ElideRight, name_col)
+                shown = metrics.elidedText(person["name"], Qt.TextElideMode.ElideRight, max(8, name_col - 4))
+                mid_y = int(text_y + row_h / 2)
                 lines.append(
-                    "{{\\an7\\pos({},{})\\bord0\\shad0\\fs{}\\1c&H{}&}}{}".format(
-                        ready_x + pad, text_y, size, ink, _ass_escape(shown)
+                    "{{\\an5\\pos({},{})\\bord0\\shad0\\fs{}\\1c&H{}&}}{}".format(
+                        int(ready_x + pad + name_col / 2), mid_y, size, ink, _ass_escape(shown)
                     )
                 )
                 lines.append(
-                    "{{\\an7\\pos({},{})\\bord0\\shad0\\fs{}\\1c&H{}&}}●".format(
-                        int(dot_x), text_y, size, dot
+                    "{{\\an5\\pos({},{})\\bord0\\shad0\\fs{}\\1c&H{}&}}●".format(
+                        int(ready_x + pad + name_col + (inner - name_col) / 2), mid_y, size, dot
                     )
                 )
                 text_y += row_h
@@ -1623,8 +1750,8 @@ class MainWindow(QMainWindow):
                     bits.append("{{\\1c&H{}&}}{}".format(ink, _ass_escape(span["v"])))
                 body.append("".join(bits))
             lines.append(
-                "{{\\an7\\pos({},{})\\p0\\bord0\\shad0\\q2\\fs{}\\1c&H{}&}}{}".format(
-                    x + pad, y + pad, size, color, "\\N".join(body)
+                "{{\\an4\\pos({},{})\\p0\\bord0\\shad0\\q2\\fs{}\\1c&H{}&}}{}".format(
+                    x + pad, int(y + block_h / 2), size, color, "\\N".join(body)
                 )
             )
             y += block_h + 6

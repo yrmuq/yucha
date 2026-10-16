@@ -1,7 +1,7 @@
 # Copyright (C) 2026 yrmuq
 # SPDX-License-Identifier: GPL-3.0-or-later
 # An annotated tag vX.Y.Z builds the AppImage and publishes
-# "yucha X.Y.Z alpha". The tag message is the release body.
+# "yucha X.Y.Z beta". The tag message is the release body.
 # Use only the sections that apply, in this order:
 #   **Features:**
 #   **Fixes:**
@@ -42,7 +42,7 @@ jobs:
       - name: Build
         run: packaging/appimage/build.sh
 
-      - name: Publish alpha release
+      - name: Publish beta release
         if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -81,12 +81,12 @@ jobs:
             gh release edit "$TAG" \
               --repo "$GITHUB_REPOSITORY" \
               --prerelease \
-              --title "yucha ${VER} alpha" \
+              --title "yucha ${VER} beta" \
               --notes-file notes.md
           else
             gh release create "$TAG" dist/yucha-x86_64.AppImage \
               --repo "$GITHUB_REPOSITORY" \
               --prerelease \
-              --title "yucha ${VER} alpha" \
+              --title "yucha ${VER} beta" \
               --notes-file notes.md
           fi

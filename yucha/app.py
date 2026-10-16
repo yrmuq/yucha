@@ -144,13 +144,19 @@ class App(object):
 
 
 def main():
+    from pathlib import Path
+
     from PySide6.QtCore import QTimer
+    from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import QApplication
 
     from yucha.window import MainWindow
 
     qt = QApplication([])
     qt.setApplicationName("yucha")
+    icon = Path(__file__).resolve().parent / "icon.png"
+    if icon.is_file():
+        qt.setWindowIcon(QIcon(str(icon)))
     # Twisted only finishes name lookup after its startup. iterate() alone
     # never runs that, so a room connect would stay on "Connecting...".
     reactor.startRunning(installSignalHandlers=False)

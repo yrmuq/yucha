@@ -1,10 +1,14 @@
 # yucha
 
 <p align="center">
+  <img src="assets/icon.png" alt="yucha" width="96">
+</p>
+
+<p align="center">
   <img src="assets/banner.png" alt="yucha — in active development" width="880">
 </p>
 
-> **In active development.** There is no 1.0 release. Alpha AppImages are on the releases page. Flatpak waits until 1.0.
+> **In active development.** There is no 1.0 release. Beta AppImages are on the releases page. Flatpak waits until 1.0.
 
 yucha is a media player for watching the same file at the same time as other people. Playback is [mpv](https://mpv.io/)'s engine, inside this window. Rooms, sync, and chat come from the [Syncplay](https://github.com/Syncplay/syncplay) client. Neither program's own window is used. The fields and buttons are ordinary ones. The picture is a frame drawn in the window, not a second window.
 
@@ -23,7 +27,7 @@ Drop a video on the picture. It starts at 0:00. Right click pauses and resumes. 
 
 ## AppImage
 
-Alpha builds for x86_64 are on the [releases page](https://github.com/yrmuq/yucha/releases). Each version stays there. The image carries its own Python, the Syncplay client, and an mpv 0.41.0 binary, so the machine does not need those installed. What is bundled, and under which license, is in [packaging/appimage/BUNDLED.txt](packaging/appimage/BUNDLED.txt).
+Beta builds for x86_64 are on the [releases page](https://github.com/yrmuq/yucha/releases). Each version stays there. The image carries its own Python, the Syncplay client, and an mpv 0.41.0 binary, so the machine does not need those installed. What is bundled, and under which license, is in [packaging/appimage/BUNDLED.txt](packaging/appimage/BUNDLED.txt).
 
 ```sh
 chmod +x yucha-x86_64.AppImage
@@ -36,7 +40,7 @@ On Bazzite, Gear Lever (from Bazaar) can add it to the menu. If the file refuses
 ./yucha-x86_64.AppImage --appimage-extract-and-run
 ```
 
-A version tag `vX.Y.Z` makes GitHub build the image and attach it to that release. The release title is `yucha X.Y.Z alpha`. To rebuild the same image on your own machine, run `packaging/appimage/build.sh`. It downloads CPython, the mpv AppImage it wraps, and appimagetool. The result is `dist/yucha-x86_64.AppImage`, which is not committed.
+A version tag `vX.Y.Z` makes GitHub build the image and attach it to that release. The release title is `yucha X.Y.Z beta`. To rebuild the same image on your own machine, run `packaging/appimage/build.sh`. It downloads CPython, the mpv AppImage it wraps, and appimagetool. The result is `dist/yucha-x86_64.AppImage`, which is not committed.
 
 ## What is on the window
 
