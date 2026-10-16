@@ -14,6 +14,7 @@ from PySide6.QtGui import (
     QColor,
     QCursor,
     QFont,
+    QFontInfo,
     QFontMetrics,
     QPainter,
     QPainterPath,
@@ -117,9 +118,6 @@ def _stylesheet(theme, accent=None):
     QLabel#muted {{ color: {muted}; }}
     QLabel#heading {{
         font-weight: 700;
-        background: transparent;
-    }}
-    QLabel#alone {{
         background: transparent;
     }}
     QWidget#bar, QWidget#chatline {{ border-top: 1px solid {border}; }}
@@ -436,7 +434,8 @@ class FileDelegate(QStyledItemDelegate):
         if ink is None:
             ink = option.palette.color(QPalette.ColorRole.Text)
         painter.setPen(ink)
-        painter.setFont(option.font)
+        host = option.widget
+        painter.setFont(host.font() if host is not None else option.font)
         painter.drawText(
             option.rect.adjusted(6, 0, -6, 0),
             Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
@@ -622,15 +621,8 @@ class UserTable(QWidget):
         row.addWidget(self.names, 1)
         row.addWidget(self.files_scroll, 2)
         self._row_h = 0
-        self._alone = False
         self._line = QColor("#34363F")
         self._lines = ColumnLines(self)
-        self.alone = QLabel("alone", self)
-        self.alone.setObjectName("alone")
-        self.alone.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.alone.setAutoFillBackground(False)
-        self.alone.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.alone.hide()
         self._text_css = ""
 
     def set_people(self, people, me, mine, other, line):
@@ -643,21 +635,7 @@ class UserTable(QWidget):
         faded = QColor(line)
         faded.setAlpha(56)
         self._line = faded
-        self._alone = len(people) == 1
         margins = self.layout().contentsMargins()
-        if self._text_css:
-            self.alone.setStyleSheet("background: transparent; font-size: {};".format(self._text_css))
-        if self._alone:
-            self.names.hide()
-            self.files_scroll.hide()
-            self._lines.hide()
-            self.alone.setFont(self.font())
-            self.alone.show()
-            self.alone.raise_()
-            self.setFixedHeight(2 * row_h + margins.top() + margins.bottom())
-            self._place_lines()
-            return
-        self.alone.hide()
         self.names.show()
         self.files_scroll.show()
         widest = 1
@@ -725,11 +703,6 @@ class UserTable(QWidget):
 
     def _place_lines(self):
         if not hasattr(self, "_lines"):
-            return
-        if self._alone:
-            self.alone.setGeometry(self.rect())
-            self.alone.raise_()
-            self._lines.hide()
             return
         left = self.names.geometry().right()
         right = self.files_scroll.geometry().left()
@@ -1258,28 +1231,28 @@ class MainWindow(QMainWindow):
         font = QFont()
         font.setPointSize(max(1, min(32, size)))
         QApplication.instance().setFont(font)
-        seen = QFont(self.chat.currentFont())
-        if seen.pointSize() > 0:
-            text_css = "{}pt".format(seen.pointSize())
-        elif seen.pixelSize() > 0:
-            text_css = "{}px".format(seen.pixelSize())
-        else:
-            text_css = "{}pt".format(font.pointSize())
-            seen.setPointSize(font.pointSize())
+        info = QFontInfo(self.chat.document().defaultFont())
+        point = info.pointSize()
+        if point < 1:
+            point = font.pointSize()
+        shared = QFont(font)
+        shared.setFamily(info.family() or font.family())
+        shared.setPointSize(point)
+        self.chat.setFont(shared)
+        self.chat.document().setDefaultFont(shared)
+        text_css = "{}pt".format(point)
         self.room_users._text_css = text_css
-        self.chat.document().setDefaultFont(seen)
+        self.files.setFont(shared)
+        self.room_users.setFont(shared)
         self.setStyleSheet(
             self.styleSheet()
             + """
-            QListWidget#playlist, QWidget#usersbox, QWidget#usersbox QLabel, QLabel#alone {{
+            QTextEdit#roomchat, QListWidget#playlist, QListWidget#playlist::item,
+            QWidget#usersbox QLabel {{
                 font-size: {size};
             }}
             """.format(size=text_css)
         )
-        self.files.setFont(seen)
-        self.room_users.setFont(seen)
-        self.room_users.alone.setFont(seen)
-        self.room_users.alone.setStyleSheet("background: transparent; font-size: {};".format(text_css))
         pal = _palette(theme, appearance.get("accentColor"))
         for button in (self.play, self.ready, self.chat_btn, self.room, self.gear, self.bar_send):
             button.set_ink(pal["button_fg"], pal["on_fg"], pal["accent"])
