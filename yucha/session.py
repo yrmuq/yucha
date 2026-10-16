@@ -194,6 +194,7 @@ def apply_login(client, host, port, name, room, password):
     client._config["port"] = int(port)
     client._config["name"] = name
     client._config["room"] = room
+    client._host = "{}:{}".format(host, int(port))
     if password:
         client._serverPassword = hashlib.md5(password.encode("utf-8")).hexdigest()
     else:

@@ -433,6 +433,7 @@ class FileDelegate(QStyledItemDelegate):
         if ink is None:
             ink = option.palette.color(QPalette.ColorRole.Text)
         painter.setPen(ink)
+        painter.setFont(option.font)
         painter.drawText(
             option.rect.adjusted(6, 0, -6, 0),
             Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
@@ -618,8 +619,12 @@ class UserTable(QWidget):
         row.addWidget(self.names, 1)
         row.addWidget(self.files_scroll, 2)
         self._row_h = 0
+        self._alone = False
         self._line = QColor("#34363F")
         self._lines = ColumnLines(self)
+        self.alone = QLabel("alone", self)
+        self.alone.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.alone.hide()
 
     def set_people(self, people, me, mine, other, line):
         self._clear(self.names_col)
@@ -628,18 +633,38 @@ class UserTable(QWidget):
         metrics = QFontMetrics(self.font())
         row_h = metrics.height() + 8
         self._row_h = row_h
-        self._line = QColor(line)
+        faded = QColor(line)
+        faded.setAlpha(56)
+        self._line = faded
+        self._alone = len(people) == 1
+        margins = self.layout().contentsMargins()
+        if self._alone:
+            self.names.hide()
+            self.files_scroll.hide()
+            self._lines.hide()
+            self.alone.setFont(self.font())
+            self.alone.show()
+            self.alone.raise_()
+            self.setFixedHeight(2 * row_h + margins.top() + margins.bottom())
+            self._place_lines()
+            return
+        self.alone.hide()
+        self.names.show()
+        self.files_scroll.show()
         widest = 1
+        bold = QFont(self.font())
+        bold.setBold(True)
         for person in people:
             name = person["name"]
             self._full_names.append(name)
             nick = QLabel(name)
             nick.setWordWrap(False)
             nick.setFixedHeight(row_h)
-            nick.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            nick.setFont(bold)
+            nick.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
             nick.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             color = mine if name == me else other
-            nick.setStyleSheet("color: {}; background: transparent;".format(color))
+            nick.setStyleSheet("color: {}; background: transparent; font-weight: 700;".format(color))
             self.names_col.addWidget(nick)
             filename = person.get("file") or ""
             label = QLabel(filename)
@@ -655,7 +680,6 @@ class UserTable(QWidget):
         rows = max(2, count)
         content_h = rows * row_h
         self.files_host.setFixedSize(widest, max(1, count * row_h))
-        margins = self.layout().contentsMargins()
         self.setFixedHeight(content_h + margins.top() + margins.bottom())
         self._elide_names()
         self._place_lines()
@@ -684,6 +708,11 @@ class UserTable(QWidget):
     def _place_lines(self):
         if not hasattr(self, "_lines"):
             return
+        if self._alone:
+            self.alone.setGeometry(self.rect())
+            self.alone.raise_()
+            self._lines.hide()
+            return
         left = self.names.geometry().right()
         right = self.files_scroll.geometry().left()
         self._lines.rows = len(self._full_names)
@@ -692,12 +721,15 @@ class UserTable(QWidget):
         self._lines.split_x = int((left + right) / 2) if right > left else left
         self._lines.color = self._line
         self._lines.setGeometry(self.rect())
+        self._lines.show()
         self._lines.raise_()
         self._lines.update()
 
     def _elide_names(self):
         width = max(1, self.names.width() - 4)
-        metrics = QFontMetrics(self.font())
+        bold = QFont(self.font())
+        bold.setBold(True)
+        metrics = QFontMetrics(bold)
         for index, full in enumerate(self._full_names):
             item = self.names_col.itemAt(index)
             label = item.widget() if item is not None else None
@@ -1207,6 +1239,14 @@ class MainWindow(QMainWindow):
         font = QFont()
         font.setPointSize(max(1, min(32, size)))
         QApplication.instance().setFont(font)
+        shared = QFont(self.chat.document().defaultFont())
+        if shared.pointSize() < 1:
+            shared = QFont(self.chat.font())
+        if shared.pointSize() < 1:
+            shared = font
+        self.files.setFont(shared)
+        self.room_users.setFont(shared)
+        self.room_users.alone.setFont(shared)
         pal = _palette(theme, appearance.get("accentColor"))
         for button in (self.play, self.ready, self.chat_btn, self.room, self.gear, self.bar_send):
             button.set_ink(pal["button_fg"], pal["on_fg"], pal["accent"])
@@ -1696,10 +1736,11 @@ class MainWindow(QMainWindow):
         pad = 8
         if people:
             widest = max(metrics.horizontalAdvance(person["name"]) for person in people)
-            inner = max(72, int(widest * 3 / 2))
-            ready_w = min(max(96, width - 16), inner + pad * 2)
+            circle_w = max(metrics.height() + 8, 28)
+            name_w = widest + 16
+            ready_w = min(max(96, width - 16), name_w + circle_w + pad * 2)
             inner = ready_w - pad * 2
-            name_col = int(inner * 2 / 3)
+            name_col = max(24, inner - circle_w)
             ready_h = pad * 2 + len(people) * row_h
             ready_x = max(8, width - 8 - ready_w)
             lines.append(
