@@ -42,6 +42,7 @@ DEFAULTS = {
     "appearance": {
         "theme": "dark",
         "chatColor": "#F4F1EA",
+        "accentColor": "#9A3A52",
         "chatFontSize": 18,
         "uiFontSize": 16,
     },

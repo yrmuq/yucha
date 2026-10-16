@@ -19,7 +19,7 @@ python3 -m pip install -r requirements.txt
 python3 -m yucha
 ```
 
-Drop a video on the picture. It starts at 0:00. Right click pauses and resumes. Space does the same when the picture is focused. Double click toggles fullscreen. The wheel changes the volume and shows the level for two seconds. A click on the time bar jumps to that moment. The first launch opens the room panel, because nothing is saved yet. The login is written to `~/.config/yucha/config.json` (mode 0600). The next launch leaves the panel closed and connects with the saved server, username, password, and room. The panel shows Room connected, Not configured, or Error connecting. The gear beside that banner opens the connection fields. Chat lines, and the notices Syncplay itself would show, stay in the panel. Chat lines also show on the picture for five seconds. A person who is not ready stays at the top right of the picture with a red dot. A person who is ready shows with a green dot for two seconds.
+Drop a video on the picture. It starts at 0:00. Right click pauses and resumes. Space does the same when the picture is focused. Double click toggles fullscreen. The wheel changes the volume and shows the level for two seconds. A click on the time bar jumps to that moment. The first launch opens the room panel, because nothing is saved yet. The login is written to `~/.config/yucha/config.json` (mode 0600). The next launch leaves the panel closed and connects with the saved server, username, password, and room. The panel shows Room connected, Not configured, or Error connecting. The gear beside that banner opens the connection fields. Chat lines, and the notices Syncplay itself would show, stay in the panel. Chat lines also show on the picture for five seconds, and the name is in the accent color. A person who is not ready stays at the top right of the picture with a red dot. A person who is ready shows with a green dot for two seconds.
 
 ## AppImage
 
@@ -42,9 +42,9 @@ A version tag `vX.Y.Z` makes GitHub build the image and attach it to that releas
 
 1. One window. mpv's engine draws the picture inside it and does not open a window of its own. The Syncplay client keeps pause, seek, and position in sync. The protocol is the existing Syncplay client, not a rewrite.
 2. The room button at the right end of the playback bar opens the room panel. The panel sits on top of the picture and stops above the bar. The picture is not resized. Connection fields are in the window opened by the gear.
-3. The bar sits on top of the picture. It has play, the time bar, loop, chat, and room, as icons. The chat button opens a message field and the bar stays while that field is open. The bar uses the theme and hides after 3 seconds without the mouse, unless the room panel or the message field is open. Loop repeats the current file while the button is on. Right click and Space pause and resume. Double click toggles fullscreen. The wheel changes the volume. A click on the time bar jumps to that moment.
+3. The bar sits on top of the picture. It has play, the time bar, loop, chat, and room, as icons. The chat button opens a message field above the bar. The bar itself does not move, and it stays while that field is open. A failed connection shows Reconnect under the banner. The bar uses the theme and hides after 3 seconds without the mouse, unless the room panel or the message field is open. Loop repeats the current file while the button is on. Right click and Space pause and resume. Double click toggles fullscreen. The wheel changes the volume. A click on the time bar jumps to that moment.
 4. No saved login: the panel opens by itself. Saved login: it stays closed and the client connects.
-5. **Settings** in the panel sets the theme, chat color, chat size, and interface size.
+5. **Settings** in the panel sets the theme, chat color, accent color, chat size, and interface size.
 
 ## Status
 

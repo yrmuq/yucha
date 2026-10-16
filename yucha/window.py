@@ -32,12 +32,13 @@ READY_LIFE = 2.0
 VOLUME_LIFE = 2.0
 PANEL_WIDTH = 380
 BAR_HEIGHT = 72
-CHAT_EXTRA = 44
+CHAT_EXTRA = 52
+SEEK_STEPS = 100000
 
 
-def _palette(theme):
+def _palette(theme, accent=None):
     if theme == "light":
-        return {
+        pal = {
             "bg": "#F7F4EE",
             "fg": "#1A1A1A",
             "muted": "#5C584F",
@@ -49,24 +50,28 @@ def _palette(theme):
             "accent": "#7A2438",
             "bad": "#9C3B3B",
         }
-    return {
-        "bg": "#12141A",
-        "fg": "#F3EFE6",
-        "muted": "#9A958C",
-        "field": "#1C1E26",
-        "border": "#34363F",
-        "button": "#2C303A",
-        "button_fg": "#F3EFE6",
-        "on_fg": "#F7F4EE",
-        "accent": "#9A3A52",
-        "bad": "#E07474",
-    }
+    else:
+        pal = {
+            "bg": "#12141A",
+            "fg": "#F3EFE6",
+            "muted": "#9A958C",
+            "field": "#1C1E26",
+            "border": "#34363F",
+            "button": "#2C303A",
+            "button_fg": "#F3EFE6",
+            "on_fg": "#F7F4EE",
+            "accent": "#9A3A52",
+            "bad": "#E07474",
+        }
+    if isinstance(accent, str) and len(accent) == 7 and accent.startswith("#"):
+        pal["accent"] = accent
+    return pal
 
 
-def _stylesheet(theme):
-    p = _palette(theme)
+def _stylesheet(theme, accent=None):
+    p = _palette(theme, accent)
     return """
-    QMainWindow, QDialog, QWidget#root, QWidget#stage, QWidget#panel, QWidget#bar, QWidget#volume, QLabel {{
+    QMainWindow, QDialog, QWidget#root, QWidget#stage, QWidget#panel, QWidget#bar, QWidget#chatline, QWidget#volume, QLabel {{
         background: {bg};
         color: {fg};
     }}
@@ -88,7 +93,7 @@ def _stylesheet(theme):
         color: {on_fg};
     }}
     QLabel#muted {{ color: {muted}; }}
-    QWidget#bar {{ border-top: 1px solid {border}; }}
+    QWidget#bar, QWidget#chatline {{ border-top: 1px solid {border}; }}
     QWidget#panel {{ border-left: 1px solid {border}; }}
     QWidget#banner {{
         background: {field};
@@ -243,6 +248,15 @@ class IconButton(QPushButton):
         elif kind == "room":
             painter.drawRoundedRect(int(cx - 8), int(cy - 7), 16, 14, 2, 2)
             painter.drawLine(QPointF(cx + 3, cy - 7), QPointF(cx + 3, cy + 7))
+        elif kind == "send":
+            painter.setBrush(color)
+            path = QPainterPath()
+            path.moveTo(cx - 7, cy + 4)
+            path.lineTo(cx + 7, cy - 6)
+            path.lineTo(cx + 1, cy + 6)
+            path.lineTo(cx - 1, cy + 1)
+            path.closeSubpath()
+            painter.drawPath(path)
         elif kind == "gear":
             painter.drawEllipse(QPointF(cx, cy), 3.2, 3.2)
             for step in range(8):
@@ -267,6 +281,7 @@ class SettingsDialog(QDialog):
         current = appearance.get("theme") or "dark"
         self.theme.setCurrentIndex(0 if current != "light" else 1)
         self.color = QLineEdit(str(appearance.get("chatColor") or "#F4F1EA"))
+        self.accent = QLineEdit(str(appearance.get("accentColor") or "#9A3A52"))
         self.chat_size = QSpinBox()
         self.chat_size.setRange(12, 48)
         self.chat_size.setValue(int(appearance.get("chatFontSize") or 18))
@@ -275,6 +290,7 @@ class SettingsDialog(QDialog):
         self.ui_size.setValue(int(appearance.get("uiFontSize") or 16))
         layout.addRow("Theme", self.theme)
         layout.addRow("Chat color", self.color)
+        layout.addRow("Accent color", self.accent)
         layout.addRow("Chat size", self.chat_size)
         layout.addRow("Interface size", self.ui_size)
         buttons = QHBoxLayout()
@@ -290,9 +306,13 @@ class SettingsDialog(QDialog):
         color = self.color.text().strip()
         if len(color) != 7 or not color.startswith("#"):
             color = "#F4F1EA"
+        accent = self.accent.text().strip()
+        if len(accent) != 7 or not accent.startswith("#"):
+            accent = "#9A3A52"
         self.values = {
             "theme": self.theme.currentData(),
             "chatColor": color,
+            "accentColor": accent,
             "chatFontSize": self.chat_size.value(),
             "uiFontSize": self.ui_size.value(),
         }
@@ -358,6 +378,10 @@ class MainWindow(QMainWindow):
         self._bar_open = True
         self._users = []
         self._ready_until = {}
+        self._pos_at = 0.0
+        self._pos_when = time.monotonic()
+        self._speed = 1.0
+        self._paused = True
         self._volume_until = 0
         self.setWindowTitle("yucha")
         self.resize(1280, 720)
@@ -370,6 +394,10 @@ class MainWindow(QMainWindow):
         self._ui_timer.setInterval(200)
         self._ui_timer.timeout.connect(self._tick)
         self._ui_timer.start()
+        self._knob_timer = QTimer(self)
+        self._knob_timer.setInterval(33)
+        self._knob_timer.timeout.connect(self._move_knob)
+        self._knob_timer.start()
 
     def _build(self):
         root = QWidget()
@@ -393,27 +421,12 @@ class MainWindow(QMainWindow):
         self.bar = QWidget(column)
         self.bar.setObjectName("bar")
         self._overlay(self.bar)
-        bar_col = QVBoxLayout(self.bar)
-        bar_col.setContentsMargins(10, 8, 10, 8)
-        bar_col.setSpacing(6)
-        self.chat_line = QWidget()
-        chat_row = QHBoxLayout(self.chat_line)
-        chat_row.setContentsMargins(0, 0, 0, 0)
-        self.bar_message = QLineEdit()
-        self.bar_message.setPlaceholderText("Message")
-        self.bar_message.returnPressed.connect(self._send_bar_chat)
-        self.bar_send = QPushButton("Send")
-        self.bar_send.clicked.connect(self._send_bar_chat)
-        chat_row.addWidget(self.bar_message, 1)
-        chat_row.addWidget(self.bar_send)
-        self.chat_line.hide()
-        bar_col.addWidget(self.chat_line)
-        bar = QHBoxLayout()
-        bar_col.addLayout(bar)
+        bar = QHBoxLayout(self.bar)
+        bar.setContentsMargins(10, 8, 10, 8)
         self.play = IconButton("play")
         self.elapsed = QLabel("0:00")
         self.slider = SeekBar(Qt.Orientation.Horizontal)
-        self.slider.setRange(0, 1000)
+        self.slider.setRange(0, SEEK_STEPS)
         self.total = QLabel("0:00")
         self.loop = IconButton("loop")
         self.loop.setCheckable(True)
@@ -429,6 +442,20 @@ class MainWindow(QMainWindow):
         for widget in (self.play, self.elapsed, self.slider, self.total, self.loop, self.chat_btn, self.room):
             bar.addWidget(widget)
         bar.setStretchFactor(self.slider, 1)
+
+        self.chat_line = QWidget(column)
+        self.chat_line.setObjectName("chatline")
+        self._overlay(self.chat_line)
+        self.chat_line.hide()
+        chat_row = QHBoxLayout(self.chat_line)
+        chat_row.setContentsMargins(10, 6, 10, 6)
+        self.bar_message = QLineEdit()
+        self.bar_message.setPlaceholderText("Message")
+        self.bar_message.returnPressed.connect(self._send_bar_chat)
+        self.bar_send = IconButton("send")
+        self.bar_send.clicked.connect(self._send_bar_chat)
+        chat_row.addWidget(self.bar_message, 1)
+        chat_row.addWidget(self.bar_send)
 
         self.volume_box = QWidget(column)
         self.volume_box.setObjectName("volume")
@@ -452,7 +479,7 @@ class MainWindow(QMainWindow):
         side.setContentsMargins(16, 16, 16, 16)
         side.setSpacing(8)
         header = QHBoxLayout()
-        title = QLabel("Room")
+        title = QLabel("Panel")
         header.addWidget(title)
         header.addStretch(1)
         settings = QPushButton("Settings")
@@ -480,24 +507,14 @@ class MainWindow(QMainWindow):
         banner_row.addWidget(self.gear)
         side.addLayout(banner_row)
 
-        hint = QLabel("Drop a video on the picture.")
-        hint.setObjectName("muted")
-        hint.setWordWrap(True)
-        side.addWidget(hint)
+        self.reconnect = QPushButton("Reconnect")
+        self.reconnect.clicked.connect(self._reconnect)
+        self.reconnect.hide()
+        side.addWidget(self.reconnect)
 
         self.status = QLabel("")
         self.status.setWordWrap(True)
         side.addWidget(self.status)
-
-        message_row = QHBoxLayout()
-        self.message = QLineEdit()
-        self.message.setPlaceholderText("Message")
-        self.message.returnPressed.connect(self._send_chat)
-        send = QPushButton("Send")
-        send.clicked.connect(self._send_chat)
-        message_row.addWidget(self.message, 1)
-        message_row.addWidget(send)
-        side.addLayout(message_row)
 
         self.chat = QTextEdit()
         self.chat.setReadOnly(True)
@@ -524,15 +541,25 @@ class MainWindow(QMainWindow):
             return
         width = self.stage.width()
         height = self.stage.height()
-        inset = self._bar_height()
+        inset = BAR_HEIGHT
         self.bar.setGeometry(0, max(0, height - inset), width, inset)
+        panel_width = min(PANEL_WIDTH, width) if self._panel_open else 0
         panel_height = max(0, height - inset)
         if self._panel_open:
-            panel_width = min(PANEL_WIDTH, width)
             self.panel.setGeometry(max(0, width - panel_width), 0, panel_width, panel_height)
             self.panel.show()
         else:
             self.panel.hide()
+        if self._chat_open:
+            self.chat_line.setGeometry(
+                0,
+                max(0, height - inset - CHAT_EXTRA),
+                max(0, width - panel_width),
+                CHAT_EXTRA,
+            )
+            self.chat_line.show()
+        else:
+            self.chat_line.hide()
         box_width, box_height = 280, 48
         self.volume_box.setGeometry(
             max(0, (width - box_width) // 2),
@@ -541,11 +568,12 @@ class MainWindow(QMainWindow):
             box_height,
         )
         self.bar.raise_()
+        self.chat_line.raise_()
         self.panel.raise_()
         self.volume_box.raise_()
 
     def _bar_height(self):
-        return BAR_HEIGHT + (CHAT_EXTRA if self._chat_open else 0)
+        return BAR_HEIGHT
 
     def _fill_from_store(self):
         self._refresh_banner()
@@ -553,13 +581,14 @@ class MainWindow(QMainWindow):
     def apply_theme(self):
         appearance = self.app.store.data["appearance"]
         theme = appearance.get("theme") or "dark"
-        self.setStyleSheet(_stylesheet(theme))
+        accent = appearance.get("accentColor")
+        self.setStyleSheet(_stylesheet(theme, accent))
         size = int(appearance.get("uiFontSize") or 16)
         font = QFont()
         font.setPointSize(max(10, min(28, size)))
         QApplication.instance().setFont(font)
-        pal = _palette(theme)
-        for button in (self.play, self.loop, self.chat_btn, self.room, self.gear):
+        pal = _palette(theme, appearance.get("accentColor"))
+        for button in (self.play, self.loop, self.chat_btn, self.room, self.gear, self.bar_send):
             button.set_ink(pal["button_fg"], pal["on_fg"])
         self._refresh_banner()
 
@@ -592,7 +621,6 @@ class MainWindow(QMainWindow):
 
     def _toggle_chat_field(self):
         self._chat_open = not self._chat_open
-        self.chat_line.setVisible(self._chat_open)
         self.chat_btn.setChecked(self._chat_open)
         if self._chat_open:
             self._set_bar(True)
@@ -627,7 +655,9 @@ class MainWindow(QMainWindow):
     def _seek_released(self):
         if self._duration <= 0:
             return
-        at = self._duration * (self.slider.value() / 1000.0)
+        at = self._duration * (self.slider.value() / float(SEEK_STEPS))
+        self._pos_at = at
+        self._pos_when = time.monotonic()
         self._cmd("seek", str(at), "absolute")
 
     def _open_connection(self):
@@ -644,12 +674,18 @@ class MainWindow(QMainWindow):
         self.app.on_command({"c": "chat", "text": text})
         self.bar_message.clear()
 
-    def _send_chat(self):
-        text = self.message.text().strip()
-        if not text:
-            return
-        self.app.on_command({"c": "chat", "text": text})
-        self.message.clear()
+    def _reconnect(self):
+        conn = self.app.store.data["connection"]
+        self._failed = False
+        self.app.on_command({
+            "c": "connect",
+            "host": conn.get("host") or "",
+            "port": conn.get("port") or "",
+            "name": conn.get("name") or "",
+            "password": conn.get("password") or "",
+            "room": conn.get("room") or "",
+        })
+        self._refresh_banner()
 
     def _open_settings(self):
         dialog = SettingsDialog(self.app.store.data["appearance"], self)
@@ -753,6 +789,7 @@ class MainWindow(QMainWindow):
             text, color = "Not configured", "#D6B23A"
         self.banner_text.setText(text)
         self.banner_dot.setStyleSheet("color: {}; background: transparent;".format(color))
+        self.reconnect.setVisible(bool(self._failed and self._configured()))
 
     def _on_users(self, event):
         now = time.monotonic()
@@ -780,12 +817,17 @@ class MainWindow(QMainWindow):
             return
         line = text if not user else "{}: {}".format(user, text)
         self.chat.append(line)
-        self._osd.append((time.monotonic(), line))
+        self._osd.append((time.monotonic(), user, text))
 
     def _refresh_transport(self):
         paused = self._get("pause")
         if paused is not None:
+            self._paused = bool(paused)
             self.play.set_kind("play" if paused else "pause")
+        try:
+            self._speed = float(self._get("speed") or 1)
+        except (TypeError, ValueError):
+            self._speed = 1.0
         duration = self._get("duration")
         position = self._get("time-pos")
         try:
@@ -796,28 +838,47 @@ class MainWindow(QMainWindow):
             position = float(position or 0)
         except (TypeError, ValueError):
             position = 0
-        if not self.slider.isSliderDown() and self._duration > 0:
-            self.slider.setValue(int(max(0, min(1000, position / self._duration * 1000))))
-        if self.slider.isSliderDown() and self._duration > 0:
-            shown = self._duration * (self.slider.value() / 1000.0)
-        else:
-            shown = position
-        self.elapsed.setText(_clock(shown))
+        if not self.slider.isSliderDown():
+            self._pos_at = position
+            self._pos_when = time.monotonic()
         self.total.setText(_clock(self._duration))
         loop = self._get("loop-file")
         self.loop.setChecked(loop in ("inf", "yes", "always"))
+        self._move_knob()
+
+    def _shown_position(self):
+        if self.slider.isSliderDown() and self._duration > 0:
+            return self._duration * (self.slider.value() / float(SEEK_STEPS))
+        extra = 0.0
+        if not self._paused:
+            extra = (time.monotonic() - self._pos_when) * self._speed
+        shown = self._pos_at + extra
+        if self._duration > 0:
+            shown = min(self._duration, max(0.0, shown))
+        return max(0.0, shown)
+
+    def _move_knob(self):
+        shown = self._shown_position()
+        if not self.slider.isSliderDown() and self._duration > 0:
+            value = int(round(shown / self._duration * SEEK_STEPS))
+            value = max(0, min(SEEK_STEPS, value))
+            if value != self.slider.value():
+                self.slider.setValue(value)
+        self.elapsed.setText(_clock(shown))
 
     def _refresh_osd(self):
         if not self.ctl:
             return
         now = time.monotonic()
-        self._osd = [(born, line) for born, line in self._osd if now - born < CHAT_LIFE]
+        self._osd = [item for item in self._osd if now - item[0] < CHAT_LIFE]
         appearance = self.app.store.data["appearance"]
+        theme = appearance.get("theme") or "dark"
         point = int(appearance.get("chatFontSize") or 18)
         measure = QFont(self.font())
         measure.setPointSize(max(10, min(48, point)))
         size = max(14, QFontMetrics(measure).height())
         color = _bgr(appearance.get("chatColor"))
+        accent = _bgr(_palette(theme, appearance.get("accentColor"))["accent"])
         # Logical window pixels, not the 4K frame. The text then matches the
         # size of the text in the window.
         width = max(1, self.video.width())
@@ -839,14 +900,20 @@ class MainWindow(QMainWindow):
                 )
             )
             y += step
-        floor = max(24, height - self._bar_height() - 16)
+        floor = max(24, height - BAR_HEIGHT - 16)
         y = max(y + step, int(height / 2))
-        for _born, line in self._osd:
+        for _born, user, text in self._osd:
             if y > floor:
                 break
+            if user:
+                body = "{{\\1c&H{}&}}{}: {{\\1c&H{}&}}{}".format(
+                    accent, _ass_escape(user), color, _ass_escape(text)
+                )
+            else:
+                body = _ass_escape(text)
             lines.append(
                 "{{\\pos({},{})\\an6\\bord1\\shad0\\fs{}\\1c&H{}&}}{}".format(
-                    max(20, width - 24), y, size, color, _ass_escape(line)
+                    max(20, width - 24), y, size, color, body
                 )
             )
             y += step
@@ -869,6 +936,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._ui_timer.stop()
+        self._knob_timer.stop()
         self.video.shutdown()
         event.accept()
         QApplication.instance().quit()
