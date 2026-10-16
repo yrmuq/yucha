@@ -195,7 +195,7 @@ class Picture(QOpenGLWidget):
         path = urls[0].toLocalFile() or urls[0].toString()
         if path:
             try:
-                self.mpv.command("loadfile", path)
+                self.mpv.command("loadfile", path, "replace", "start=0")
             except Exception:
                 pass
         event.acceptProposedAction()

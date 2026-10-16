@@ -5,8 +5,8 @@ the picture into the video area."""
 
 import time
 
-from PySide6.QtCore import QEvent, QPoint, Qt, QTimer
-from PySide6.QtGui import QCursor, QFont, QFontMetrics
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt, QTimer
+from PySide6.QtGui import QColor, QCursor, QFont, QFontMetrics, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QPushButton,
-    QScrollArea,
     QSlider,
     QSpinBox,
     QTextEdit,
@@ -33,6 +32,7 @@ READY_LIFE = 2.0
 VOLUME_LIFE = 2.0
 PANEL_WIDTH = 380
 BAR_HEIGHT = 72
+CHAT_EXTRA = 44
 
 
 def _palette(theme):
@@ -46,7 +46,7 @@ def _palette(theme):
             "button": "#E7E1D6",
             "button_fg": "#1A1A1A",
             "on_fg": "#F7F4EE",
-            "accent": "#8A5A12",
+            "accent": "#7A2438",
             "bad": "#9C3B3B",
         }
     return {
@@ -57,8 +57,8 @@ def _palette(theme):
         "border": "#34363F",
         "button": "#2C303A",
         "button_fg": "#F3EFE6",
-        "on_fg": "#1A1408",
-        "accent": "#E0A045",
+        "on_fg": "#F7F4EE",
+        "accent": "#9A3A52",
         "bad": "#E07474",
     }
 
@@ -66,7 +66,7 @@ def _palette(theme):
 def _stylesheet(theme):
     p = _palette(theme)
     return """
-    QMainWindow, QDialog, QWidget#root, QWidget#stage, QWidget#panel, QWidget#bar, QWidget#volume, QScrollArea, QLabel {{
+    QMainWindow, QDialog, QWidget#root, QWidget#stage, QWidget#panel, QWidget#bar, QWidget#volume, QLabel {{
         background: {bg};
         color: {fg};
     }}
@@ -90,16 +90,26 @@ def _stylesheet(theme):
     QLabel#muted {{ color: {muted}; }}
     QWidget#bar {{ border-top: 1px solid {border}; }}
     QWidget#panel {{ border-left: 1px solid {border}; }}
-    QScrollArea, QScrollArea > QWidget > QWidget {{
-        background: {bg};
-        border: none;
+    QWidget#banner {{
+        background: {field};
+        border: 1px solid {border};
+        border-radius: 8px;
+    }}
+    QWidget#banner QLabel {{ background: transparent; }}
+    QPushButton#icon {{
+        padding: 0px;
+        min-width: 40px;
+        max-width: 40px;
+        min-height: 36px;
+        max-height: 36px;
     }}
     QSlider::groove:horizontal {{ height: 6px; background: {border}; }}
     QSlider::sub-page:horizontal {{ background: {accent}; }}
     QSlider::handle:horizontal {{
         background: {fg};
         width: 14px;
-        margin: -6px 0;
+        height: 14px;
+        margin: -4px 0;
         border-radius: 7px;
     }}
     """.format(**p)
@@ -131,6 +141,117 @@ def _bgr(hex_color):
     if len(color) != 6:
         color = "F4F1EA"
     return color[4:6] + color[2:4] + color[0:2]
+
+
+class SeekBar(QSlider):
+    """A click anywhere on the bar jumps to that moment."""
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._jump(event.position().x())
+            self.setSliderDown(True)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self.isSliderDown():
+            self._jump(event.position().x())
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self.isSliderDown():
+            self._jump(event.position().x())
+            self.setSliderDown(False)
+            self.sliderReleased.emit()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def _jump(self, x):
+        span = max(1, self.width() - 1)
+        ratio = min(1.0, max(0.0, float(x) / span))
+        value = int(round(self.minimum() + ratio * (self.maximum() - self.minimum())))
+        self.setValue(value)
+
+
+class IconButton(QPushButton):
+    def __init__(self, kind):
+        super().__init__()
+        self.kind = kind
+        self._ink = QColor("#F3EFE6")
+        self._ink_on = QColor("#F7F4EE")
+        self.setObjectName("icon")
+        self.setFixedSize(40, 36)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def set_kind(self, kind):
+        if self.kind != kind:
+            self.kind = kind
+            self.update()
+
+    def set_ink(self, ink, ink_on):
+        self._ink = QColor(ink)
+        self._ink_on = QColor(ink_on)
+        self.update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        color = self._ink_on if self.isChecked() else self._ink
+        pen = QPen(color, 1.6)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        cx = self.width() / 2
+        cy = self.height() / 2
+        kind = self.kind
+        if kind == "play":
+            painter.setBrush(color)
+            path = QPainterPath()
+            path.moveTo(cx - 5, cy - 7)
+            path.lineTo(cx - 5, cy + 7)
+            path.lineTo(cx + 8, cy)
+            path.closeSubpath()
+            painter.drawPath(path)
+        elif kind == "pause":
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(color)
+            painter.drawRoundedRect(int(cx - 6), int(cy - 7), 4, 14, 1, 1)
+            painter.drawRoundedRect(int(cx + 2), int(cy - 7), 4, 14, 1, 1)
+        elif kind == "loop":
+            painter.drawArc(int(cx - 7), int(cy - 7), 14, 14, 50 * 16, 280 * 16)
+            painter.setBrush(color)
+            path = QPainterPath()
+            path.moveTo(cx + 6, cy - 6)
+            path.lineTo(cx + 6, cy - 1)
+            path.lineTo(cx + 1, cy - 6)
+            path.closeSubpath()
+            painter.drawPath(path)
+        elif kind == "chat":
+            painter.drawRoundedRect(int(cx - 8), int(cy - 6), 16, 11, 2, 2)
+            path = QPainterPath()
+            path.moveTo(cx - 3, cy + 5)
+            path.lineTo(cx - 6, cy + 8)
+            path.lineTo(cx + 1, cy + 5)
+            painter.drawPath(path)
+        elif kind == "room":
+            painter.drawRoundedRect(int(cx - 8), int(cy - 7), 16, 14, 2, 2)
+            painter.drawLine(QPointF(cx + 3, cy - 7), QPointF(cx + 3, cy + 7))
+        elif kind == "gear":
+            painter.drawEllipse(QPointF(cx, cy), 3.2, 3.2)
+            for step in range(8):
+                painter.save()
+                painter.translate(cx, cy)
+                painter.rotate(step * 45)
+                painter.drawLine(QPointF(0, -5.2), QPointF(0, -7.4))
+                painter.restore()
+        painter.end()
 
 
 class SettingsDialog(QDialog):
@@ -178,6 +299,48 @@ class SettingsDialog(QDialog):
         self.accept()
 
 
+class ConnectionDialog(QDialog):
+    def __init__(self, connection, parent):
+        super().__init__(parent)
+        self.setWindowTitle("Connection")
+        self.setModal(True)
+        self.values = None
+        layout = QFormLayout(self)
+        self.host = QLineEdit(str(connection.get("host") or "syncplay.pl"))
+        self.port = QLineEdit(str(connection.get("port") or 8999))
+        self.name = QLineEdit(str(connection.get("name") or ""))
+        self.password = QLineEdit(str(connection.get("password") or ""))
+        self.password.setEchoMode(QLineEdit.EchoMode.Password)
+        self.room_name = QLineEdit(str(connection.get("room") or ""))
+        for label, field in (
+            ("Server", self.host),
+            ("Port", self.port),
+            ("Username", self.name),
+            ("Password", self.password),
+            ("Room", self.room_name),
+        ):
+            layout.addRow(label, field)
+            field.returnPressed.connect(self._accept)
+        buttons = QHBoxLayout()
+        connect = QPushButton("Connect")
+        cancel = QPushButton("Cancel")
+        connect.clicked.connect(self._accept)
+        cancel.clicked.connect(self.reject)
+        buttons.addWidget(connect)
+        buttons.addWidget(cancel)
+        layout.addRow(buttons)
+
+    def _accept(self):
+        self.values = {
+            "host": self.host.text(),
+            "port": self.port.text(),
+            "name": self.name.text(),
+            "password": self.password.text(),
+            "room": self.room_name.text(),
+        }
+        self.accept()
+
+
 class MainWindow(QMainWindow):
     def __init__(self, app):
         super().__init__()
@@ -186,7 +349,8 @@ class MainWindow(QMainWindow):
         self._bridge_pos = 0
         self._osd = []
         self._connected = False
-        self._said_connected = False
+        self._failed = False
+        self._chat_open = False
         self._duration = 0
         self._last_move = time.monotonic()
         self._last_cursor = QPoint(-1, -1)
@@ -229,25 +393,40 @@ class MainWindow(QMainWindow):
         self.bar = QWidget(column)
         self.bar.setObjectName("bar")
         self._overlay(self.bar)
-        bar = QHBoxLayout(self.bar)
-        bar.setContentsMargins(10, 8, 10, 8)
-        self.play = QPushButton("Play")
+        bar_col = QVBoxLayout(self.bar)
+        bar_col.setContentsMargins(10, 8, 10, 8)
+        bar_col.setSpacing(6)
+        self.chat_line = QWidget()
+        chat_row = QHBoxLayout(self.chat_line)
+        chat_row.setContentsMargins(0, 0, 0, 0)
+        self.bar_message = QLineEdit()
+        self.bar_message.setPlaceholderText("Message")
+        self.bar_message.returnPressed.connect(self._send_bar_chat)
+        self.bar_send = QPushButton("Send")
+        self.bar_send.clicked.connect(self._send_bar_chat)
+        chat_row.addWidget(self.bar_message, 1)
+        chat_row.addWidget(self.bar_send)
+        self.chat_line.hide()
+        bar_col.addWidget(self.chat_line)
+        bar = QHBoxLayout()
+        bar_col.addLayout(bar)
+        self.play = IconButton("play")
         self.elapsed = QLabel("0:00")
-        self.slider = QSlider(Qt.Orientation.Horizontal)
+        self.slider = SeekBar(Qt.Orientation.Horizontal)
         self.slider.setRange(0, 1000)
         self.total = QLabel("0:00")
-        self.loop = QPushButton("Loop")
+        self.loop = IconButton("loop")
         self.loop.setCheckable(True)
-        self.full = QPushButton("Full")
-        self.full.setCheckable(True)
-        self.room = QPushButton("Room")
+        self.chat_btn = IconButton("chat")
+        self.chat_btn.setCheckable(True)
+        self.room = IconButton("room")
         self.room.setCheckable(True)
         self.play.clicked.connect(self._toggle_pause)
         self.slider.sliderReleased.connect(self._seek_released)
         self.loop.clicked.connect(self._toggle_loop)
-        self.full.clicked.connect(self._toggle_full)
+        self.chat_btn.clicked.connect(self._toggle_chat_field)
         self.room.clicked.connect(self._toggle_room)
-        for widget in (self.play, self.elapsed, self.slider, self.total, self.loop, self.full, self.room):
+        for widget in (self.play, self.elapsed, self.slider, self.total, self.loop, self.chat_btn, self.room):
             bar.addWidget(widget)
         bar.setStretchFactor(self.slider, 1)
 
@@ -281,36 +460,30 @@ class MainWindow(QMainWindow):
         header.addWidget(settings)
         side.addLayout(header)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        form_host = QWidget()
-        form = QFormLayout(form_host)
-        form.setContentsMargins(0, 0, 0, 0)
-        self.host = QLineEdit()
-        self.port = QLineEdit()
-        self.name = QLineEdit()
-        self.password = QLineEdit()
-        self.password.setEchoMode(QLineEdit.EchoMode.Password)
-        self.room_name = QLineEdit()
-        for label, field in (
-            ("Server", self.host),
-            ("Port", self.port),
-            ("Username", self.name),
-            ("Password", self.password),
-            ("Room", self.room_name),
-        ):
-            form.addRow(label, field)
-            field.returnPressed.connect(self._submit)
-        self.connect_btn = QPushButton("Connect")
-        self.connect_btn.clicked.connect(self._submit)
-        form.addRow(self.connect_btn)
+        banner_row = QHBoxLayout()
+        banner_row.setSpacing(8)
+        self.banner = QWidget()
+        self.banner.setObjectName("banner")
+        self.banner.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.banner.setAutoFillBackground(True)
+        self.banner.setFixedHeight(44)
+        inside = QHBoxLayout(self.banner)
+        inside.setContentsMargins(14, 0, 14, 0)
+        self.banner_text = QLabel("Not configured")
+        self.banner_dot = QLabel("●")
+        inside.addWidget(self.banner_text)
+        inside.addStretch(1)
+        inside.addWidget(self.banner_dot)
+        self.gear = IconButton("gear")
+        self.gear.clicked.connect(self._open_connection)
+        banner_row.addWidget(self.banner, 1)
+        banner_row.addWidget(self.gear)
+        side.addLayout(banner_row)
+
         hint = QLabel("Drop a video on the picture.")
         hint.setObjectName("muted")
         hint.setWordWrap(True)
-        form.addRow(hint)
-        scroll.setWidget(form_host)
-        side.addWidget(scroll, 1)
+        side.addWidget(hint)
 
         self.status = QLabel("")
         self.status.setWordWrap(True)
@@ -351,8 +524,9 @@ class MainWindow(QMainWindow):
             return
         width = self.stage.width()
         height = self.stage.height()
-        self.bar.setGeometry(0, max(0, height - BAR_HEIGHT), width, BAR_HEIGHT)
-        panel_height = max(0, height - BAR_HEIGHT)
+        inset = self._bar_height()
+        self.bar.setGeometry(0, max(0, height - inset), width, inset)
+        panel_height = max(0, height - inset)
         if self._panel_open:
             panel_width = min(PANEL_WIDTH, width)
             self.panel.setGeometry(max(0, width - panel_width), 0, panel_width, panel_height)
@@ -362,7 +536,7 @@ class MainWindow(QMainWindow):
         box_width, box_height = 280, 48
         self.volume_box.setGeometry(
             max(0, (width - box_width) // 2),
-            max(0, height - BAR_HEIGHT - 90),
+            max(0, height - inset - 90),
             min(box_width, width),
             box_height,
         )
@@ -370,13 +544,11 @@ class MainWindow(QMainWindow):
         self.panel.raise_()
         self.volume_box.raise_()
 
+    def _bar_height(self):
+        return BAR_HEIGHT + (CHAT_EXTRA if self._chat_open else 0)
+
     def _fill_from_store(self):
-        conn = self.app.store.data["connection"]
-        self.host.setText(str(conn.get("host") or "syncplay.pl"))
-        self.port.setText(str(conn.get("port") or 8999))
-        self.name.setText(str(conn.get("name") or ""))
-        self.password.setText(str(conn.get("password") or ""))
-        self.room_name.setText(str(conn.get("room") or ""))
+        self._refresh_banner()
 
     def apply_theme(self):
         appearance = self.app.store.data["appearance"]
@@ -386,6 +558,10 @@ class MainWindow(QMainWindow):
         font = QFont()
         font.setPointSize(max(10, min(28, size)))
         QApplication.instance().setFont(font)
+        pal = _palette(theme)
+        for button in (self.play, self.loop, self.chat_btn, self.room, self.gear):
+            button.set_ink(pal["button_fg"], pal["on_fg"])
+        self._refresh_banner()
 
     def set_player(self, player):
         listener = getattr(player, "_listener", None) if player is not None else None
@@ -406,12 +582,24 @@ class MainWindow(QMainWindow):
         self.set_panel(not self._panel_open)
 
     def _set_bar(self, open_):
-        if self._panel_open:
+        if self._panel_open or self._chat_open:
             open_ = True
         if open_ == self._bar_open:
             return
         self._bar_open = open_
         self.bar.setVisible(open_)
+        self._place_overlays()
+
+    def _toggle_chat_field(self):
+        self._chat_open = not self._chat_open
+        self.chat_line.setVisible(self._chat_open)
+        self.chat_btn.setChecked(self._chat_open)
+        if self._chat_open:
+            self._set_bar(True)
+            self.bar_message.setFocus()
+        else:
+            self._last_move = time.monotonic()
+        self._place_overlays()
 
     def _show_volume(self, level):
         level = max(0, min(100, int(level)))
@@ -435,7 +623,6 @@ class MainWindow(QMainWindow):
             self.showNormal()
         else:
             self.showFullScreen()
-        self.full.setChecked(self.isFullScreen())
 
     def _seek_released(self):
         if self._duration <= 0:
@@ -443,15 +630,19 @@ class MainWindow(QMainWindow):
         at = self._duration * (self.slider.value() / 1000.0)
         self._cmd("seek", str(at), "absolute")
 
-    def _submit(self):
-        self.app.on_command({
-            "c": "connect",
-            "host": self.host.text(),
-            "port": self.port.text(),
-            "name": self.name.text(),
-            "password": self.password.text(),
-            "room": self.room_name.text(),
-        })
+    def _open_connection(self):
+        dialog = ConnectionDialog(self.app.store.data["connection"], self)
+        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.values:
+            return
+        self.app.on_command({"c": "connect", **dialog.values})
+        self._refresh_banner()
+
+    def _send_bar_chat(self):
+        text = self.bar_message.text().strip()
+        if not text:
+            return
+        self.app.on_command({"c": "chat", "text": text})
+        self.bar_message.clear()
 
     def _send_chat(self):
         text = self.message.text().strip()
@@ -498,10 +689,14 @@ class MainWindow(QMainWindow):
         if self.volume_box.isVisible() and time.monotonic() >= self._volume_until:
             self.volume_box.hide()
         self._read_events()
+        self._refresh_banner()
         self._refresh_transport()
         self._refresh_osd()
 
     def _follow_cursor(self):
+        if self._panel_open or self._chat_open:
+            self._set_bar(True)
+            return
         pos = QCursor.pos()
         inside = self.rect().contains(self.mapFromGlobal(pos))
         if inside and pos != self._last_cursor:
@@ -526,21 +721,38 @@ class MainWindow(QMainWindow):
 
     def _on_conn(self, event):
         state = event.get("state") or ""
-        text = event.get("text") or ""
         self._connected = state == "connected"
-        self.status.setText(text)
-        pal = _palette(self.app.store.data["appearance"].get("theme"))
-        if state == "failed":
-            color = pal["bad"]
-            self._said_connected = False
-        elif state == "connected":
-            color = pal["accent"]
-            self._said_connected = True
-        else:
-            color = pal["muted"]
-        self.status.setStyleSheet("color: {};".format(color))
+        self._failed = state == "failed"
+        if state == "failed" and self.status.text() != (event.get("text") or ""):
+            self.status.setText(event.get("text") or "")
+        if state == "connected":
+            self.status.setText("")
+        self._refresh_banner()
         if event.get("openPanel"):
             self.set_panel(True)
+
+    def _configured(self):
+        conn = self.app.store.data["connection"]
+        return bool(
+            str(conn.get("host") or "").strip()
+            and str(conn.get("name") or "").strip()
+            and str(conn.get("room") or "").strip()
+        )
+
+    def _refresh_banner(self):
+        if not hasattr(self, "banner_text"):
+            return
+        pal = _palette(self.app.store.data["appearance"].get("theme"))
+        if not self._configured():
+            text, color = "Not configured", "#D6B23A"
+        elif self._connected:
+            text, color = "Room connected", "#3EAD62"
+        elif self._failed:
+            text, color = "Error connecting", pal["bad"]
+        else:
+            text, color = "Not configured", "#D6B23A"
+        self.banner_text.setText(text)
+        self.banner_dot.setStyleSheet("color: {}; background: transparent;".format(color))
 
     def _on_users(self, event):
         now = time.monotonic()
@@ -573,7 +785,7 @@ class MainWindow(QMainWindow):
     def _refresh_transport(self):
         paused = self._get("pause")
         if paused is not None:
-            self.play.setText("Play" if paused else "Pause")
+            self.play.set_kind("play" if paused else "pause")
         duration = self._get("duration")
         position = self._get("time-pos")
         try:
@@ -617,19 +829,18 @@ class MainWindow(QMainWindow):
             people.append((name, ready))
         lines = []
         step = size + 8
-        block = len(people) + len(self._osd)
-        y = max(24, int(height / 2) - block * step // 2)
-        floor = max(24, height - BAR_HEIGHT - 16)
+        x = max(16, width - 280)
+        y = 20
         for name, ready in people:
-            if y > floor:
-                break
             dot = "00FF00" if ready else "0000FF"
             lines.append(
-                "{{\\pos({},{})\\an6\\bord1\\shad0\\fs{}\\1c&H{}&}}{{\\1c&H{}&}}● {{\\1c&H{}&}}{}".format(
-                    max(20, width - 24), y, size, color, dot, color, _ass_escape(name)
+                "{{\\pos({},{})\\an7\\bord1\\shad0\\fs{}\\1c&H{}&}}{{\\1c&H{}&}}● {{\\1c&H{}&}}{}".format(
+                    x, y, size, color, dot, color, _ass_escape(name)
                 )
             )
             y += step
+        floor = max(24, height - self._bar_height() - 16)
+        y = max(y + step, int(height / 2))
         for _born, line in self._osd:
             if y > floor:
                 break
@@ -639,12 +850,6 @@ class MainWindow(QMainWindow):
                 )
             )
             y += step
-        if self._connected:
-            lines.append(
-                "{{\\pos({},{})\\an9\\bord1\\shad0\\fs{}\\1c&H{}&}}{}".format(
-                    max(20, width - 16), floor, size, color, "connected"
-                )
-            )
         data = "\n".join(lines)
         if data == getattr(self, "_osd_sent", None):
             return
