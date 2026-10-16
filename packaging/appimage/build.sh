@@ -92,7 +92,7 @@ find "$APPDIR/payload" -name '*.pyc' -delete
 # window. Copy the library and the libraries it needs, except the ones the
 # desktop already provides (libc, OpenGL, Wayland).
 APPDIR="$APPDIR" python3 - << 'PY'
-import os, shutil, subprocess
+import os, re, shutil, subprocess
 from pathlib import Path
 
 dest = Path(os.environ["APPDIR"]) / "usr" / "lib" / "yucha"
@@ -114,25 +114,50 @@ skip = (
 )
 seen = set()
 
+def skipped(name):
+    return any(name.startswith(prefix) for prefix in skip)
+
 def take(path):
-    path = os.path.realpath(path)
+    # Keep the name the loader asks for. ldd prints libavcodec.so.60, which
+    # is a link to libavcodec.so.60.31.102. Copying only the real file leaves
+    # the short name missing, and the player dies on startup.
+    if not os.path.exists(path):
+        return
     name = os.path.basename(path)
-    if path in seen or any(name.startswith(prefix) for prefix in skip):
+    if skipped(name):
         return
-    if not os.path.isfile(path):
-        return
-    seen.add(path)
-    shutil.copy2(path, dest / name)
-    out = subprocess.check_output(["ldd", path], text=True, errors="replace")
-    for line in out.splitlines():
-        if "=>" not in line:
-            continue
-        dep = line.split("=>", 1)[1].strip().split()[0]
-        if dep.startswith("/") and os.path.isfile(dep):
-            take(dep)
+    real = os.path.realpath(path)
+    real_name = os.path.basename(real)
+    link = dest / name
+    if real not in seen:
+        if not os.path.isfile(real):
+            return
+        seen.add(real)
+        shutil.copy2(real, dest / real_name)
+        out = subprocess.check_output(["ldd", real], text=True, errors="replace")
+        for line in out.splitlines():
+            if "=>" not in line:
+                continue
+            dep = line.split("=>", 1)[1].strip().split()[0]
+            if dep.startswith("/") and os.path.exists(dep):
+                take(dep)
+    if name != real_name and not link.exists():
+        link.symlink_to(real_name)
 
 take(src)
-shutil.copy2(src, dest / "libmpv.so.2")
+entry = dest / "libmpv.so.2"
+if not entry.exists():
+    shutil.copy2(os.path.realpath(src), entry)
+
+missing = []
+out = subprocess.check_output(["readelf", "-d", str(entry)], text=True, errors="replace")
+for name in re.findall(r"Shared library: \[([^\]]+)\]", out):
+    if skipped(name):
+        continue
+    if not (dest / name).exists():
+        missing.append(name)
+if missing:
+    raise SystemExit("libmpv is missing libraries:\n" + "\n".join(missing))
 print("bundled libmpv from", src)
 PY
 
