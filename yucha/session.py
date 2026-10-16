@@ -129,38 +129,9 @@ def mpv_path():
 
 
 def player_args(runtime, wid=None):
-    args = ["--osc=no"]
-    if wid:
-        conf = Path(runtime) / "input.conf"
-        # f and double-click would fullscreen mpv's own child window and
-        # pull the picture out of ours. Fullscreen is the yucha window.
-        conf.write_text(
-            "f ignore\nF ignore\nMBTN_LEFT_DBL ignore\n",
-            encoding="utf-8",
-        )
-        context = os.environ.get("YUCHA_GPU_CONTEXT") or "x11egl"
-        args.extend([
-            "--wid={}".format(int(wid)),
-            "--vo={}".format(os.environ.get("YUCHA_VO") or "gpu"),
-            "--gpu-context={}".format(context),
-            "--no-border",
-            "--window-dragging=no",
-            "--input-conf={}".format(conf),
-            "--cursor-autohide=1000",
-        ])
-        if "egl" in context:
-            args.append("--gpu-api=opengl")
-    else:
-        vo = os.environ.get("YUCHA_VO")
-        if vo:
-            args.append("--vo={}".format(vo))
-    ao = os.environ.get("YUCHA_AO")
-    if ao:
-        args.append("--ao={}".format(ao))
-    log_path = os.environ.get("YUCHA_LOG")
-    if log_path:
-        args.append("--log-file={}".format(log_path))
-    return args
+    # The picture is drawn by libmpv inside the window. These args are not
+    # used to start a second mpv. The version check still looks at the binary.
+    return []
 
 
 def make_client(ui, store):
@@ -180,22 +151,35 @@ def make_client(ui, store):
 
 
 def store_runtime_placeholder():
-    # Replaced by app.main once the bridge directory exists. player_args()
-    # is called again with the real directory before mpv starts.
     return ""
 
 
-def launch_player(client, runtime, wid):
-    # mpv would otherwise open its own Wayland window and ignore --wid.
-    os.environ.pop("WAYLAND_DISPLAY", None)
-    client._config["playerArgs"] = player_args(runtime, wid)
+def launch_player(client, runtime, socket_path):
+    """Attach Syncplay to the engine that is already drawing the picture."""
+    os.environ["YUCHA_MPV_SOCKET"] = str(socket_path)
+    import syncplay.players.mpv as mpv_player
+    from syncplay.vendor.python_mpv_jsonipc.python_mpv_jsonipc import MPV as JsonMPV
+
+    class Attached(JsonMPV):
+        def __init__(self, start_mpv=True, ipc_socket=None, mpv_location=None,
+                     log_handler=None, loglevel=None, quit_callback=None,
+                     env=None, **kwargs):
+            super().__init__(
+                start_mpv=False,
+                ipc_socket=os.environ["YUCHA_MPV_SOCKET"],
+                log_handler=log_handler,
+                loglevel=loglevel,
+                quit_callback=quit_callback,
+            )
+
+    mpv_player.MPV = Attached
+    client._config["playerArgs"] = []
     player = MpvPlayer.run(
         client,
         client._config["playerPath"],
         "",
-        client._config["playerArgs"],
+        [],
     )
-    # Network start must not spawn a second mpv.
     client._playerClass = None
     return player
 

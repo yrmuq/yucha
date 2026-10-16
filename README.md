@@ -6,20 +6,20 @@
 
 > **In active development.** There is no 1.0 release. Alpha AppImages are on the releases page. Flatpak waits until 1.0.
 
-yucha is a media player for watching the same file at the same time as other people. Playback is [mpv](https://mpv.io/). Rooms, sync, and chat come from the [Syncplay](https://github.com/Syncplay/syncplay) client. Syncplay's own window is not used. yucha draws the window: ordinary text fields for the server, username, password, and room, and ordinary buttons for playback. mpv only draws the picture inside that window.
+yucha is a media player for watching the same file at the same time as other people. Playback is [mpv](https://mpv.io/)'s engine, inside this window. Rooms, sync, and chat come from the [Syncplay](https://github.com/Syncplay/syncplay) client. Neither program's own window is used. The fields and buttons are ordinary ones. The picture is a frame drawn in the window, not a second window.
 
 yucha is an independent project. It is not part of mpv and it is not part of Syncplay. Their names appear here only to identify the code it is built from.
 
 ## Run
 
-You need Python 3 and an mpv binary. mpv is not compiled by this repository. Put it on `PATH`, or point `YUCHA_MPV` at it.
+You need Python 3, the mpv library (libmpv), and an mpv binary on `PATH` for the version check. Point `YUCHA_MPV` at the binary if it is not on `PATH`. The AppImage already contains both.
 
 ```sh
 python3 -m pip install -r requirements.txt
 python3 -m yucha
 ```
 
-Drop a video on the picture. The first launch opens the room panel, because nothing is saved yet. The fields are ordinary text fields: Ctrl+V pastes, and holding Backspace deletes. The login is written to `~/.config/yucha/config.json` (mode 0600). The next launch leaves the panel closed and connects with the saved server, username, password, and room. **connected** stays on the picture. Chat lines show on the right of the picture for five seconds, and they also stay in the panel.
+Drop a video on the picture. Right click pauses and resumes. Space does the same when the picture is focused. The wheel changes the volume. The first launch opens the room panel, because nothing is saved yet. The fields are ordinary text fields: Ctrl+V pastes, and holding Backspace deletes. The login is written to `~/.config/yucha/config.json` (mode 0600). The next launch leaves the panel closed and connects with the saved server, username, password, and room. **connected** stays on the picture. Chat lines show on the right of the picture for five seconds, and they also stay in the panel.
 
 ## AppImage
 
@@ -40,13 +40,11 @@ A version tag `vX.Y.Z` makes GitHub build the image and attach it to that releas
 
 ## What is on the window
 
-1. One window. The picture is mpv, embedded in it. The Syncplay client runs beside that and keeps pause, seek, and position in sync. The protocol is the existing Syncplay client, not a rewrite.
+1. One window. mpv's engine draws the picture inside it and does not open a window of its own. The Syncplay client keeps pause, seek, and position in sync. The protocol is the existing Syncplay client, not a rewrite.
 2. The **Room** button at the right end of the playback bar opens the room panel. The panel is a full-height column of ordinary fields.
-3. The bar has Play, the seek slider, Loop, and Full. It uses the theme and hides after 3 seconds without the mouse. Loop repeats the current file while the button is on.
+3. The bar has Play, the seek slider, Loop, and Full. It uses the theme and hides after 3 seconds without the mouse. Loop repeats the current file while the button is on. Right click and Space pause and resume. The wheel changes the volume.
 4. No saved login: the panel opens by itself. Saved login: it stays closed and the client connects.
 5. **Settings** in the panel sets the theme, chat color, chat size, and interface size.
-
-On a Wayland desktop the window is shown through XWayland. That is what lets the picture sit inside the same window as the fields.
 
 ## Status
 

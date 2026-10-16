@@ -34,7 +34,10 @@ jobs:
           key: appimage-deps-20261013
 
       - name: Install file
-        run: sudo apt-get update && sudo apt-get install -y file
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y file
+          sudo apt-get install -y libmpv2 || sudo apt-get install -y libmpv-dev
 
       - name: Build
         run: packaging/appimage/build.sh

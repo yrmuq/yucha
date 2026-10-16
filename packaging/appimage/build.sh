@@ -88,6 +88,54 @@ cp -a "$PACK/BUNDLED.txt" "$APPDIR/payload/BUNDLED.txt"
 find "$APPDIR/payload" -type d -name __pycache__ -print0 | xargs -0r rm -rf
 find "$APPDIR/payload" -name '*.pyc' -delete
 
+# The picture is drawn by libmpv inside the window, not by a second mpv
+# window. Copy the library and the libraries it needs, except the ones the
+# desktop already provides (libc, OpenGL, Wayland).
+APPDIR="$APPDIR" python3 - << 'PY'
+import os, shutil, subprocess
+from pathlib import Path
+
+dest = Path(os.environ["APPDIR"]) / "usr" / "lib" / "yucha"
+dest.mkdir(parents=True, exist_ok=True)
+listed = subprocess.check_output(["ldconfig", "-p"], text=True, errors="replace")
+src = None
+for line in listed.splitlines():
+    if "libmpv.so" in line and "=>" in line:
+        src = line.split("=>", 1)[1].strip()
+        break
+if not src or not os.path.isfile(src):
+    raise SystemExit("libmpv was not found. Install the libmpv2 package and rerun.")
+
+skip = (
+    "libc.so", "libm.so", "libdl.so", "librt.so", "libpthread.so",
+    "libresolv.so", "ld-linux", "libstdc++.so", "libgcc_s.so",
+    "libGL.so", "libEGL.so", "libGLdispatch", "libGLX", "libOpenGL",
+    "libX11.so", "libxcb", "libwayland", "libdrm.so", "libgbm.so",
+)
+seen = set()
+
+def take(path):
+    path = os.path.realpath(path)
+    name = os.path.basename(path)
+    if path in seen or any(name.startswith(prefix) for prefix in skip):
+        return
+    if not os.path.isfile(path):
+        return
+    seen.add(path)
+    shutil.copy2(path, dest / name)
+    out = subprocess.check_output(["ldd", path], text=True, errors="replace")
+    for line in out.splitlines():
+        if "=>" not in line:
+            continue
+        dep = line.split("=>", 1)[1].strip().split()[0]
+        if dep.startswith("/") and os.path.isfile(dep):
+            take(dep)
+
+take(src)
+shutil.copy2(src, dest / "libmpv.so.2")
+print("bundled libmpv from", src)
+PY
+
 cp "$PACK/AppRun" "$APPDIR/AppRun"
 cp "$PACK/mpv-launch" "$APPDIR/mpv-launch"
 chmod +x "$APPDIR/AppRun" "$APPDIR/mpv-launch"

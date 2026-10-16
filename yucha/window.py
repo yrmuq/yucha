@@ -27,6 +27,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from yucha.engine import Picture
+
 HIDE_AFTER = 3.0
 CHAT_LIFE = 5.0
 PANEL_WIDTH = 380
@@ -63,7 +65,10 @@ def _palette(theme):
 def _stylesheet(theme):
     p = _palette(theme)
     return """
-    QWidget {{ background: {bg}; color: {fg}; }}
+    QMainWindow, QDialog, QWidget#root, QWidget#stage, QWidget#panel, QWidget#bar, QScrollArea, QLabel {{
+        background: {bg};
+        color: {fg};
+    }}
     QLineEdit, QTextEdit, QSpinBox, QComboBox {{
         background: {field};
         color: {fg};
@@ -202,20 +207,18 @@ class MainWindow(QMainWindow):
 
     def _build(self):
         root = QWidget()
+        root.setObjectName("root")
         self.setCentralWidget(root)
         row = QHBoxLayout(root)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(0)
 
         column = QWidget()
+        column.setObjectName("stage")
         col = QVBoxLayout(column)
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(0)
-        self.video = QWidget()
-        self.video.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
-        self.video.setAutoFillBackground(True)
-        self.video.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.video.setStyleSheet("background: #000000;")
+        self.video = Picture(self.app.runtime)
         col.addWidget(self.video, 1)
 
         self.bar = QWidget()
@@ -311,10 +314,6 @@ class MainWindow(QMainWindow):
         side.addWidget(self.chat, 1)
         row.addWidget(self.panel)
 
-    def video_win_id(self):
-        self.video.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
-        return int(self.video.winId())
-
     def _fill_from_store(self):
         conn = self.app.store.data["connection"]
         self.host.setText(str(conn.get("host") or "syncplay.pl"))
@@ -327,7 +326,6 @@ class MainWindow(QMainWindow):
         appearance = self.app.store.data["appearance"]
         theme = appearance.get("theme") or "dark"
         self.setStyleSheet(_stylesheet(theme))
-        self.video.setStyleSheet("background: #000000;")
         size = int(appearance.get("uiFontSize") or 16)
         font = QFont()
         font.setPointSize(max(10, min(28, size)))
@@ -441,6 +439,8 @@ class MainWindow(QMainWindow):
             pass
 
     def _tick(self):
+        if self.video.error and self.status.text() != self.video.error:
+            self.status.setText(self.video.error)
         self._follow_cursor()
         self._read_events()
         self._refresh_transport()
@@ -563,6 +563,6 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._ui_timer.stop()
-        self._cmd("quit")
+        self.video.shutdown()
         event.accept()
         QApplication.instance().quit()

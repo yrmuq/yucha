@@ -36,6 +36,13 @@ What this image contains:
     License: Python Software Foundation License
     File: cpython-3.12.15+20261013-x86_64-unknown-linux-gnu-install_only.tar.gz
 
-Python dependencies (Twisted, its TLS stack, and PySide6 for the window)
+  libmpv
+    Copied from the build machine's libmpv package, with the libraries
+    it needs. This is the engine that draws the picture. It does not
+    open a window. Upstream is the same mpv project.
+    License: GPL-2.0-or-later
+
+Python dependencies (Twisted, its TLS stack, PySide6, and python-mpv)
 are installed from PyPI into the bundled interpreter. Their licenses stay
 with those packages. PySide6 is the Qt for Python bindings, LGPL.
+python-mpv is GPL-2.0-or-later or LGPL-2.1-or-later, same terms as libmpv.

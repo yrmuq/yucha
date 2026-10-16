@@ -3,3 +3,4 @@ pem>=21.2.0
 certifi>=2018.11.29
 service-identity>=21.1.0
 PySide6>=6.6,<6.13
+python-mpv>=1.0.6
