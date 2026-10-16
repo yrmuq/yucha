@@ -3,6 +3,7 @@
 """The yucha window. Fields and buttons are real widgets. mpv only draws
 the picture into the video area."""
 
+import html
 import re
 import time
 from pathlib import Path
@@ -11,6 +12,7 @@ from PySide6.QtCore import QEvent, QPoint, QPointF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QCursor, QFont, QFontMetrics, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QDialog,
     QFormLayout,
@@ -243,6 +245,89 @@ def _n(value):
     return str(int(round(value)))
 
 
+_TIME = r"\d+:\d+(?::\d+)?"
+
+
+def _hidden_line(text):
+    low = str(text).lower()
+    return "persistent rooms" in low or "not a known media directory" in low
+
+
+def _status_spans(text):
+    text = " ".join(str(text).split())
+    rules = (
+        (r"^(.+?) paused at (" + _TIME + r")$", lambda m: (
+            ("nick", m.group(1)),
+            ("text", " || " + m.group(2)),
+        )),
+        (r"^(.+?) unpaused$", lambda m: (
+            ("nick", m.group(1)),
+            ("text", " ▶"),
+        )),
+        (r"^(.+?) jumped from (" + _TIME + r") to (" + _TIME + r")$", lambda m: (
+            ("nick", m.group(1)),
+            ("text", " " + m.group(2) + " → " + m.group(3)),
+        )),
+        (r"^Rewinded due to time difference with (.+)$", lambda m: (
+            ("text", "◀◀ "),
+            ("nick", m.group(1)),
+        )),
+        (r"^Fast-forwarded due to time difference with (.+)$", lambda m: (
+            ("text", "▶▶ "),
+            ("nick", m.group(1)),
+        )),
+        (r"^Slowing down due to time difference with (.+)$", lambda m: (
+            ("text", "↓ "),
+            ("nick", m.group(1)),
+        )),
+        (r"^Reverting speed back to normal$", lambda m: (
+            ("text", "1×"),
+        )),
+        (r"^(.+?) is playing '(.+)' \(.*\)$", lambda m: (
+            ("nick", m.group(1)),
+            ("text", " ▶ " + m.group(2)),
+        )),
+    )
+    for pattern, build in rules:
+        found = re.match(pattern, text)
+        if found:
+            return [{"k": kind, "v": value} for kind, value in build(found)]
+    return None
+
+
+def _spans_html(spans, accent):
+    bits = []
+    for span in spans:
+        safe = html.escape(span["v"]).replace("\n", "<br>")
+        if span["k"] == "nick":
+            bits.append('<span style="color: {};">{}</span>'.format(accent, safe))
+        else:
+            bits.append(safe)
+    return "".join(bits)
+
+
+def _wrap_spans(spans, metrics, width):
+    words = []
+    for span in spans:
+        for part in re.split(r"(\s+)", span["v"]):
+            if part:
+                words.append({"k": span["k"], "v": part})
+    lines = []
+    current = []
+    used = 0
+    for word in words:
+        wide = metrics.horizontalAdvance(word["v"])
+        if current and used + wide > width and word["v"].strip():
+            lines.append(current)
+            current = []
+            used = 0
+        current.append(word)
+        used += wide
+    if current:
+        lines.append(current)
+    return lines or [[{"k": "text", "v": ""}]]
+
+
 class ClickBox(QWidget):
     clicked = Signal()
 
@@ -423,6 +508,9 @@ class SettingsDialog(QDialog):
         layout.addRow("Accent color", self.accent)
         layout.addRow("Chat size", self.chat_size)
         layout.addRow("Interface size", self.ui_size)
+        self.autoplay = QCheckBox("Play the next episode automatically")
+        self.autoplay.setChecked(bool(appearance.get("autoplayNext")))
+        layout.addRow(self.autoplay)
         buttons = QHBoxLayout()
         ok = QPushButton("OK")
         cancel = QPushButton("Cancel")
@@ -445,6 +533,7 @@ class SettingsDialog(QDialog):
             "accentColor": accent,
             "chatFontSize": self.chat_size.value(),
             "uiFontSize": self.ui_size.value(),
+            "autoplayNext": self.autoplay.isChecked(),
         }
         self.accept()
 
@@ -507,6 +596,8 @@ class MainWindow(QMainWindow):
         self._panel_open = False
         self._bar_open = True
         self._users = []
+        self._chat_lines = []
+        self._arm_play = None
         self._ready_until = {}
         self._pos_at = 0.0
         self._pos_when = time.monotonic()
@@ -642,12 +733,19 @@ class MainWindow(QMainWindow):
         self.reconnect.hide()
         side.addWidget(self.reconnect)
 
+        users_title = QLabel("Users")
+        users_title.setObjectName("heading")
+        side.addWidget(users_title)
+        self.room_users = QTextEdit()
+        self.room_users.setReadOnly(True)
+        side.addWidget(self.room_users, 1)
+
         playlist_title = QLabel("Playlist")
         playlist_title.setObjectName("heading")
         side.addWidget(playlist_title)
         self.files = FileList()
         self.files.removed.connect(self._remove_file)
-        self.files.chosen.connect(self._play_path)
+        self.files.chosen.connect(lambda path: self._play_path(path, start=True))
         side.addWidget(self.files, 1)
 
         self.status = QLabel("")
@@ -733,6 +831,8 @@ class MainWindow(QMainWindow):
             button.set_ink(pal["button_fg"], pal["on_fg"])
         self._refresh_banner()
         self._refresh_files()
+        self._paint_chat()
+        self._paint_users()
 
     def set_player(self, player):
         listener = getattr(player, "_listener", None) if player is not None else None
@@ -808,16 +908,17 @@ class MainWindow(QMainWindow):
         wanted = set(dropped)
         start = next((item["path"] for item in self._playlist if item["path"] in wanted), "")
         if start:
-            self._play_path(start)
+            self._play_path(start, start=True)
         else:
             self._refresh_files()
 
-    def _play_path(self, path):
+    def _play_path(self, path, start=False):
         self._current_path = path
         self._eof_seen = True
         self._paused = False
         self._pos_at = 0
         self._pos_when = time.monotonic()
+        self._arm_play = path if start else None
         client = getattr(self.app, "client", None)
         player = getattr(client, "_player", None) if client is not None else None
         if player is not None:
@@ -845,7 +946,7 @@ class MainWindow(QMainWindow):
             self._refresh_files()
             return
         nxt = min(max(index, 0), len(self._playlist) - 1)
-        self._play_path(self._playlist[nxt]["path"])
+        self._play_path(self._playlist[nxt]["path"], start=True)
 
     def _advance(self):
         if len(self._playlist) <= 1:
@@ -853,7 +954,8 @@ class MainWindow(QMainWindow):
         index = next((i for i, item in enumerate(self._playlist) if item["path"] == self._current_path), -1)
         if index < 0 or index + 1 >= len(self._playlist):
             return
-        self._play_path(self._playlist[index + 1]["path"])
+        auto = bool(self.app.store.data["appearance"].get("autoplayNext"))
+        self._play_path(self._playlist[index + 1]["path"], start=auto)
 
     def _refresh_files(self):
         if not hasattr(self, "files"):
@@ -1029,7 +1131,11 @@ class MainWindow(QMainWindow):
             if not name:
                 continue
             ready = bool(person.get("ready"))
-            people.append((name, ready))
+            people.append({
+                "name": name,
+                "ready": ready,
+                "file": str(person.get("file") or ""),
+            })
             if ready:
                 ready_names.add(name)
                 if name not in self._ready_until:
@@ -1040,13 +1146,40 @@ class MainWindow(QMainWindow):
             if name not in ready_names:
                 self._ready_until.pop(name, None)
         self._users = people
+        self._paint_users()
+
+    def _paint_users(self):
+        if not hasattr(self, "room_users"):
+            return
+        appearance = self.app.store.data["appearance"]
+        accent = _palette(appearance.get("theme"), appearance.get("accentColor"))["accent"]
+        self.room_users.clear()
+        for person in self._users:
+            spans = [
+                {"k": "nick", "v": person["name"]},
+                {"k": "text", "v": ": " + person.get("file", "")},
+            ]
+            self.room_users.append(_spans_html(spans, accent))
+
+    def _paint_chat(self):
+        if not hasattr(self, "chat"):
+            return
+        appearance = self.app.store.data["appearance"]
+        accent = _palette(appearance.get("theme"), appearance.get("accentColor"))["accent"]
+        self.chat.clear()
+        for spans in self._chat_lines:
+            self.chat.append(_spans_html(spans, accent))
 
     def _add_chat(self, user, text):
-        if not text:
+        if not text or _hidden_line(text):
             return
-        line = text if not user else "{}: {}".format(user, text)
-        self.chat.append(line)
-        self._osd.append((time.monotonic(), user, text))
+        if user:
+            spans = [{"k": "nick", "v": user}, {"k": "text", "v": ": " + text}]
+        else:
+            spans = _status_spans(text) or [{"k": "text", "v": text}]
+        self._chat_lines.append(spans)
+        self._osd.append((time.monotonic(), spans))
+        self._paint_chat()
 
     def _refresh_transport(self):
         paused = self._get("pause")
@@ -1081,6 +1214,13 @@ class MainWindow(QMainWindow):
                 self._advance()
         else:
             self._eof_seen = False
+        if self._arm_play and self._duration > 0:
+            current = self._get("path") or ""
+            same = current == self._arm_play or Path(str(current)).name == Path(self._arm_play).name
+            if same and current:
+                self._set("pause", "no")
+                self._paused = False
+                self._arm_play = None
         self._move_knob()
 
     def _shown_position(self):
@@ -1122,36 +1262,43 @@ class MainWindow(QMainWindow):
         width = max(1, self.video.width())
         height = max(1, self.video.height())
         people = []
-        for name, ready in self._users:
+        for person in self._users:
+            name = person["name"]
+            ready = person["ready"]
             if ready and now >= self._ready_until.get(name, 0):
                 continue
-            people.append((name, ready))
+            people.append(person)
         lines = []
-        step = metrics.height() + 4
-        box_w = min(CHAT_BOX, max(160, width - 24))
-        x = max(8, width - 8 - box_w)
+        row_h = metrics.height()
         y = 16
-        for name, ready in people:
-            if y > height - BAR_HEIGHT - 16:
-                break
-            dot = "00FF00" if ready else "0000FF"
+        pad = 8
+        if people:
+            widest = max(metrics.horizontalAdvance(person["name"] + " ●") for person in people)
+            ready_w = min(max(80, width - 16), widest + pad * 2)
+            ready_h = pad * 2 + len(people) * row_h
+            ready_x = max(8, width - 8 - ready_w)
             lines.append(
-                "{{\\pos({},{})\\an7\\bord1\\shad0\\fs{}\\1c&H{}&}}{} {{\\1c&H{}&}}●".format(
-                    x, y, size, color, _ass_escape(name), dot
+                "{{\\an7\\pos({},{})\\bord0\\shad0\\1c&H{}&\\p1}}{}".format(
+                    ready_x, y, _bgr(page["bg"]), _round_box(ready_w, ready_h, 8)
                 )
             )
-            y += step
-        if people:
-            y += 8
+            text_y = y + pad
+            for person in people:
+                dot = "00FF00" if person["ready"] else "0000FF"
+                lines.append(
+                    "{{\\an7\\pos({},{})\\bord0\\shad0\\fs{}\\1c&H{}&}}{} {{\\1c&H{}&}}●".format(
+                        ready_x + pad, text_y, size, accent, _ass_escape(person["name"]), dot
+                    )
+                )
+                text_y += row_h
+            y += ready_h + 8
         floor = max(24, height - BAR_HEIGHT - 8)
-        pad = 8
+        box_w = min(CHAT_BOX, max(160, width - 24))
+        x = max(8, width - 8 - box_w)
         inner = max(40, box_w - pad * 2)
-        for _born, user, text in self._osd:
-            nick = (user + ": ") if user else ""
-            nick_w = metrics.horizontalAdvance(nick) if nick else 0
-            first_width = max(24, inner - nick_w)
-            wrapped = _wrap_plain(text, metrics, first_width, inner)
-            block_h = pad * 2 + max(1, len(wrapped)) * metrics.height()
+        for _born, spans in self._osd:
+            wrapped = _wrap_spans(spans, metrics, inner)
+            block_h = pad * 2 + max(1, len(wrapped)) * row_h
             if y + block_h > floor:
                 break
             lines.append(
@@ -1160,15 +1307,12 @@ class MainWindow(QMainWindow):
                 )
             )
             body = []
-            for index, part in enumerate(wrapped):
-                if index == 0 and user:
-                    body.append(
-                        "{{\\1c&H{}&}}{}{{\\1c&H{}&}}{}".format(
-                            accent, _ass_escape(nick), color, _ass_escape(part)
-                        )
-                    )
-                else:
-                    body.append(_ass_escape(part))
+            for line in wrapped:
+                bits = []
+                for span in line:
+                    ink = accent if span["k"] == "nick" else color
+                    bits.append("{{\\1c&H{}&}}{}".format(ink, _ass_escape(span["v"])))
+                body.append("".join(bits))
             lines.append(
                 "{{\\an7\\pos({},{})\\p0\\bord0\\shad0\\q2\\fs{}\\1c&H{}&}}{}".format(
                     x + pad, y + pad, size, color, "\\N".join(body)

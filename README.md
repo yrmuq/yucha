@@ -44,7 +44,7 @@ A version tag `vX.Y.Z` makes GitHub build the image and attach it to that releas
 2. The room button at the right end of the playback bar opens the room panel. The panel sits on top of the picture and stops above the bar. The picture is not resized. A click on the banner opens the connection fields. The gear opens the appearance settings.
 3. The bar sits on top of the picture. It has play, the time bar, loop, chat, and room, as icons. The chat button opens a message field above the bar. The bar itself does not move, and it stays while that field is open. A failed connection shows Reconnect under the banner. The bar uses the theme and hides after 3 seconds without the mouse, unless the room panel or the message field is open. Loop repeats the current file while the button is on. Right click and Space pause and resume. Double click toggles fullscreen. The wheel changes the volume. A click on the time bar jumps to that moment.
 4. No saved login: the panel opens by itself. Saved login: it stays closed and the client connects.
-5. The gear in the panel sets the theme, chat color, accent color, chat size, and interface size. Text on the picture follows the theme: dark on a light theme, light on a dark theme.
+5. The gear in the panel sets the theme, colors, sizes, and whether the next episode starts by itself. The Users list shows who is in the room and which file they have open. Names are in the accent color. Text on the picture follows the theme.
 
 ## Status
 

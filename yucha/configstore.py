@@ -45,6 +45,7 @@ DEFAULTS = {
         "accentColor": "#9A3A52",
         "chatFontSize": 18,
         "uiFontSize": 16,
+        "autoplayNext": False,
     },
 }
 

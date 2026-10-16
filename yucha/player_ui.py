@@ -106,9 +106,14 @@ class PlayerUI(object):
                 return
             if room and user.room and user.room != room:
                 return
+            filename = ""
+            current_file = getattr(user, "file", None)
+            if isinstance(current_file, dict):
+                filename = str(current_file.get("name") or "")
             people.append({
                 "name": user.username,
                 "ready": bool(user.isReady()),
+                "file": filename,
             })
 
         add(current)
