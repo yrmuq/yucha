@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QPushButton,
+    QScrollArea,
     QSlider,
     QSpinBox,
     QTextEdit,
@@ -135,6 +137,13 @@ def _stylesheet(theme, accent=None):
     }}
     QListWidget::item {{
         padding: 4px 6px;
+    }}
+    QScrollArea#userfiles {{
+        background: transparent;
+        border: none;
+    }}
+    QScrollArea#userfiles QWidget {{
+        background: transparent;
     }}
     """.format(**p)
 
@@ -363,6 +372,87 @@ class FileList(QListWidget):
         super().mousePressEvent(event)
 
 
+class UserTable(QWidget):
+    """Nicks stay put. File names sit in the wider column and scroll sideways."""
+
+    def __init__(self):
+        super().__init__()
+        self._full_names = []
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+        self.names = QWidget()
+        self.names_col = QVBoxLayout(self.names)
+        self.names_col.setContentsMargins(0, 0, 0, 0)
+        self.names_col.setSpacing(0)
+        self.files_scroll = QScrollArea()
+        self.files_scroll.setObjectName("userfiles")
+        self.files_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.files_scroll.setWidgetResizable(False)
+        self.files_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.files_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.files_host = QWidget()
+        self.files_col = QVBoxLayout(self.files_host)
+        self.files_col.setContentsMargins(0, 0, 0, 0)
+        self.files_col.setSpacing(0)
+        self.files_scroll.setWidget(self.files_host)
+        row.addWidget(self.names, 1)
+        row.addWidget(self.files_scroll, 2)
+
+    def set_people(self, people, accent):
+        self._clear(self.names_col)
+        self._clear(self.files_col)
+        self._full_names = []
+        metrics = QFontMetrics(self.font())
+        row_h = metrics.height() + 8
+        widest = 1
+        for person in people:
+            name = person["name"]
+            self._full_names.append(name)
+            nick = QLabel(name)
+            nick.setWordWrap(False)
+            nick.setFixedHeight(row_h)
+            nick.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+            nick.setStyleSheet("color: {}; background: transparent;".format(accent))
+            self.names_col.addWidget(nick)
+            filename = person.get("file") or ""
+            label = QLabel(filename)
+            label.setWordWrap(False)
+            label.setFixedHeight(row_h)
+            label.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+            label.setStyleSheet("background: transparent;")
+            wide = max(1, metrics.horizontalAdvance(filename) + 8)
+            label.setFixedWidth(wide)
+            widest = max(widest, wide)
+            self.files_col.addWidget(label)
+        count = len(people)
+        content_h = count * row_h
+        self.files_host.setFixedSize(widest, max(1, content_h))
+        bar_h = self.files_scroll.horizontalScrollBar().sizeHint().height()
+        self.setFixedHeight((content_h + bar_h) if count else 0)
+        self._elide_names()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._elide_names()
+
+    def _elide_names(self):
+        width = max(1, self.names.width() - 4)
+        metrics = QFontMetrics(self.font())
+        for index, full in enumerate(self._full_names):
+            item = self.names_col.itemAt(index)
+            label = item.widget() if item is not None else None
+            if label is not None:
+                label.setText(metrics.elidedText(full, Qt.TextElideMode.ElideRight, width))
+
+    def _clear(self, layout):
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+
 class SeekBar(QSlider):
     """A click anywhere on the bar jumps to that moment."""
 
@@ -444,15 +534,10 @@ class IconButton(QPushButton):
             painter.setBrush(color)
             painter.drawRoundedRect(int(cx - 6), int(cy - 7), 4, 14, 1, 1)
             painter.drawRoundedRect(int(cx + 2), int(cy - 7), 4, 14, 1, 1)
-        elif kind == "loop":
-            painter.drawArc(int(cx - 7), int(cy - 7), 14, 14, 50 * 16, 280 * 16)
-            painter.setBrush(color)
-            path = QPainterPath()
-            path.moveTo(cx + 6, cy - 6)
-            path.lineTo(cx + 6, cy - 1)
-            path.lineTo(cx + 1, cy - 6)
-            path.closeSubpath()
-            painter.drawPath(path)
+        elif kind == "ready":
+            if self.isChecked():
+                painter.setBrush(color)
+            painter.drawEllipse(QPointF(cx, cy), 7, 7)
         elif kind == "chat":
             painter.drawRoundedRect(int(cx - 8), int(cy - 6), 16, 11, 2, 2)
             path = QPainterPath()
@@ -501,7 +586,7 @@ class SettingsDialog(QDialog):
         self.chat_size.setRange(12, 48)
         self.chat_size.setValue(int(appearance.get("chatFontSize") or 18))
         self.ui_size = QSpinBox()
-        self.ui_size.setRange(12, 32)
+        self.ui_size.setRange(1, 32)
         self.ui_size.setValue(int(appearance.get("uiFontSize") or 16))
         layout.addRow("Theme", self.theme)
         layout.addRow("Chat color", self.color)
@@ -653,18 +738,18 @@ class MainWindow(QMainWindow):
         self.slider = SeekBar(Qt.Orientation.Horizontal)
         self.slider.setRange(0, SEEK_STEPS)
         self.total = QLabel("0:00")
-        self.loop = IconButton("loop")
-        self.loop.setCheckable(True)
+        self.ready = IconButton("ready")
+        self.ready.setCheckable(True)
         self.chat_btn = IconButton("chat")
         self.chat_btn.setCheckable(True)
         self.room = IconButton("room")
         self.room.setCheckable(True)
         self.play.clicked.connect(self._toggle_pause)
         self.slider.sliderReleased.connect(self._seek_released)
-        self.loop.clicked.connect(self._toggle_loop)
+        self.ready.clicked.connect(self._toggle_ready)
         self.chat_btn.clicked.connect(self._toggle_chat_field)
         self.room.clicked.connect(self._toggle_room)
-        for widget in (self.play, self.elapsed, self.slider, self.total, self.loop, self.chat_btn, self.room):
+        for widget in (self.play, self.elapsed, self.slider, self.total, self.ready, self.chat_btn, self.room):
             bar.addWidget(widget)
         bar.setStretchFactor(self.slider, 1)
 
@@ -736,20 +821,22 @@ class MainWindow(QMainWindow):
         users_title = QLabel("Users")
         users_title.setObjectName("heading")
         side.addWidget(users_title)
-        self.room_users = QTextEdit()
-        self.room_users.setReadOnly(True)
-        side.addWidget(self.room_users, 1)
+        self.room_users = UserTable()
+        side.addWidget(self.room_users)
 
         playlist_title = QLabel("Playlist")
         playlist_title.setObjectName("heading")
         side.addWidget(playlist_title)
         self.files = FileList()
+        self.files.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.files.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.files.removed.connect(self._remove_file)
         self.files.chosen.connect(lambda path: self._play_path(path, start=True))
-        side.addWidget(self.files, 1)
+        side.addWidget(self.files)
 
         self.status = QLabel("")
         self.status.setWordWrap(True)
+        self.status.hide()
         side.addWidget(self.status)
 
         chat_title = QLabel("Chat")
@@ -824,10 +911,10 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(_stylesheet(theme, accent))
         size = int(appearance.get("uiFontSize") or 16)
         font = QFont()
-        font.setPointSize(max(10, min(28, size)))
+        font.setPointSize(max(1, min(32, size)))
         QApplication.instance().setFont(font)
         pal = _palette(theme, appearance.get("accentColor"))
-        for button in (self.play, self.loop, self.chat_btn, self.room, self.gear, self.bar_send):
+        for button in (self.play, self.ready, self.chat_btn, self.room, self.gear, self.bar_send):
             button.set_ink(pal["button_fg"], pal["on_fg"])
         self._refresh_banner()
         self._refresh_files()
@@ -963,19 +1050,22 @@ class MainWindow(QMainWindow):
         appearance = self.app.store.data["appearance"]
         pal = _palette(appearance.get("theme"), appearance.get("accentColor"))
         self.files.clear()
-        for item in self._playlist:
-            row = QListWidgetItem(item["name"])
+        for index, item in enumerate(self._playlist, start=1):
+            row = QListWidgetItem("{}. {}".format(index, item["name"]))
             row.setData(Qt.ItemDataRole.UserRole, item["path"])
             if item["path"] == self._current_path:
                 row.setBackground(QColor(pal["accent"]))
                 row.setForeground(QColor(pal["on_fg"]))
             self.files.addItem(row)
+        row_h = max(24, QFontMetrics(self.files.font()).height() + 12)
+        self.files.setFixedHeight(self.files.count() * row_h + 2 * self.files.frameWidth())
 
-    def _toggle_loop(self):
-        current = self._get("loop-file")
-        on = current in ("inf", "yes", "always")
-        self._set("loop-file", "no" if on else "inf")
-        self.loop.setChecked(not on)
+    def _toggle_ready(self):
+        client = getattr(self.app, "client", None)
+        if client is None:
+            return
+        from twisted.internet import reactor
+        reactor.callFromThread(client.toggleReady)
 
     def _toggle_full(self):
         if self.isFullScreen():
@@ -1050,8 +1140,8 @@ class MainWindow(QMainWindow):
             pass
 
     def _tick(self):
-        if self.video.error and self.status.text() != self.video.error:
-            self.status.setText(self.video.error)
+        if self.video.error:
+            self._set_status(self.video.error)
         self._follow_cursor()
         if self.volume_box.isVisible() and time.monotonic() >= self._volume_until:
             self.volume_box.hide()
@@ -1090,13 +1180,17 @@ class MainWindow(QMainWindow):
         state = event.get("state") or ""
         self._connected = state == "connected"
         self._failed = state == "failed"
-        if state == "failed" and self.status.text() != (event.get("text") or ""):
-            self.status.setText(event.get("text") or "")
+        if state == "failed":
+            self._set_status(event.get("text") or "")
         if state == "connected":
-            self.status.setText("")
+            self._set_status("")
         self._refresh_banner()
         if event.get("openPanel"):
             self.set_panel(True)
+
+    def _set_status(self, text):
+        self.status.setText(text or "")
+        self.status.setVisible(bool(text))
 
     def _configured(self):
         conn = self.app.store.data["connection"]
@@ -1153,13 +1247,13 @@ class MainWindow(QMainWindow):
             return
         appearance = self.app.store.data["appearance"]
         accent = _palette(appearance.get("theme"), appearance.get("accentColor"))["accent"]
-        self.room_users.clear()
-        for person in self._users:
-            spans = [
-                {"k": "nick", "v": person["name"]},
-                {"k": "text", "v": ": " + person.get("file", "")},
-            ]
-            self.room_users.append(_spans_html(spans, accent))
+        self.room_users.set_people(self._users, accent)
+        me = str(self.app.store.data["connection"].get("name") or "")
+        mine = next((person for person in self._users if person["name"] == me), None)
+        if mine is not None and hasattr(self, "ready"):
+            self.ready.blockSignals(True)
+            self.ready.setChecked(bool(mine["ready"]))
+            self.ready.blockSignals(False)
 
     def _paint_chat(self):
         if not hasattr(self, "chat"):
@@ -1204,8 +1298,6 @@ class MainWindow(QMainWindow):
             self._pos_at = position
             self._pos_when = time.monotonic()
         self.total.setText(_clock(self._duration))
-        loop = self._get("loop-file")
-        self.loop.setChecked(loop in ("inf", "yes", "always"))
         eof = self._get("eof-reached")
         ended = eof in (True, "yes", "true", 1) and self._duration > 0
         if ended:

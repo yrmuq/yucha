@@ -117,7 +117,7 @@ class App(object):
                     ui = int(command.get("uiFontSize"))
                 except (TypeError, ValueError):
                     ui = appearance.get("uiFontSize") or 16
-                appearance["uiFontSize"] = max(12, min(32, ui))
+                appearance["uiFontSize"] = max(1, min(32, ui))
             appearance["autoplayNext"] = bool(command.get("autoplayNext"))
             self.store.save()
 
