@@ -8,7 +8,7 @@ import os
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, Qt
+from PySide6.QtCore import QByteArray, Qt, Signal
 from PySide6.QtGui import QOpenGLFunctions
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QSizePolicy
@@ -45,6 +45,9 @@ def _import_mpv():
 
 class Picture(QOpenGLWidget):
     """The video area. Right click and Space pause. The wheel changes volume."""
+
+    fullscreenRequested = Signal()
+    volumeChanged = Signal(int)
 
     def __init__(self, runtime, parent=None):
         super().__init__(parent)
@@ -160,13 +163,23 @@ class Picture(QOpenGLWidget):
             return
         super().keyPressEvent(event)
 
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.fullscreenRequested.emit()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
     def wheelEvent(self, event):
         steps = event.angleDelta().y() / 120.0
         if steps and self.mpv is not None:
             try:
                 self.mpv.command("add", "volume", 2 * steps)
+                level = int(round(float(self.mpv.volume)))
             except Exception:
-                pass
+                level = None
+            if level is not None:
+                self.volumeChanged.emit(level)
         event.accept()
 
     def dragEnterEvent(self, event):

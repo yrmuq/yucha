@@ -5,9 +5,8 @@ the picture into the video area."""
 
 import time
 
-from PySide6.QtCore import QEasingCurve, QPoint, Qt, QTimer
-from PySide6.QtCore import QPropertyAnimation
-from PySide6.QtGui import QCursor, QFont
+from PySide6.QtCore import QEvent, QPoint, Qt, QTimer
+from PySide6.QtGui import QCursor, QFont, QFontMetrics
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -19,7 +18,6 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QPushButton,
     QScrollArea,
-    QSizePolicy,
     QSlider,
     QSpinBox,
     QTextEdit,
@@ -31,7 +29,10 @@ from yucha.engine import Picture
 
 HIDE_AFTER = 3.0
 CHAT_LIFE = 5.0
+READY_LIFE = 2.0
+VOLUME_LIFE = 2.0
 PANEL_WIDTH = 380
+BAR_HEIGHT = 72
 
 
 def _palette(theme):
@@ -65,7 +66,7 @@ def _palette(theme):
 def _stylesheet(theme):
     p = _palette(theme)
     return """
-    QMainWindow, QDialog, QWidget#root, QWidget#stage, QWidget#panel, QWidget#bar, QScrollArea, QLabel {{
+    QMainWindow, QDialog, QWidget#root, QWidget#stage, QWidget#panel, QWidget#bar, QWidget#volume, QScrollArea, QLabel {{
         background: {bg};
         color: {fg};
     }}
@@ -191,15 +192,16 @@ class MainWindow(QMainWindow):
         self._last_cursor = QPoint(-1, -1)
         self._panel_open = False
         self._bar_open = True
-        self._panel_anim = None
-        self._bar_anim = None
+        self._users = []
+        self._ready_until = {}
+        self._volume_until = 0
         self.setWindowTitle("yucha")
         self.resize(1280, 720)
         self.setMinimumSize(860, 520)
         self._build()
         self._fill_from_store()
         self.apply_theme()
-        self.set_panel(not app.store.has_connection(), animate=False)
+        self.set_panel(not app.store.has_connection())
         self._ui_timer = QTimer(self)
         self._ui_timer.setInterval(200)
         self._ui_timer.timeout.connect(self._tick)
@@ -215,16 +217,18 @@ class MainWindow(QMainWindow):
 
         column = QWidget()
         column.setObjectName("stage")
+        self.stage = column
         col = QVBoxLayout(column)
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(0)
         self.video = Picture(self.app.runtime)
+        self.video.fullscreenRequested.connect(self._toggle_full)
+        self.video.volumeChanged.connect(self._show_volume)
         col.addWidget(self.video, 1)
 
-        self.bar = QWidget()
+        self.bar = QWidget(column)
         self.bar.setObjectName("bar")
-        self.bar.setMinimumHeight(0)
-        self.bar.setMaximumHeight(72)
+        self._overlay(self.bar)
         bar = QHBoxLayout(self.bar)
         bar.setContentsMargins(10, 8, 10, 8)
         self.play = QPushButton("Play")
@@ -246,12 +250,25 @@ class MainWindow(QMainWindow):
         for widget in (self.play, self.elapsed, self.slider, self.total, self.loop, self.full, self.room):
             bar.addWidget(widget)
         bar.setStretchFactor(self.slider, 1)
-        col.addWidget(self.bar)
+
+        self.volume_box = QWidget(column)
+        self.volume_box.setObjectName("volume")
+        self._overlay(self.volume_box)
+        self.volume_box.hide()
+        volume_row = QHBoxLayout(self.volume_box)
+        volume_row.setContentsMargins(12, 8, 12, 8)
+        self.volume = QSlider(Qt.Orientation.Horizontal)
+        self.volume.setRange(0, 100)
+        self.volume.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.volume_text = QLabel("0")
+        volume_row.addWidget(self.volume, 1)
+        volume_row.addWidget(self.volume_text)
+
         row.addWidget(column, 1)
 
-        self.panel = QWidget()
+        self.panel = QWidget(column)
         self.panel.setObjectName("panel")
-        self.panel.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
+        self._overlay(self.panel)
         side = QVBoxLayout(self.panel)
         side.setContentsMargins(16, 16, 16, 16)
         side.setSpacing(8)
@@ -312,7 +329,46 @@ class MainWindow(QMainWindow):
         self.chat = QTextEdit()
         self.chat.setReadOnly(True)
         side.addWidget(self.chat, 1)
-        row.addWidget(self.panel)
+        self.stage.installEventFilter(self)
+        self._place_overlays()
+
+    def _overlay(self, widget):
+        widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        widget.setAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop, True)
+        widget.setAutoFillBackground(True)
+
+    def eventFilter(self, watched, event):
+        if watched is self.stage and event.type() == QEvent.Type.Resize:
+            self._place_overlays()
+        return super().eventFilter(watched, event)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._place_overlays()
+
+    def _place_overlays(self):
+        if not hasattr(self, "panel"):
+            return
+        width = self.stage.width()
+        height = self.stage.height()
+        self.bar.setGeometry(0, max(0, height - BAR_HEIGHT), width, BAR_HEIGHT)
+        panel_height = max(0, height - BAR_HEIGHT)
+        if self._panel_open:
+            panel_width = min(PANEL_WIDTH, width)
+            self.panel.setGeometry(max(0, width - panel_width), 0, panel_width, panel_height)
+            self.panel.show()
+        else:
+            self.panel.hide()
+        box_width, box_height = 280, 48
+        self.volume_box.setGeometry(
+            max(0, (width - box_width) // 2),
+            max(0, height - BAR_HEIGHT - 90),
+            min(box_width, width),
+            box_height,
+        )
+        self.bar.raise_()
+        self.panel.raise_()
+        self.volume_box.raise_()
 
     def _fill_from_store(self):
         conn = self.app.store.data["connection"]
@@ -336,37 +392,34 @@ class MainWindow(QMainWindow):
         self.ctl = getattr(listener, "mpvpipe", None)
 
     def set_panel(self, open_, animate=True):
+        was_open = self._panel_open
         self._panel_open = bool(open_)
         self.room.setChecked(self._panel_open)
-        end = PANEL_WIDTH if self._panel_open else 0
-        if not animate:
-            self.panel.setMinimumWidth(end)
-            self.panel.setMaximumWidth(end)
-            return
-        self.panel.setMinimumWidth(0)
-        anim = QPropertyAnimation(self.panel, b"maximumWidth", self)
-        anim.setDuration(260)
-        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-        anim.setStartValue(self.panel.width())
-        anim.setEndValue(end)
-        anim.finished.connect(lambda: self.panel.setMinimumWidth(end))
-        self._panel_anim = anim
-        anim.start()
+        if self._panel_open:
+            self._bar_open = True
+            self.bar.show()
+        elif was_open:
+            self._last_move = time.monotonic()
+        self._place_overlays()
 
     def _toggle_room(self):
         self.set_panel(not self._panel_open)
 
     def _set_bar(self, open_):
+        if self._panel_open:
+            open_ = True
         if open_ == self._bar_open:
             return
         self._bar_open = open_
-        end = 72 if open_ else 0
-        anim = QPropertyAnimation(self.bar, b"maximumHeight", self)
-        anim.setDuration(160)
-        anim.setStartValue(self.bar.height())
-        anim.setEndValue(end)
-        self._bar_anim = anim
-        anim.start()
+        self.bar.setVisible(open_)
+
+    def _show_volume(self, level):
+        level = max(0, min(100, int(level)))
+        self.volume.setValue(level)
+        self.volume_text.setText(str(level))
+        self._volume_until = time.monotonic() + VOLUME_LIFE
+        self.volume_box.show()
+        self.volume_box.raise_()
 
     def _toggle_pause(self):
         self._cmd("cycle", "pause")
@@ -442,6 +495,8 @@ class MainWindow(QMainWindow):
         if self.video.error and self.status.text() != self.video.error:
             self.status.setText(self.video.error)
         self._follow_cursor()
+        if self.volume_box.isVisible() and time.monotonic() >= self._volume_until:
+            self.volume_box.hide()
         self._read_events()
         self._refresh_transport()
         self._refresh_osd()
@@ -466,6 +521,8 @@ class MainWindow(QMainWindow):
                 self._add_chat(event.get("user") or "", event.get("text") or "")
             elif kind == "chat-local":
                 self._add_chat("", event.get("text") or "")
+            elif kind == "users":
+                self._on_users(event)
 
     def _on_conn(self, event):
         state = event.get("state") or ""
@@ -478,14 +535,33 @@ class MainWindow(QMainWindow):
             self._said_connected = False
         elif state == "connected":
             color = pal["accent"]
-            if not self._said_connected:
-                self._said_connected = True
-                self._add_chat("", "connected")
+            self._said_connected = True
         else:
             color = pal["muted"]
         self.status.setStyleSheet("color: {};".format(color))
         if event.get("openPanel"):
             self.set_panel(True)
+
+    def _on_users(self, event):
+        now = time.monotonic()
+        people = []
+        ready_names = set()
+        for person in event.get("list") or []:
+            name = str(person.get("name") or "")
+            if not name:
+                continue
+            ready = bool(person.get("ready"))
+            people.append((name, ready))
+            if ready:
+                ready_names.add(name)
+                if name not in self._ready_until:
+                    self._ready_until[name] = now + READY_LIFE
+            else:
+                self._ready_until.pop(name, None)
+        for name in list(self._ready_until):
+            if name not in ready_names:
+                self._ready_until.pop(name, None)
+        self._users = people
 
     def _add_chat(self, user, text):
         if not text:
@@ -525,23 +601,48 @@ class MainWindow(QMainWindow):
         now = time.monotonic()
         self._osd = [(born, line) for born, line in self._osd if now - born < CHAT_LIFE]
         appearance = self.app.store.data["appearance"]
-        size = int(appearance.get("chatFontSize") or 18)
+        point = int(appearance.get("chatFontSize") or 18)
+        measure = QFont(self.font())
+        measure.setPointSize(max(10, min(48, point)))
+        size = max(14, QFontMetrics(measure).height())
         color = _bgr(appearance.get("chatColor"))
-        width = int(self._get("osd-width") or self.video.width() or 1280)
-        height = int(self._get("osd-height") or self.video.height() or 720)
+        # Logical window pixels, not the 4K frame. The text then matches the
+        # size of the text in the window.
+        width = max(1, self.video.width())
+        height = max(1, self.video.height())
+        people = []
+        for name, ready in self._users:
+            if ready and now >= self._ready_until.get(name, 0):
+                continue
+            people.append((name, ready))
         lines = []
-        y = max(40, int(height / 2) - len(self._osd) * (size + 8) // 2)
+        step = size + 8
+        block = len(people) + len(self._osd)
+        y = max(24, int(height / 2) - block * step // 2)
+        floor = max(24, height - BAR_HEIGHT - 16)
+        for name, ready in people:
+            if y > floor:
+                break
+            dot = "00FF00" if ready else "0000FF"
+            lines.append(
+                "{{\\pos({},{})\\an6\\bord1\\shad0\\fs{}\\1c&H{}&}}{{\\1c&H{}&}}● {{\\1c&H{}&}}{}".format(
+                    max(20, width - 24), y, size, color, dot, color, _ass_escape(name)
+                )
+            )
+            y += step
         for _born, line in self._osd:
+            if y > floor:
+                break
             lines.append(
                 "{{\\pos({},{})\\an6\\bord1\\shad0\\fs{}\\1c&H{}&}}{}".format(
                     max(20, width - 24), y, size, color, _ass_escape(line)
                 )
             )
-            y += size + 8
+            y += step
         if self._connected:
             lines.append(
                 "{{\\pos({},{})\\an9\\bord1\\shad0\\fs{}\\1c&H{}&}}{}".format(
-                    max(20, width - 16), height - 16, max(14, size - 2), color, "connected"
+                    max(20, width - 16), floor, size, color, "connected"
                 )
             )
         data = "\n".join(lines)

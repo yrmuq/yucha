@@ -1,6 +1,6 @@
 # Copyright (C) 2026 yrmuq
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""UI object Syncplay calls. Drawing happens in the mpv script, not here."""
+"""UI object Syncplay calls. The window draws. This only forwards what Syncplay would show itself."""
 
 import re
 
@@ -51,7 +51,8 @@ class PlayerUI(object):
                 "user": chat.group(1),
                 "text": chat.group(2),
             })
-            return
+        elif text:
+            self.bridge.emit({"e": "chat-local", "text": text})
         # "Successfully reached" is only the TCP socket. The room is joined
         # when Syncplay says it connected to the server.
         joined = getMessage("connected-successful-notification")
@@ -76,6 +77,7 @@ class PlayerUI(object):
             return
         if text in ("Connection was closed cleanly.", "Connection lost"):
             return
+        self.bridge.emit({"e": "chat-local", "text": text})
         fatal_keys = (
             "connection-failed-notification",
             "disconnection-notification",
@@ -89,6 +91,30 @@ class PlayerUI(object):
         )
         if fatal or not self._connected:
             self._fail(text)
+
+    def userListChange(self):
+        client = self._syncplayClient
+        userlist = getattr(client, "userlist", None) if client is not None else None
+        if userlist is None:
+            return
+        current = userlist.currentUser
+        room = current.room if current is not None else None
+        people = []
+
+        def add(user):
+            if user is None or not user.username:
+                return
+            if room and user.room and user.room != room:
+                return
+            people.append({
+                "name": user.username,
+                "ready": bool(user.isReady()),
+            })
+
+        add(current)
+        for user in userlist._users.values():
+            add(user)
+        self.bridge.emit({"e": "users", "list": people})
 
     def showDebugMessage(self, message):
         return None

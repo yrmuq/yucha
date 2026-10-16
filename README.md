@@ -19,7 +19,7 @@ python3 -m pip install -r requirements.txt
 python3 -m yucha
 ```
 
-Drop a video on the picture. Right click pauses and resumes. Space does the same when the picture is focused. The wheel changes the volume. The first launch opens the room panel, because nothing is saved yet. The fields are ordinary text fields: Ctrl+V pastes, and holding Backspace deletes. The login is written to `~/.config/yucha/config.json` (mode 0600). The next launch leaves the panel closed and connects with the saved server, username, password, and room. **connected** stays on the picture. Chat lines show on the right of the picture for five seconds, and they also stay in the panel.
+Drop a video on the picture. Right click pauses and resumes. Space does the same when the picture is focused. Double click toggles fullscreen. The wheel changes the volume and shows the level for two seconds. The first launch opens the room panel, because nothing is saved yet. The fields are ordinary text fields: Ctrl+V pastes, and holding Backspace deletes. The login is written to `~/.config/yucha/config.json` (mode 0600). The next launch leaves the panel closed and connects with the saved server, username, password, and room. **connected** stays on the picture. Chat lines, and the notices Syncplay itself would show, stay in the panel. Chat lines also show on the right of the picture for five seconds. A person who is not ready stays on the picture with a red dot. A person who is ready shows with a green dot for two seconds.
 
 ## AppImage
 
@@ -41,8 +41,8 @@ A version tag `vX.Y.Z` makes GitHub build the image and attach it to that releas
 ## What is on the window
 
 1. One window. mpv's engine draws the picture inside it and does not open a window of its own. The Syncplay client keeps pause, seek, and position in sync. The protocol is the existing Syncplay client, not a rewrite.
-2. The **Room** button at the right end of the playback bar opens the room panel. The panel is a full-height column of ordinary fields.
-3. The bar has Play, the seek slider, Loop, and Full. It uses the theme and hides after 3 seconds without the mouse. Loop repeats the current file while the button is on. Right click and Space pause and resume. The wheel changes the volume.
+2. The **Room** button at the right end of the playback bar opens the room panel. The panel sits on top of the picture and stops above the bar. The picture is not resized.
+3. The bar sits on top of the picture. It has Play, the seek slider, Loop, and Full. It uses the theme and hides after 3 seconds without the mouse, unless the room panel is open. Loop repeats the current file while the button is on. Right click and Space pause and resume. Double click toggles fullscreen. The wheel changes the volume.
 4. No saved login: the panel opens by itself. Saved login: it stays closed and the client connects.
 5. **Settings** in the panel sets the theme, chat color, chat size, and interface size.
 
