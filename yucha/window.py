@@ -1443,26 +1443,20 @@ class MainWindow(QMainWindow):
         self._cmd("cycle", "pause")
 
     def _add_dropped(self, paths):
-        dropped = []
         batch = []
         known = {item["path"] for item in self._playlist}
         for path in paths:
-            if not path:
+            if not path or path in known:
                 continue
-            dropped.append(path)
-            if path not in known:
-                batch.append({"path": path, "name": Path(path).name})
-                known.add(path)
+            batch.append({"path": path, "name": Path(path).name})
+            known.add(path)
         batch.sort(key=lambda item: _natural(item["name"]))
+        staying = bool(self._playlist) and self._current_path == self._playlist[0]["path"]
         self._playlist.extend(batch)
-        if not dropped:
+        if staying or not batch:
             self._refresh_files()
             return
-        start = batch[0]["path"] if batch else ""
-        if start:
-            self._play_path(start, start=True)
-        else:
-            self._refresh_files()
+        self._play_path(batch[0]["path"], start=True)
 
     def _play_path(self, path, start=False):
         self._current_path = path
