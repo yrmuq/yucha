@@ -140,6 +140,11 @@ def _stylesheet(theme, accent=None):
         background: {field};
         color: {muted};
     }}
+    QPushButton#muteicon, QPushButton#muteicon:hover, QPushButton#muteicon:pressed, QPushButton#muteicon:checked {{
+        background: transparent;
+        border: none;
+        padding: 0;
+    }}
     QPushButton:checked {{
         background: {accent};
         color: {on_fg};
@@ -949,7 +954,7 @@ class IconButton(QPushButton):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         color = QColor(self._ink)
-        if self.isChecked() and self.kind in ("speaker", "tracks"):
+        if self.isChecked() and self.kind in ("speaker", "tracks", "mute"):
             color = QColor(self._accent)
         elif self.isChecked():
             color = QColor(self._ink_on)
@@ -1037,6 +1042,48 @@ class IconButton(QPushButton):
             painter.drawLine(QPointF(cx - 6, cy - 5), QPointF(cx + 6, cy - 5))
             painter.drawLine(QPointF(cx - 6, cy), QPointF(cx + 3, cy))
             painter.drawLine(QPointF(cx - 6, cy + 5), QPointF(cx + 6, cy + 5))
+        elif kind == "mute":
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(color)
+            painter.drawEllipse(QPointF(cx - 3.2, cy + 3.2), 4.2, 3.1)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(color, 1.6))
+            painter.drawLine(QPointF(cx + 0.6, cy + 2), QPointF(cx + 0.6, cy - 6))
+            painter.drawLine(QPointF(cx - 6, cy + 5), QPointF(cx + 7, cy - 6))
+        painter.end()
+
+
+class BoxCheck(QCheckBox):
+    """A square with a visible fill, sitting on its own."""
+
+    def __init__(self):
+        super().__init__()
+        self.setText("")
+        self.setFixedSize(18, 18)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._fill = QColor("#2A2824")
+        self._line = QColor("#5C584F")
+        self._mark = QColor("#F4F1EA")
+        self._on = QColor("#9A3A52")
+
+    def set_colors(self, fill, line, mark, on):
+        self._fill = QColor(fill)
+        self._line = QColor(line)
+        self._mark = QColor(mark)
+        self._on = QColor(on)
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(QPen(self._on if self.isChecked() else self._line, 1))
+        painter.setBrush(self._on if self.isChecked() else self._fill)
+        painter.drawRoundedRect(self.rect().adjusted(1, 1, -2, -2), 3, 3)
+        if self.isChecked():
+            painter.setPen(QPen(self._mark, 1.7))
+            painter.drawLine(QPointF(4, 9), QPointF(7, 12))
+            painter.drawLine(QPointF(7, 12), QPointF(14, 5))
         painter.end()
 
 
@@ -1114,15 +1161,18 @@ class SettingsDialog(QDialog):
 
         other = QWidget()
         other_form = QFormLayout(other)
-        self.autoplay = QCheckBox("Play the next episode automatically")
+        self.autoplay = BoxCheck()
         self.autoplay.setChecked(bool(appearance.get("autoplayNext")))
-        self.fastforward = QCheckBox("Fast-forward if lagging behind")
+        self.fastforward = BoxCheck()
         self.fastforward.setChecked(bool(appearance.get("fastforwardOnDesync", True)))
-        self.slowdown = QCheckBox("Slow down on minor desync")
+        self.slowdown = BoxCheck()
         self.slowdown.setChecked(bool(appearance.get("slowOnDesync", True)))
-        other_form.addRow(self.autoplay)
-        other_form.addRow(self.fastforward)
-        other_form.addRow(self.slowdown)
+        page = _palette(self._look_theme, self._look_accent)
+        for box in (self.autoplay, self.fastforward, self.slowdown):
+            box.set_colors(page["field"], page["border"], page["on_fg"], page["accent"])
+        self._check_row(other_form, "Play the next episode automatically", self.autoplay)
+        self._check_row(other_form, "Fast-forward if lagging behind", self.fastforward)
+        self._check_row(other_form, "Slow down on minor desync", self.slowdown)
         stepper = QWidget()
         stepper_row = QHBoxLayout(stepper)
         stepper_row.setContentsMargins(0, 0, 0, 0)
@@ -1230,6 +1280,14 @@ class SettingsDialog(QDialog):
         }
         self.accept()
 
+    def _check_row(self, form, text, box):
+        host = QWidget()
+        row = QHBoxLayout(host)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addStretch(1)
+        row.addWidget(box)
+        form.addRow(text, host)
+
     def _style_popup(self, combo):
         page = _palette(self._look_theme, self._look_accent)
         view = combo.view()
@@ -1293,6 +1351,8 @@ class MainWindow(QMainWindow):
         self._room_names = set()
         self._room_was_ready = False
         self._volume_flash = False
+        self._tracks_lock = None
+        self._muted = False
         self.setWindowTitle("yucha")
         self.resize(1280, 720)
         self.setMinimumSize(860, 520)
@@ -1384,13 +1444,20 @@ class MainWindow(QMainWindow):
         self._overlay(self.volume_box)
         self.volume_box.hide()
         volume_row = QHBoxLayout(self.volume_box)
-        volume_row.setContentsMargins(14, 6, 14, 6)
+        volume_row.setContentsMargins(12, 6, 12, 6)
+        volume_row.setSpacing(12)
+        self.mute_h = IconButton("mute")
+        self.mute_h.setObjectName("muteicon")
+        self.mute_h.setFixedSize(22, 22)
+        self.mute_h.setCheckable(True)
+        self.mute_h.clicked.connect(self._toggle_mute)
         self.volume = QSlider(Qt.Orientation.Horizontal)
         self.volume.setObjectName("volumebar")
         self.volume.setRange(0, VOLUME_MAX)
         self.volume.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.volume_text = QLabel("0")
         self.volume_text.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        volume_row.addWidget(self.mute_h)
         volume_row.addWidget(self.volume, 1)
         volume_row.addWidget(self.volume_text)
         self._lock_volume_digits()
@@ -1412,6 +1479,12 @@ class MainWindow(QMainWindow):
         self.volume_slider.valueChanged.connect(self._on_vertical_volume)
         volume_pop_col.addWidget(self.volume_readout)
         volume_pop_col.addWidget(self.volume_slider, 1, Qt.AlignmentFlag.AlignHCenter)
+        self.mute_v = IconButton("mute")
+        self.mute_v.setParent(self.volume_pop)
+        self.mute_v.setObjectName("muteicon")
+        self.mute_v.setFixedSize(22, 22)
+        self.mute_v.setCheckable(True)
+        self.mute_v.clicked.connect(self._toggle_mute)
 
         self.tracks_pop = QWidget(column)
         self.tracks_pop.setObjectName("trackpop")
@@ -1578,14 +1651,18 @@ class MainWindow(QMainWindow):
             self._fit_volume_pop()
             hint = self.volume_pop.sizeHint()
             self._move_pop(self.volume_pop, self.volume_btn, 56, max(hint.height(), 1))
+            self._place_volume_mute()
         if self._tracks_open:
+            self.tracks_pop.layout().activate()
             hint = self.tracks_pop.sizeHint()
-            self._move_pop(
-                self.tracks_pop,
-                self.tracks_btn,
-                max(160, min(280, hint.width())),
-                max(48, hint.height()),
-            )
+            width = max(160, min(280, hint.width()))
+            height = max(48, hint.height())
+            if self._tracks_lock is None:
+                self._tracks_lock = (width, height)
+            else:
+                width = max(width, self._tracks_lock[0])
+                height = max(height, self._tracks_lock[1])
+            self._move_pop(self.tracks_pop, self.tracks_btn, width, height)
 
     def _fit_volume_pop(self):
         top = 8
@@ -1595,6 +1672,14 @@ class MainWindow(QMainWindow):
         layout = self.volume_pop.layout()
         layout.setContentsMargins(10, top, 10, above)
         layout.setSpacing(gap)
+
+    def _place_volume_mute(self):
+        band = self.volume_pop.layout().contentsMargins().bottom()
+        side = self.mute_v.width()
+        x = max(0, (self.volume_pop.width() - side) // 2)
+        y = self.volume_pop.height() - band + max(0, (band - side) // 2)
+        self.mute_v.setGeometry(x, y, side, side)
+        self.mute_v.raise_()
 
     def _move_pop(self, popup, button, width, height):
         origin = button.mapTo(self.stage, QPoint(0, 0))
@@ -1621,6 +1706,7 @@ class MainWindow(QMainWindow):
         self._tracks_open = False
         self.volume_btn.setChecked(False)
         self.tracks_btn.setChecked(False)
+        self._tracks_lock = None
         self.volume_pop.hide()
         self.tracks_pop.hide()
         return False
@@ -1671,8 +1757,11 @@ class MainWindow(QMainWindow):
             self._volume_open = False
             self.volume_btn.setChecked(False)
             self.volume_pop.hide()
+            self._tracks_lock = None
             self._fill_tracks()
             self._set_bar(True)
+        else:
+            self._tracks_lock = None
         self._place_overlays()
 
     def _track_name(self, track):
@@ -1692,6 +1781,8 @@ class MainWindow(QMainWindow):
             item = layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
+                widget.hide()
+                widget.setParent(None)
                 widget.deleteLater()
         raw = self._get("track-list") or []
         if not isinstance(raw, list):
@@ -1705,7 +1796,7 @@ class MainWindow(QMainWindow):
         self._track_heading(layout, "Audio")
         for track in audios:
             self._track_row(layout, track, "aid")
-        self.tracks_pop.adjustSize()
+        layout.activate()
 
     def _track_heading(self, layout, text):
         label = QLabel(text)
@@ -1717,6 +1808,7 @@ class MainWindow(QMainWindow):
         button.setObjectName("trackrow")
         button.setCheckable(True)
         button.setChecked(bool(track.get("selected")))
+        button.setMinimumHeight(28)
         button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         ident = track.get("id")
@@ -1791,7 +1883,7 @@ class MainWindow(QMainWindow):
             """.format(size=text_css)
         )
         pal = _palette(theme, appearance.get("accentColor"))
-        for button in (self.play, self.ready, self.chat_btn, self.room, self.gear, self.bar_send, self.volume_btn, self.tracks_btn):
+        for button in (self.play, self.ready, self.chat_btn, self.room, self.gear, self.bar_send, self.volume_btn, self.tracks_btn, self.mute_h, self.mute_v):
             button.set_ink(pal["button_fg"], pal["on_fg"], pal["accent"])
         self._refresh_banner()
         self._refresh_files()
@@ -1839,10 +1931,12 @@ class MainWindow(QMainWindow):
     def _lock_volume_digits(self):
         if not hasattr(self, "volume_text"):
             return
-        width = QFontMetrics(self.volume_text.font()).horizontalAdvance("000") + 8
+        width = QFontMetrics(self.volume_text.font()).horizontalAdvance("000")
         self.volume_text.setFixedWidth(width)
 
     def _show_volume(self, level):
+        if self._muted:
+            self._set_muted(False)
         ceiling = self._volume_ceiling()
         level = max(0, min(ceiling, int(level)))
         if self.volume.maximum() != ceiling:
@@ -1861,6 +1955,18 @@ class MainWindow(QMainWindow):
             self.volume_pop.hide()
         self.volume_box.show()
         self.volume_box.raise_()
+
+    def _toggle_mute(self):
+        self._set_muted(not self._muted)
+
+    def _set_muted(self, muted):
+        self._muted = bool(muted)
+        self._set("mute", "yes" if self._muted else "no")
+        for button in (self.mute_h, self.mute_v):
+            button.blockSignals(True)
+            button.setChecked(self._muted)
+            button.blockSignals(False)
+            button.update()
 
     def _volume_overlay(self):
         mode = self.app.store.data["appearance"].get("volumeOverlay") or "horizontal"
@@ -1914,6 +2020,10 @@ class MainWindow(QMainWindow):
         if key == int(Qt.Key.Key_Space):
             if not event.isAutoRepeat():
                 self._toggle_pause()
+            return True
+        if key == int(Qt.Key.Key_M):
+            if not event.isAutoRepeat():
+                self._toggle_mute()
             return True
         return self._on_arrow(key)
 
