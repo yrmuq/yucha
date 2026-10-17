@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
@@ -384,13 +385,15 @@ def _status_spans(text):
     return None
 
 
-def _spans_html(spans, me, mine, other):
+def _spans_html(spans, me, mine, other, bad="#E07474"):
     bits = []
     for span in spans:
         safe = html.escape(span["v"], quote=False).replace("\n", "<br>")
         if span["k"] == "nick":
             color = mine if span["v"] == me else other
             bits.append('<span style="color: {}; font-weight: 700;">{}</span>'.format(color, safe))
+        elif span["k"] == "leave":
+            bits.append('<span style="color: {};">{}</span>'.format(bad, safe))
         else:
             bits.append(safe)
     return "".join(bits)
@@ -637,8 +640,8 @@ class UserTable(QWidget):
         self.sizes_col.setContentsMargins(0, 0, 0, 0)
         self.sizes_col.setSpacing(0)
         self.sizes.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        row.addWidget(self.names, 1)
-        row.addWidget(self.files_scroll, 2)
+        row.addWidget(self.names, 4)
+        row.addWidget(self.files_scroll, 11)
         row.addWidget(self.sizes, 0)
         self._row_h = 0
         self._line = QColor("#34363F")
@@ -705,8 +708,14 @@ class UserTable(QWidget):
             self.sizes_col.addWidget(size)
         count = len(people)
         rows = max(2, count)
+        top = ((rows - count) * row_h) // 2
+        if top:
+            for column in (self.names_col, self.files_col, self.sizes_col):
+                gap = QWidget()
+                gap.setFixedHeight(top)
+                column.insertWidget(0, gap)
         content_h = rows * row_h
-        self.files_host.setFixedSize(widest, max(1, count * row_h))
+        self.files_host.setFixedSize(widest, content_h)
         self.sizes.setMinimumWidth(metrics.horizontalAdvance("0000 MB") + 8)
         self.setFixedHeight(content_h + margins.top() + margins.bottom())
         self._elide_names()
@@ -756,11 +765,14 @@ class UserTable(QWidget):
         bold = QFont(self.font())
         bold.setBold(True)
         metrics = QFontMetrics(bold)
-        for index, full in enumerate(self._full_names):
+        labels = []
+        for index in range(self.names_col.count()):
             item = self.names_col.itemAt(index)
-            label = item.widget() if item is not None else None
-            if label is not None:
-                label.setText(metrics.elidedText(full, Qt.TextElideMode.ElideRight, width))
+            widget = item.widget() if item is not None else None
+            if isinstance(widget, QLabel):
+                labels.append(widget)
+        for label, full in zip(labels, self._full_names):
+            label.setText(metrics.elidedText(full, Qt.TextElideMode.ElideRight, width))
 
     def _clear(self, layout):
         while layout.count():
@@ -933,6 +945,7 @@ class SettingsDialog(QDialog):
         buttons.addWidget(ok)
         buttons.addWidget(cancel)
         layout.addRow(buttons)
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
 
     def _accept(self):
         color = self.color.text().strip()
@@ -986,6 +999,7 @@ class ConnectionDialog(QDialog):
         buttons.addWidget(connect)
         buttons.addWidget(cancel)
         layout.addRow(buttons)
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
 
     def _accept(self):
         self.values = {
@@ -1114,8 +1128,10 @@ class MainWindow(QMainWindow):
         self.volume.setRange(0, VOLUME_MAX)
         self.volume.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.volume_text = QLabel("0")
+        self.volume_text.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         volume_row.addWidget(self.volume, 1)
         volume_row.addWidget(self.volume_text)
+        self._lock_volume_digits()
 
         row.addWidget(column, 1)
 
@@ -1281,6 +1297,7 @@ class MainWindow(QMainWindow):
         self.room_users._text_css = text_css
         self.files.setFont(shared)
         self.room_users.setFont(shared)
+        self._lock_volume_digits()
         self.setStyleSheet(
             self.styleSheet()
             + """
@@ -1334,6 +1351,12 @@ class MainWindow(QMainWindow):
         else:
             self._last_move = time.monotonic()
         self._place_overlays()
+
+    def _lock_volume_digits(self):
+        if not hasattr(self, "volume_text"):
+            return
+        width = QFontMetrics(self.volume_text.font()).horizontalAdvance("000") + 8
+        self.volume_text.setFixedWidth(width)
 
     def _show_volume(self, level):
         ceiling = self._volume_ceiling()
@@ -1427,20 +1450,21 @@ class MainWindow(QMainWindow):
 
     def _add_dropped(self, paths):
         dropped = []
+        batch = []
         known = {item["path"] for item in self._playlist}
         for path in paths:
             if not path:
                 continue
             dropped.append(path)
             if path not in known:
-                self._playlist.append({"path": path, "name": Path(path).name})
+                batch.append({"path": path, "name": Path(path).name})
                 known.add(path)
-        self._playlist.sort(key=lambda item: _natural(item["name"]))
+        batch.sort(key=lambda item: _natural(item["name"]))
+        self._playlist.extend(batch)
         if not dropped:
             self._refresh_files()
             return
-        wanted = set(dropped)
-        start = next((item["path"] for item in self._playlist if item["path"] in wanted), "")
+        start = batch[0]["path"] if batch else ""
         if start:
             self._play_path(start, start=True)
         else:
@@ -1721,15 +1745,18 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "chat"):
             return
         me, mine, other = self._nick_colors()
+        bad = _palette(self.app.store.data["appearance"].get("theme"))["bad"]
         self.chat.clear()
         for spans in self._chat_lines:
-            self.chat.append(_spans_html(spans, me, mine, other))
+            self.chat.append(_spans_html(spans, me, mine, other, bad))
 
     def _add_chat(self, user, text):
         if not text or _hidden_line(text):
             return
         if user:
             spans = [{"k": "nick", "v": user}, {"k": "text", "v": ": " + text}]
+        elif re.match(r"^.+ has left\s*$", text):
+            spans = [{"k": "leave", "v": text}]
         else:
             spans = _status_spans(text) or [{"k": "text", "v": text}]
             if any(span["k"] == "nick" and span["v"] in ("", "None") for span in spans):
