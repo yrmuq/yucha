@@ -178,7 +178,8 @@ def _stylesheet(theme, accent=None):
     QTabBar::tab {{
         background: {field};
         color: {fg};
-        padding: 8px 16px;
+        padding: 2px 12px;
+        margin: 0px;
         border: 1px solid {border};
     }}
     QTabBar::tab:selected {{
@@ -943,12 +944,15 @@ class SettingsDialog(QDialog):
         self.setModal(True)
         self.appearance = None
         self.connection = None
+        self.wants_connect = False
         root = QVBoxLayout(self)
         tabs = QTabWidget()
         root.addWidget(tabs)
 
         room = QWidget()
-        room_form = QFormLayout(room)
+        room_box = QVBoxLayout(room)
+        room_box.setContentsMargins(0, 0, 0, 0)
+        room_form = QFormLayout()
         self.host = QLineEdit(str(connection.get("host") or "syncplay.pl"))
         self.port = QLineEdit(str(connection.get("port") or 8999))
         self.name = QLineEdit(str(connection.get("name") or ""))
@@ -963,7 +967,12 @@ class SettingsDialog(QDialog):
             ("Room", self.room_name),
         ):
             room_form.addRow(label, field)
-            field.returnPressed.connect(self._accept)
+            field.returnPressed.connect(self._connect_now)
+        room_box.addLayout(room_form)
+        room_box.addStretch(1)
+        connect = QPushButton("Connect")
+        connect.clicked.connect(self._connect_now)
+        room_box.addWidget(connect)
         tabs.addTab(room, "Room")
 
         theme_page = QWidget()
@@ -1038,6 +1047,10 @@ class SettingsDialog(QDialog):
             tabs.widget(index).setMinimumSize(max(360, wide), tall)
         tabs.setCurrentIndex(page if 0 <= page < tabs.count() else 0)
         root.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
+
+    def _connect_now(self):
+        self.wants_connect = True
+        self._accept()
 
     def _accept(self):
         color = self.color.text().strip()
@@ -1652,7 +1665,7 @@ class MainWindow(QMainWindow):
             return
         self.app.on_command({"c": "appearance", **dialog.appearance})
         self.apply_theme()
-        if dialog.connection and self._connection_changed(dialog.connection):
+        if dialog.connection and (dialog.wants_connect or self._connection_changed(dialog.connection)):
             self.app.on_command({"c": "connect", **dialog.connection})
             self._refresh_banner()
 
