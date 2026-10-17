@@ -47,6 +47,8 @@ DEFAULTS = {
         "chatFontSize": 18,
         "uiFontSize": 16,
         "autoplayNext": False,
+        "fastforwardOnDesync": True,
+        "slowOnDesync": True,
     },
 }
 

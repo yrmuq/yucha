@@ -181,6 +181,45 @@ def _stylesheet(theme, accent=None):
         margin: -5px 0;
         border-radius: 6px;
     }}
+    QSlider#volumebar::groove:vertical {{
+        width: 3px;
+        background: {border};
+        border: none;
+        border-radius: 2px;
+    }}
+    QSlider#volumebar::sub-page:vertical {{
+        background: {accent};
+        border-radius: 2px;
+    }}
+    QSlider#volumebar::add-page:vertical {{
+        background: transparent;
+    }}
+    QSlider#volumebar::handle:vertical {{
+        background: {fg};
+        width: 12px;
+        height: 12px;
+        margin: 0 -5px;
+        border-radius: 6px;
+    }}
+    QWidget#volume, QWidget#volumepop, QWidget#trackpop {{
+        background: {bg};
+        border-radius: 10px;
+    }}
+    QWidget#volumepop QLabel, QWidget#trackpop QLabel {{
+        background: transparent;
+    }}
+    QPushButton#trackrow {{
+        background: transparent;
+        color: {fg};
+        border: none;
+        border-radius: 6px;
+        padding: 4px 10px;
+        text-align: left;
+    }}
+    QPushButton#trackrow:checked {{
+        background: {accent};
+        color: {on_fg};
+    }}
     QTabWidget::pane {{
         border: 1px solid {border};
         background: {bg};
@@ -949,6 +988,23 @@ class IconButton(QPushButton):
             painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
             painter.setBrush(Qt.GlobalColor.transparent)
             painter.drawEllipse(QPointF(cx, cy), 2.2, 2.2)
+        elif kind == "speaker":
+            painter.setBrush(color)
+            path = QPainterPath()
+            path.moveTo(cx - 7, cy - 3)
+            path.lineTo(cx - 3, cy - 3)
+            path.lineTo(cx + 1, cy - 7)
+            path.lineTo(cx + 1, cy + 7)
+            path.lineTo(cx - 3, cy + 3)
+            path.lineTo(cx - 7, cy + 3)
+            path.closeSubpath()
+            painter.drawPath(path)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawArc(int(cx + 2), int(cy - 4), 6, 8, -50 * 16, 100 * 16)
+        elif kind == "tracks":
+            painter.drawLine(QPointF(cx - 6, cy - 5), QPointF(cx + 6, cy - 5))
+            painter.drawLine(QPointF(cx - 6, cy), QPointF(cx + 3, cy))
+            painter.drawLine(QPointF(cx - 6, cy + 5), QPointF(cx + 6, cy + 5))
         painter.end()
 
 
@@ -1025,7 +1081,13 @@ class SettingsDialog(QDialog):
         other_form = QFormLayout(other)
         self.autoplay = QCheckBox("Play the next episode automatically")
         self.autoplay.setChecked(bool(appearance.get("autoplayNext")))
+        self.fastforward = QCheckBox("Fast-forward if lagging behind")
+        self.fastforward.setChecked(bool(appearance.get("fastforwardOnDesync", True)))
+        self.slowdown = QCheckBox("Slow down on minor desync")
+        self.slowdown.setChecked(bool(appearance.get("slowOnDesync", True)))
         other_form.addRow(self.autoplay)
+        other_form.addRow(self.fastforward)
+        other_form.addRow(self.slowdown)
         tabs.addTab(other, "Other")
 
         about = QWidget()
@@ -1092,6 +1154,8 @@ class SettingsDialog(QDialog):
             "chatFontSize": self.chat_size.value(),
             "uiFontSize": self.ui_size.value(),
             "autoplayNext": self.autoplay.isChecked(),
+            "fastforwardOnDesync": self.fastforward.isChecked(),
+            "slowOnDesync": self.slowdown.isChecked(),
         }
         self.connection = {
             "host": self.host.text(),
@@ -1131,6 +1195,8 @@ class MainWindow(QMainWindow):
         self._eof_seen = False
         self._volume_until = 0
         self._hold_pause = None
+        self._volume_open = False
+        self._tracks_open = False
         self.setWindowTitle("yucha")
         self.resize(1280, 720)
         self.setMinimumSize(860, 520)
@@ -1179,6 +1245,10 @@ class MainWindow(QMainWindow):
         self.slider.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.slider.setRange(0, SEEK_STEPS)
         self.total = QLabel("0:00")
+        self.volume_btn = IconButton("speaker")
+        self.volume_btn.setCheckable(True)
+        self.tracks_btn = IconButton("tracks")
+        self.tracks_btn.setCheckable(True)
         self.ready = IconButton("ready")
         self.ready.setCheckable(True)
         self.chat_btn = IconButton("chat")
@@ -1187,12 +1257,14 @@ class MainWindow(QMainWindow):
         self.room.setCheckable(True)
         self.play.clicked.connect(self._toggle_pause)
         self.slider.sliderReleased.connect(self._seek_released)
+        self.volume_btn.clicked.connect(self._toggle_volume_popup)
+        self.tracks_btn.clicked.connect(self._toggle_tracks_popup)
         self.ready.clicked.connect(self._toggle_ready)
         self.chat_btn.clicked.connect(self._toggle_chat_field)
         self.room.clicked.connect(self._toggle_room)
-        for widget in (self.play, self.elapsed, self.slider, self.total, self.ready, self.chat_btn, self.room):
+        for widget in (self.play, self.elapsed, self.slider, self.total, self.volume_btn, self.tracks_btn, self.ready, self.chat_btn, self.room):
             bar.addWidget(widget)
-        for button in (self.play, self.ready, self.chat_btn, self.room):
+        for button in (self.play, self.ready, self.chat_btn, self.room, self.volume_btn, self.tracks_btn):
             button.setObjectName("baricon")
         bar.setStretchFactor(self.slider, 1)
 
@@ -1225,6 +1297,34 @@ class MainWindow(QMainWindow):
         volume_row.addWidget(self.volume, 1)
         volume_row.addWidget(self.volume_text)
         self._lock_volume_digits()
+
+        self.volume_pop = QWidget(column)
+        self.volume_pop.setObjectName("volumepop")
+        self._overlay(self.volume_pop)
+        self.volume_pop.hide()
+        volume_pop_col = QVBoxLayout(self.volume_pop)
+        volume_pop_col.setContentsMargins(10, 8, 10, 10)
+        volume_pop_col.setSpacing(6)
+        self.volume_readout = QLabel("0")
+        self.volume_readout.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+        self.volume_slider = QSlider(Qt.Orientation.Vertical)
+        self.volume_slider.setObjectName("volumebar")
+        self.volume_slider.setInvertedAppearance(True)
+        self.volume_slider.setInvertedControls(True)
+        self.volume_slider.setRange(0, VOLUME_MAX)
+        self.volume_slider.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.volume_slider.setFixedHeight(120)
+        self.volume_slider.valueChanged.connect(self._on_vertical_volume)
+        volume_pop_col.addWidget(self.volume_readout)
+        volume_pop_col.addWidget(self.volume_slider, 1, Qt.AlignmentFlag.AlignHCenter)
+
+        self.tracks_pop = QWidget(column)
+        self.tracks_pop.setObjectName("trackpop")
+        self._overlay(self.tracks_pop)
+        self.tracks_pop.hide()
+        tracks_col = QVBoxLayout(self.tracks_pop)
+        tracks_col.setContentsMargins(10, 8, 10, 8)
+        tracks_col.setSpacing(2)
 
         row.addWidget(column, 1)
 
@@ -1316,6 +1416,8 @@ class MainWindow(QMainWindow):
     def eventFilter(self, watched, event):
         if event.type() == QEvent.Type.KeyPress and self._player_key(event):
             return True
+        if event.type() == QEvent.Type.MouseButtonPress and self._close_popups(watched):
+            return False
         if watched is self.stage and event.type() == QEvent.Type.Resize:
             self._place_overlays()
         elif event.type() == QEvent.Type.Wheel:
@@ -1365,6 +1467,177 @@ class MainWindow(QMainWindow):
         self.chat_line.raise_()
         self.panel.raise_()
         self.volume_box.raise_()
+        self._place_pops()
+        if self._volume_open:
+            self.volume_pop.raise_()
+        if self._tracks_open:
+            self.tracks_pop.raise_()
+
+    def _place_pops(self):
+        if not hasattr(self, "volume_pop"):
+            return
+        self.volume_pop.setVisible(self._volume_open)
+        self.tracks_pop.setVisible(self._tracks_open)
+        if self._volume_open:
+            self._move_pop(self.volume_pop, self.volume_btn, 56, 156)
+        if self._tracks_open:
+            hint = self.tracks_pop.sizeHint()
+            self._move_pop(
+                self.tracks_pop,
+                self.tracks_btn,
+                max(160, min(280, hint.width())),
+                max(48, hint.height()),
+            )
+
+    def _move_pop(self, popup, button, width, height):
+        origin = button.mapTo(self.stage, QPoint(0, 0))
+        x = origin.x() + button.width() // 2 - width // 2
+        y = origin.y() - height - 8
+        x = max(8, min(x, max(8, self.stage.width() - width - 8)))
+        y = max(8, y)
+        popup.setGeometry(x, y, width, height)
+
+    def _popup_widget(self, widget):
+        while widget is not None:
+            if widget in (self.volume_pop, self.tracks_pop, self.volume_btn, self.tracks_btn):
+                return True
+            widget = widget.parentWidget()
+        return False
+
+    def _close_popups(self, watched):
+        if not self._volume_open and not self._tracks_open:
+            return False
+        if self._popup_widget(watched):
+            return False
+        self._volume_open = False
+        self._tracks_open = False
+        self.volume_btn.setChecked(False)
+        self.tracks_btn.setChecked(False)
+        self.volume_pop.hide()
+        self.tracks_pop.hide()
+        return False
+
+    def _toggle_volume_popup(self):
+        self._volume_open = not self._volume_open
+        self.volume_btn.setChecked(self._volume_open)
+        if self._volume_open:
+            self._tracks_open = False
+            self.tracks_btn.setChecked(False)
+            self.tracks_pop.hide()
+            self._sync_volume_slider(self.volume.value())
+            self._set_bar(True)
+        self._place_overlays()
+
+    def _on_vertical_volume(self, value):
+        level = int(value)
+        self._set("volume", level)
+        ceiling = self.volume_slider.maximum()
+        if self.volume.maximum() != ceiling:
+            self.volume.setRange(0, ceiling)
+        self.volume.blockSignals(True)
+        self.volume.setValue(level)
+        self.volume.blockSignals(False)
+        self.volume_text.setText(str(level))
+        self.volume_readout.setText(str(level))
+
+    def _sync_volume_slider(self, level):
+        if not hasattr(self, "volume_slider"):
+            return
+        ceiling = self.volume.maximum()
+        self.volume_slider.blockSignals(True)
+        if self.volume_slider.maximum() != ceiling:
+            self.volume_slider.setRange(0, ceiling)
+        self.volume_slider.setValue(int(level))
+        self.volume_slider.blockSignals(False)
+        self.volume_readout.setText(str(int(level)))
+
+    def _toggle_tracks_popup(self):
+        self._tracks_open = not self._tracks_open
+        self.tracks_btn.setChecked(self._tracks_open)
+        if self._tracks_open:
+            self._volume_open = False
+            self.volume_btn.setChecked(False)
+            self.volume_pop.hide()
+            self._fill_tracks()
+            self._set_bar(True)
+        self._place_overlays()
+
+    def _track_name(self, track):
+        title = str(track.get("title") or "").strip()
+        lang = str(track.get("lang") or "").strip()
+        if title and lang and lang.lower() not in title.lower():
+            return "{} ({})".format(title, lang)
+        if title:
+            return title
+        if lang:
+            return lang
+        return "Track {}".format(track.get("id"))
+
+    def _fill_tracks(self):
+        layout = self.tracks_pop.layout()
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        raw = self._get("track-list") or []
+        if not isinstance(raw, list):
+            raw = []
+        subs = [track for track in raw if isinstance(track, dict) and track.get("type") == "sub"]
+        audios = [track for track in raw if isinstance(track, dict) and track.get("type") == "audio"]
+        if subs:
+            self._track_heading(layout, "Subs")
+            for track in subs:
+                self._track_row(layout, track, "sid")
+        self._track_heading(layout, "Voice")
+        for track in audios:
+            self._track_row(layout, track, "aid")
+        self.tracks_pop.adjustSize()
+
+    def _track_heading(self, layout, text):
+        label = QLabel(text)
+        label.setObjectName("heading")
+        layout.addWidget(label)
+
+    def _track_row(self, layout, track, kind):
+        button = QPushButton(self._track_name(track))
+        button.setObjectName("trackrow")
+        button.setCheckable(True)
+        button.setChecked(bool(track.get("selected")))
+        button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        ident = track.get("id")
+        button.clicked.connect(lambda _checked=False, name=kind, track_id=ident: self._pick_track(name, track_id))
+        layout.addWidget(button)
+
+    def _pick_track(self, kind, track_id):
+        if track_id is None:
+            return
+        self._set(kind, track_id)
+        self._fill_tracks()
+        self._place_overlays()
+
+    def _files_differ(self):
+        people = self._users
+        if len(people) < 2:
+            return False
+        known = []
+        missing = False
+        for person in people:
+            try:
+                value = float(person.get("duration"))
+            except (TypeError, ValueError):
+                value = 0
+            if value > 0:
+                known.append(round(value))
+            else:
+                missing = True
+        if missing and known:
+            return True
+        if len(known) < 2:
+            return False
+        base = known[0]
+        return any(abs(value - base) >= 3 for value in known[1:])
 
     def _bar_height(self):
         return BAR_HEIGHT
@@ -1405,7 +1678,7 @@ class MainWindow(QMainWindow):
             """.format(size=text_css)
         )
         pal = _palette(theme, appearance.get("accentColor"))
-        for button in (self.play, self.ready, self.chat_btn, self.room, self.gear, self.bar_send):
+        for button in (self.play, self.ready, self.chat_btn, self.room, self.gear, self.bar_send, self.volume_btn, self.tracks_btn):
             button.set_ink(pal["button_fg"], pal["on_fg"], pal["accent"])
         self._refresh_banner()
         self._refresh_files()
@@ -1431,7 +1704,7 @@ class MainWindow(QMainWindow):
         self.set_panel(not self._panel_open)
 
     def _set_bar(self, open_):
-        if self._panel_open or self._chat_open:
+        if self._panel_open or self._chat_open or self._volume_open or self._tracks_open:
             open_ = True
         if open_ == self._bar_open:
             return
@@ -1462,6 +1735,7 @@ class MainWindow(QMainWindow):
             self.volume.setRange(0, ceiling)
         self.volume.setValue(level)
         self.volume_text.setText(str(level))
+        self._sync_volume_slider(level)
         self._volume_until = time.monotonic() + VOLUME_LIFE
         self.volume_box.show()
         self.volume_box.raise_()
@@ -1845,6 +2119,7 @@ class MainWindow(QMainWindow):
                 "ready": ready,
                 "file": str(person.get("file") or ""),
                 "size": person.get("size"),
+                "duration": person.get("duration"),
             })
             if ready:
                 ready_names.add(name)
@@ -2009,6 +2284,20 @@ class MainWindow(QMainWindow):
         row_h = metrics.height()
         y = 16
         pad = 8
+        if self._files_differ():
+            notice = "Not the same file"
+            notice_w = metrics.horizontalAdvance(notice) + pad * 2
+            notice_h = row_h + pad * 2
+            lines.append(
+                "{{\\an7\\pos({},{})\\bord0\\shad0\\1c&H{}&\\p1}}{}".format(
+                    16, 16, _bgr(page["bg"]), _round_box(notice_w, notice_h, 8)
+                )
+            )
+            lines.append(
+                "{{\\an4\\pos({},{})\\bord0\\shad0\\fs{}\\1c&H{}&}}{}".format(
+                    16 + pad, int(16 + notice_h / 2), size, color, _ass_escape(notice)
+                )
+            )
         if people:
             widest = max(metrics.horizontalAdvance(person["name"]) for person in people)
             circle_w = max(metrics.height() + 8, 28)

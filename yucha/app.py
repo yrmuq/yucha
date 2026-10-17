@@ -122,6 +122,11 @@ class App(object):
                     ui = appearance.get("uiFontSize") or 16
                 appearance["uiFontSize"] = max(1, min(32, ui))
             appearance["autoplayNext"] = bool(command.get("autoplayNext"))
+            appearance["fastforwardOnDesync"] = bool(command.get("fastforwardOnDesync", True))
+            appearance["slowOnDesync"] = bool(command.get("slowOnDesync", True))
+            self.client._config["pauseOnLeave"] = True
+            self.client._config["fastforwardOnDesync"] = appearance["fastforwardOnDesync"]
+            self.client._config["slowOnDesync"] = appearance["slowOnDesync"]
             self.store.save()
 
     def serve_commands(self):

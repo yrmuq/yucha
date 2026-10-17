@@ -110,17 +110,22 @@ class PlayerUI(object):
                 return
             filename = ""
             size = None
+            duration = None
             current_file = getattr(user, "file", None)
             if isinstance(current_file, dict):
                 filename = str(current_file.get("name") or "")
                 raw = current_file.get("size")
                 if isinstance(raw, (int, float)) and not isinstance(raw, bool):
                     size = raw
+                raw_duration = current_file.get("duration")
+                if isinstance(raw_duration, (int, float)) and not isinstance(raw_duration, bool):
+                    duration = raw_duration
             people.append({
                 "name": user.username,
                 "ready": bool(user.isReady()),
                 "file": filename,
                 "size": size,
+                "duration": duration,
             })
 
         add(current)

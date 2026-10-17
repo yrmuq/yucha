@@ -62,7 +62,7 @@ def _defaults():
         "folderSearchWarningThreshold": constants.FOLDER_SEARCH_WARNING_THRESHOLD,
         "filenamePrivacyMode": constants.PRIVACY_SENDRAW_MODE,
         "filesizePrivacyMode": constants.PRIVACY_SENDRAW_MODE,
-        "pauseOnLeave": False,
+        "pauseOnLeave": True,
         "readyAtStart": False,
         "unpauseAction": constants.UNPAUSE_IFOTHERSREADY_MODE,
         "autoplayInitialState": None,
@@ -145,6 +145,10 @@ def make_client(ui, store):
     config["room"] = str(conn.get("room") or config["name"])
     config["password"] = None
     config["playerArgs"] = player_args(store_runtime_placeholder())
+    look = store.data.get("appearance") or {}
+    config["pauseOnLeave"] = True
+    config["fastforwardOnDesync"] = bool(look.get("fastforwardOnDesync", True))
+    config["slowOnDesync"] = bool(look.get("slowOnDesync", True))
     client = SyncplayClient(MpvPlayer, ui, config)
     _keep_window_on_login_failure(client)
     return client
