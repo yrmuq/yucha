@@ -1049,7 +1049,7 @@ class IconButton(QPushButton):
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.setPen(QPen(color, 1.6))
             painter.drawLine(QPointF(cx + 0.6, cy + 2), QPointF(cx + 0.6, cy - 6))
-            painter.drawLine(QPointF(cx - 6, cy + 5), QPointF(cx + 7, cy - 6))
+            painter.drawLine(QPointF(cx - 6, cy - 6), QPointF(cx + 7, cy + 5))
         painter.end()
 
 
@@ -1081,7 +1081,7 @@ class BoxCheck(QCheckBox):
         painter.setBrush(self._on if self.isChecked() else self._fill)
         painter.drawRoundedRect(self.rect().adjusted(1, 1, -2, -2), 3, 3)
         if self.isChecked():
-            painter.setPen(QPen(self._mark, 1.7))
+            painter.setPen(QPen(self._mark, 2))
             painter.drawLine(QPointF(4, 9), QPointF(7, 12))
             painter.drawLine(QPointF(7, 12), QPointF(14, 5))
         painter.end()
@@ -1239,8 +1239,10 @@ class SettingsDialog(QDialog):
             hint = tabs.widget(index).sizeHint()
             wide = max(wide, hint.width())
             tall = max(tall, hint.height())
+        wide = min(640, max(420, wide if 0 < wide < 2000 else 520))
+        tall = min(700, max(320, tall if 0 < tall < 2000 else 480))
         for index in range(tabs.count()):
-            tabs.widget(index).setMinimumSize(max(360, wide), tall)
+            tabs.widget(index).setMinimumSize(wide, tall)
         tabs.setCurrentIndex(page if 0 <= page < tabs.count() else 0)
         root.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
 
@@ -1282,9 +1284,10 @@ class SettingsDialog(QDialog):
 
     def _check_row(self, form, text, box):
         host = QWidget()
+        host.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        host.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         row = QHBoxLayout(host)
         row.setContentsMargins(0, 0, 0, 0)
-        row.addStretch(1)
         row.addWidget(box)
         form.addRow(text, host)
 
@@ -1304,9 +1307,6 @@ class SettingsDialog(QDialog):
                 page["field"], page["fg"], page["accent"], page["on_fg"]
             )
         )
-        window = view.window()
-        if window is not None and window is not combo:
-            window.setPalette(palette)
 
     def _nudge_volume_max(self, delta):
         self.volume_max = _volume_limit(self.volume_max + int(delta))
