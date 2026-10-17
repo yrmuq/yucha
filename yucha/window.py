@@ -708,12 +708,6 @@ class UserTable(QWidget):
             self.sizes_col.addWidget(size)
         count = len(people)
         rows = max(2, count)
-        top = ((rows - count) * row_h) // 2
-        if top:
-            for column in (self.names_col, self.files_col, self.sizes_col):
-                gap = QWidget()
-                gap.setFixedHeight(top)
-                column.insertWidget(0, gap)
         content_h = rows * row_h
         self.files_host.setFixedSize(widest, content_h)
         self.sizes.setMinimumWidth(metrics.horizontalAdvance("0000 MB") + 8)
