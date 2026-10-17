@@ -1305,6 +1305,7 @@ class MainWindow(QMainWindow):
         self.files.viewport().installEventFilter(self)
         self.chat.viewport().installEventFilter(self)
         self.stage.installEventFilter(self)
+        QApplication.instance().installEventFilter(self)
         self._place_overlays()
 
     def _overlay(self, widget):
@@ -1313,6 +1314,8 @@ class MainWindow(QMainWindow):
         widget.setAutoFillBackground(True)
 
     def eventFilter(self, watched, event):
+        if event.type() == QEvent.Type.KeyPress and self._player_key(event):
+            return True
         if watched is self.stage and event.type() == QEvent.Type.Resize:
             self._place_overlays()
         elif event.type() == QEvent.Type.Wheel:
@@ -1471,7 +1474,22 @@ class MainWindow(QMainWindow):
             return VOLUME_MAX
 
     def _typing(self):
-        return isinstance(QApplication.focusWidget(), (QLineEdit, QTextEdit, QSpinBox))
+        widget = QApplication.focusWidget()
+        if isinstance(widget, (QLineEdit, QSpinBox)):
+            return True
+        return isinstance(widget, QTextEdit) and not widget.isReadOnly()
+
+    def _player_key(self, event):
+        if QApplication.activeModalWidget() is not None or QApplication.activePopupWidget() is not None:
+            return False
+        if self._typing():
+            return False
+        key = int(event.key())
+        if key == int(Qt.Key.Key_Space):
+            if not event.isAutoRepeat():
+                self._toggle_pause()
+            return True
+        return self._on_arrow(key)
 
     def keyPressEvent(self, event):
         if not self._typing() and self._on_arrow(int(event.key())):
