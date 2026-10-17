@@ -56,7 +56,7 @@ READY_LIFE = 2.0
 VOLUME_LIFE = 2.0
 PANEL_WIDTH = 380
 BAR_HEIGHT = 72
-POP_GAP = 16
+POP_GAP = 8
 CHAT_EXTRA = 52
 SEEK_STEPS = 100000
 CHAT_BOX = 300
@@ -189,11 +189,11 @@ def _stylesheet(theme, accent=None):
         border-radius: 2px;
     }}
     QSlider#volumebar::sub-page:vertical {{
-        background: {accent};
-        border-radius: 2px;
+        background: transparent;
     }}
     QSlider#volumebar::add-page:vertical {{
-        background: transparent;
+        background: {accent};
+        border-radius: 2px;
     }}
     QSlider#volumebar::handle:vertical {{
         background: {fg};
@@ -1483,7 +1483,9 @@ class MainWindow(QMainWindow):
         self.volume_pop.setVisible(self._volume_open)
         self.tracks_pop.setVisible(self._tracks_open)
         if self._volume_open:
-            self._move_pop(self.volume_pop, self.volume_btn, 56, 156)
+            self._fit_volume_pop()
+            hint = self.volume_pop.sizeHint()
+            self._move_pop(self.volume_pop, self.volume_btn, 56, max(hint.height(), 1))
         if self._tracks_open:
             hint = self.tracks_pop.sizeHint()
             self._move_pop(
@@ -1492,6 +1494,15 @@ class MainWindow(QMainWindow):
                 max(160, min(280, hint.width())),
                 max(48, hint.height()),
             )
+
+    def _fit_volume_pop(self):
+        top = 8
+        gap = 6
+        number_h = self.volume_readout.sizeHint().height()
+        above = top + number_h + gap
+        layout = self.volume_pop.layout()
+        layout.setContentsMargins(10, top, 10, above)
+        layout.setSpacing(gap)
 
     def _move_pop(self, popup, button, width, height):
         origin = button.mapTo(self.stage, QPoint(0, 0))
