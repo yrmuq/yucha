@@ -954,7 +954,9 @@ class IconButton(QPushButton):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         color = QColor(self._ink)
-        if self.isChecked() and self.kind in ("speaker", "tracks", "mute"):
+        if self.isChecked() and self.kind == "mute":
+            color = QColor("#C4453C")
+        elif self.isChecked() and self.kind in ("speaker", "tracks"):
             color = QColor(self._accent)
         elif self.isChecked():
             color = QColor(self._ink_on)
@@ -1167,9 +1169,9 @@ class SettingsDialog(QDialog):
         self.fastforward.setChecked(bool(appearance.get("fastforwardOnDesync", True)))
         self.slowdown = BoxCheck()
         self.slowdown.setChecked(bool(appearance.get("slowOnDesync", True)))
-        page = _palette(self._look_theme, self._look_accent)
+        look = _palette(self._look_theme, self._look_accent)
         for box in (self.autoplay, self.fastforward, self.slowdown):
-            box.set_colors(page["field"], page["border"], page["on_fg"], page["accent"])
+            box.set_colors(look["field"], look["border"], look["on_fg"], look["accent"])
         self._check_row(other_form, "Play the next episode automatically", self.autoplay)
         self._check_row(other_form, "Fast-forward if lagging behind", self.fastforward)
         self._check_row(other_form, "Slow down on minor desync", self.slowdown)
