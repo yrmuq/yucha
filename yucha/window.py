@@ -131,16 +131,26 @@ def _stylesheet(theme, accent=None):
         border-radius: 8px;
     }}
     QWidget#banner QLabel {{ background: transparent; }}
-    QPushButton#icon, QPushButton#baricon {{
+    QPushButton#icon, QPushButton#baricon, QPushButton#panelicon {{
         padding: 0px;
         min-width: 40px;
         max-width: 40px;
         min-height: 36px;
         max-height: 36px;
     }}
-    QPushButton#baricon, QPushButton#baricon:hover, QPushButton#baricon:pressed, QPushButton#baricon:checked {{
+    QPushButton#baricon, QPushButton#baricon:hover, QPushButton#baricon:pressed, QPushButton#baricon:checked,
+    QPushButton#panelicon, QPushButton#panelicon:hover, QPushButton#panelicon:pressed, QPushButton#panelicon:checked {{
         background: transparent;
         border: none;
+    }}
+    QCheckBox {{
+        color: {fg};
+        background: transparent;
+        spacing: 8px;
+    }}
+    QWidget#volume {{
+        background: {bg};
+        border-radius: 10px;
     }}
     QSlider::groove:horizontal {{ height: 6px; background: {border}; }}
     QSlider::sub-page:horizontal {{ background: {accent}; }}
@@ -927,13 +937,18 @@ class IconButton(QPushButton):
             path.closeSubpath()
             painter.drawPath(path)
         elif kind == "gear":
-            painter.drawEllipse(QPointF(cx, cy), 3.2, 3.2)
-            for step in range(8):
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(color)
+            for step in range(6):
                 painter.save()
                 painter.translate(cx, cy)
-                painter.rotate(step * 45)
-                painter.drawLine(QPointF(0, -5.2), QPointF(0, -7.4))
+                painter.rotate(step * 60)
+                painter.drawRoundedRect(-2, -8, 4, 4, 1, 1)
                 painter.restore()
+            painter.drawEllipse(QPointF(cx, cy), 5.4, 5.4)
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
+            painter.setBrush(Qt.GlobalColor.transparent)
+            painter.drawEllipse(QPointF(cx, cy), 2.2, 2.2)
         painter.end()
 
 
@@ -948,32 +963,6 @@ class SettingsDialog(QDialog):
         root = QVBoxLayout(self)
         tabs = QTabWidget()
         root.addWidget(tabs)
-
-        room = QWidget()
-        room_box = QVBoxLayout(room)
-        room_box.setContentsMargins(0, 0, 0, 0)
-        room_form = QFormLayout()
-        self.host = QLineEdit(str(connection.get("host") or "syncplay.pl"))
-        self.port = QLineEdit(str(connection.get("port") or 8999))
-        self.name = QLineEdit(str(connection.get("name") or ""))
-        self.password = QLineEdit(str(connection.get("password") or ""))
-        self.password.setEchoMode(QLineEdit.EchoMode.Password)
-        self.room_name = QLineEdit(str(connection.get("room") or ""))
-        for label, field in (
-            ("Server", self.host),
-            ("Port", self.port),
-            ("Username", self.name),
-            ("Password", self.password),
-            ("Room", self.room_name),
-        ):
-            room_form.addRow(label, field)
-            field.returnPressed.connect(self._connect_now)
-        room_box.addLayout(room_form)
-        room_box.addStretch(1)
-        connect = QPushButton("Connect")
-        connect.clicked.connect(self._connect_now)
-        room_box.addWidget(connect)
-        tabs.addTab(room, "Room")
 
         theme_page = QWidget()
         theme_form = QFormLayout(theme_page)
@@ -997,6 +986,39 @@ class SettingsDialog(QDialog):
         theme_form.addRow("Second accent", self.accent2)
         theme_form.addRow("Chat size", self.chat_size)
         theme_form.addRow("Interface size", self.ui_size)
+
+        room = QWidget()
+        room_box = QVBoxLayout(room)
+        edge = theme_form.contentsMargins()
+        if edge.left() == 0 and edge.top() == 0 and edge.right() == 0 and edge.bottom() == 0:
+            from PySide6.QtCore import QMargins
+            edge = QMargins(11, 11, 11, 11)
+        room_box.setContentsMargins(edge)
+        room_form = QFormLayout()
+        room_form.setContentsMargins(0, 0, 0, 0)
+        room_form.setHorizontalSpacing(theme_form.horizontalSpacing())
+        room_form.setVerticalSpacing(theme_form.verticalSpacing())
+        self.host = QLineEdit(str(connection.get("host") or "syncplay.pl"))
+        self.port = QLineEdit(str(connection.get("port") or 8999))
+        self.name = QLineEdit(str(connection.get("name") or ""))
+        self.password = QLineEdit(str(connection.get("password") or ""))
+        self.password.setEchoMode(QLineEdit.EchoMode.Password)
+        self.room_name = QLineEdit(str(connection.get("room") or ""))
+        for label, field in (
+            ("Server", self.host),
+            ("Port", self.port),
+            ("Username", self.name),
+            ("Password", self.password),
+            ("Room", self.room_name),
+        ):
+            room_form.addRow(label, field)
+            field.returnPressed.connect(self._connect_now)
+        room_box.addLayout(room_form)
+        room_box.addStretch(1)
+        connect = QPushButton("Connect")
+        connect.clicked.connect(self._connect_now)
+        room_box.addWidget(connect)
+        tabs.addTab(room, "Room")
         tabs.addTab(theme_page, "Theme")
 
         other = QWidget()
@@ -1193,7 +1215,7 @@ class MainWindow(QMainWindow):
         self._overlay(self.volume_box)
         self.volume_box.hide()
         volume_row = QHBoxLayout(self.volume_box)
-        volume_row.setContentsMargins(12, 8, 12, 8)
+        volume_row.setContentsMargins(14, 6, 14, 6)
         self.volume = QSlider(Qt.Orientation.Horizontal)
         self.volume.setObjectName("volumebar")
         self.volume.setRange(0, VOLUME_MAX)
@@ -1232,6 +1254,7 @@ class MainWindow(QMainWindow):
         inside.addStretch(1)
         inside.addWidget(self.banner_dot)
         self.gear = IconButton("gear")
+        self.gear.setObjectName("panelicon")
         self.gear.clicked.connect(lambda: self._open_settings(1))
         banner_row.addWidget(self.banner, 1)
         banner_row.addWidget(self.gear)
@@ -1328,7 +1351,7 @@ class MainWindow(QMainWindow):
         else:
             self.chat_line.hide()
         self._place_edge_scrolls()
-        box_width, box_height = 280, 48
+        box_width, box_height = 280, 40
         self.volume_box.setGeometry(
             max(0, (width - box_width) // 2),
             max(0, height - inset - 90),
