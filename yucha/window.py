@@ -56,6 +56,7 @@ READY_LIFE = 2.0
 VOLUME_LIFE = 2.0
 PANEL_WIDTH = 380
 BAR_HEIGHT = 72
+POP_GAP = 16
 CHAT_EXTRA = 52
 SEEK_STEPS = 100000
 CHAT_BOX = 300
@@ -922,7 +923,9 @@ class IconButton(QPushButton):
         super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        color = self._ink_on if self.isChecked() else self._ink
+        color = QColor(self._ink_on if self.isChecked() else self._ink)
+        if not self.isEnabled():
+            color.setAlpha(90)
         pen = QPen(color, 1.6)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
@@ -1197,6 +1200,8 @@ class MainWindow(QMainWindow):
         self._hold_pause = None
         self._volume_open = False
         self._tracks_open = False
+        self._room_names = set()
+        self._room_was_ready = False
         self.setWindowTitle("yucha")
         self.resize(1280, 720)
         self.setMinimumSize(860, 520)
@@ -1249,6 +1254,7 @@ class MainWindow(QMainWindow):
         self.volume_btn.setCheckable(True)
         self.tracks_btn = IconButton("tracks")
         self.tracks_btn.setCheckable(True)
+        self.tracks_btn.setEnabled(False)
         self.ready = IconButton("ready")
         self.ready.setCheckable(True)
         self.chat_btn = IconButton("chat")
@@ -1262,7 +1268,7 @@ class MainWindow(QMainWindow):
         self.ready.clicked.connect(self._toggle_ready)
         self.chat_btn.clicked.connect(self._toggle_chat_field)
         self.room.clicked.connect(self._toggle_room)
-        for widget in (self.play, self.elapsed, self.slider, self.total, self.volume_btn, self.tracks_btn, self.ready, self.chat_btn, self.room):
+        for widget in (self.play, self.ready, self.elapsed, self.slider, self.total, self.volume_btn, self.tracks_btn, self.chat_btn, self.room):
             bar.addWidget(widget)
         for button in (self.play, self.ready, self.chat_btn, self.room, self.volume_btn, self.tracks_btn):
             button.setObjectName("baricon")
@@ -1309,8 +1315,6 @@ class MainWindow(QMainWindow):
         self.volume_readout.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
         self.volume_slider = QSlider(Qt.Orientation.Vertical)
         self.volume_slider.setObjectName("volumebar")
-        self.volume_slider.setInvertedAppearance(True)
-        self.volume_slider.setInvertedControls(True)
         self.volume_slider.setRange(0, VOLUME_MAX)
         self.volume_slider.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.volume_slider.setFixedHeight(120)
@@ -1492,7 +1496,8 @@ class MainWindow(QMainWindow):
     def _move_pop(self, popup, button, width, height):
         origin = button.mapTo(self.stage, QPoint(0, 0))
         x = origin.x() + button.width() // 2 - width // 2
-        y = origin.y() - height - 8
+        bar_top = self.bar.mapTo(self.stage, QPoint(0, 0)).y()
+        y = bar_top - height - POP_GAP
         x = max(8, min(x, max(8, self.stage.width() - width - 8)))
         y = max(8, y)
         popup.setGeometry(x, y, width, height)
@@ -1552,6 +1557,11 @@ class MainWindow(QMainWindow):
         self.volume_readout.setText(str(int(level)))
 
     def _toggle_tracks_popup(self):
+        if not self._playlist:
+            self._tracks_open = False
+            self.tracks_btn.setChecked(False)
+            self.tracks_pop.hide()
+            return
         self._tracks_open = not self._tracks_open
         self.tracks_btn.setChecked(self._tracks_open)
         if self._tracks_open:
@@ -1589,7 +1599,7 @@ class MainWindow(QMainWindow):
             self._track_heading(layout, "Subs")
             for track in subs:
                 self._track_row(layout, track, "sid")
-        self._track_heading(layout, "Voice")
+        self._track_heading(layout, "Audio")
         for track in audios:
             self._track_row(layout, track, "aid")
         self.tracks_pop.adjustSize()
@@ -1933,6 +1943,12 @@ class MainWindow(QMainWindow):
         row_h = max(24, QFontMetrics(self.files.font()).height() + 12)
         rows = max(2, self.files.count())
         self.files.setFixedHeight(rows * row_h + 2 * self.files.frameWidth())
+        has_files = bool(self._playlist)
+        self.tracks_btn.setEnabled(has_files)
+        if not has_files and self._tracks_open:
+            self._tracks_open = False
+            self.tracks_btn.setChecked(False)
+            self.tracks_pop.hide()
         self._place_edge_scrolls()
 
     def _toggle_ready(self):
@@ -2132,6 +2148,31 @@ class MainWindow(QMainWindow):
                 self._ready_until.pop(name, None)
         self._users = people
         self._paint_users()
+        self._start_when_everyone_ready(people)
+
+    def _start_when_everyone_ready(self, people):
+        names = {person["name"] for person in people}
+        someone_left = bool(self._room_names) and bool(self._room_names - names)
+        self._room_names = names
+        all_ready = bool(people) and all(person["ready"] for person in people)
+        if someone_left:
+            self._room_was_ready = all_ready
+            return
+        if all_ready and not self._room_was_ready and self._connected:
+            self._play_for_room()
+        self._room_was_ready = all_ready
+
+    def _play_for_room(self):
+        loaded = str(self._get("path") or "")
+        if not self._current_path and not loaded:
+            return
+        client = getattr(self.app, "client", None)
+        if client is not None:
+            from twisted.internet import reactor
+            reactor.callFromThread(client.setPaused, False)
+        self._set("pause", "no")
+        self._paused = False
+        self._pos_when = time.monotonic()
 
     def _nick_colors(self):
         appearance = self.app.store.data["appearance"]
