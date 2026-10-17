@@ -63,6 +63,15 @@ CHAT_BOX = 300
 VOLUME_MAX = 130
 
 
+def _volume_limit(value):
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = 100
+    number = max(100, min(VOLUME_MAX, number))
+    return 100 + ((number - 100) // 5) * 5
+
+
 def _palette(theme, accent=None):
     if theme == "light":
         pal = {
@@ -109,11 +118,27 @@ def _stylesheet(theme, accent=None):
         padding: 6px;
         selection-background-color: {accent};
     }}
+    QComboBox QAbstractItemView {{
+        background: {field};
+        color: {fg};
+        border: 1px solid {border};
+        selection-background-color: {accent};
+        selection-color: {on_fg};
+        outline: 0;
+    }}
     QPushButton {{
         background: {button};
         color: {button_fg};
         border: none;
         padding: 8px 14px;
+    }}
+    QPushButton#step {{
+        padding: 4px 12px;
+        min-width: 28px;
+    }}
+    QPushButton#step:disabled {{
+        background: {field};
+        color: {muted};
     }}
     QPushButton:checked {{
         background: {accent};
@@ -923,7 +948,11 @@ class IconButton(QPushButton):
         super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        color = QColor(self._ink_on if self.isChecked() else self._ink)
+        color = QColor(self._ink)
+        if self.isChecked() and self.kind in ("speaker", "tracks"):
+            color = QColor(self._accent)
+        elif self.isChecked():
+            color = QColor(self._ink_on)
         if not self.isEnabled():
             color.setAlpha(90)
         pen = QPen(color, 1.6)
@@ -1030,6 +1059,9 @@ class SettingsDialog(QDialog):
         self.theme.addItem("Light", "light")
         current = appearance.get("theme") or "dark"
         self.theme.setCurrentIndex(0 if current != "light" else 1)
+        self._look_theme = current if current == "light" else "dark"
+        self._look_accent = appearance.get("accentColor")
+        self._style_popup(self.theme)
         self.color = QLineEdit(str(appearance.get("chatColor") or "#F4F1EA"))
         self.accent = QLineEdit(str(appearance.get("accentColor") or "#9A3A52"))
         self.accent2 = QLineEdit(str(appearance.get("accentColor2") or "#1F6A8A"))
@@ -1091,6 +1123,33 @@ class SettingsDialog(QDialog):
         other_form.addRow(self.autoplay)
         other_form.addRow(self.fastforward)
         other_form.addRow(self.slowdown)
+        stepper = QWidget()
+        stepper_row = QHBoxLayout(stepper)
+        stepper_row.setContentsMargins(0, 0, 0, 0)
+        stepper_row.setSpacing(8)
+        self.vol_down = QPushButton("<")
+        self.vol_down.setObjectName("step")
+        self.vol_read = QLabel("100%")
+        self.vol_read.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.vol_read.setMinimumWidth(52)
+        self.vol_up = QPushButton(">")
+        self.vol_up.setObjectName("step")
+        self.vol_down.clicked.connect(lambda: self._nudge_volume_max(-5))
+        self.vol_up.clicked.connect(lambda: self._nudge_volume_max(5))
+        stepper_row.addWidget(self.vol_down)
+        stepper_row.addWidget(self.vol_read)
+        stepper_row.addWidget(self.vol_up)
+        stepper_row.addStretch(1)
+        self.volume_max = _volume_limit(appearance.get("volumeMax"))
+        self._show_volume_max()
+        other_form.addRow("Volume max", stepper)
+        self.overlay = QComboBox()
+        self.overlay.addItem("Horizontal bar", "horizontal")
+        self.overlay.addItem("Vertical bar", "vertical")
+        overlay = appearance.get("volumeOverlay") or "horizontal"
+        self.overlay.setCurrentIndex(1 if overlay == "vertical" else 0)
+        self._style_popup(self.overlay)
+        other_form.addRow("Volume on scroll", self.overlay)
         tabs.addTab(other, "Other")
 
         about = QWidget()
@@ -1159,6 +1218,8 @@ class SettingsDialog(QDialog):
             "autoplayNext": self.autoplay.isChecked(),
             "fastforwardOnDesync": self.fastforward.isChecked(),
             "slowOnDesync": self.slowdown.isChecked(),
+            "volumeMax": self.volume_max,
+            "volumeOverlay": self.overlay.currentData() or "horizontal",
         }
         self.connection = {
             "host": self.host.text(),
@@ -1168,6 +1229,35 @@ class SettingsDialog(QDialog):
             "room": self.room_name.text(),
         }
         self.accept()
+
+    def _style_popup(self, combo):
+        page = _palette(self._look_theme, self._look_accent)
+        view = combo.view()
+        palette = view.palette()
+        palette.setColor(QPalette.ColorRole.Base, QColor(page["field"]))
+        palette.setColor(QPalette.ColorRole.Text, QColor(page["fg"]))
+        palette.setColor(QPalette.ColorRole.Window, QColor(page["field"]))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor(page["fg"]))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor(page["accent"]))
+        palette.setColor(QPalette.ColorRole.HighlightedText, QColor(page["on_fg"]))
+        view.setPalette(palette)
+        view.setStyleSheet(
+            "background: {}; color: {}; selection-background-color: {}; selection-color: {};".format(
+                page["field"], page["fg"], page["accent"], page["on_fg"]
+            )
+        )
+        window = view.window()
+        if window is not None and window is not combo:
+            window.setPalette(palette)
+
+    def _nudge_volume_max(self, delta):
+        self.volume_max = _volume_limit(self.volume_max + int(delta))
+        self._show_volume_max()
+
+    def _show_volume_max(self):
+        self.vol_read.setText("{}%".format(self.volume_max))
+        self.vol_down.setEnabled(self.volume_max > 100)
+        self.vol_up.setEnabled(self.volume_max < VOLUME_MAX)
 
 
 class MainWindow(QMainWindow):
@@ -1202,6 +1292,7 @@ class MainWindow(QMainWindow):
         self._tracks_open = False
         self._room_names = set()
         self._room_was_ready = False
+        self._volume_flash = False
         self.setWindowTitle("yucha")
         self.resize(1280, 720)
         self.setMinimumSize(860, 520)
@@ -1472,7 +1563,7 @@ class MainWindow(QMainWindow):
         self.panel.raise_()
         self.volume_box.raise_()
         self._place_pops()
-        if self._volume_open:
+        if self._volume_open or self._volume_flash:
             self.volume_pop.raise_()
         if self._tracks_open:
             self.tracks_pop.raise_()
@@ -1480,9 +1571,10 @@ class MainWindow(QMainWindow):
     def _place_pops(self):
         if not hasattr(self, "volume_pop"):
             return
-        self.volume_pop.setVisible(self._volume_open)
+        show_volume = self._volume_open or self._volume_flash
+        self.volume_pop.setVisible(show_volume)
         self.tracks_pop.setVisible(self._tracks_open)
-        if self._volume_open:
+        if show_volume:
             self._fit_volume_pop()
             hint = self.volume_pop.sizeHint()
             self._move_pop(self.volume_pop, self.volume_btn, 56, max(hint.height(), 1))
@@ -1709,6 +1801,7 @@ class MainWindow(QMainWindow):
     def set_player(self, player):
         listener = getattr(player, "_listener", None) if player is not None else None
         self.ctl = getattr(listener, "mpvpipe", None)
+        self._apply_volume_max()
 
     def set_panel(self, open_, animate=True):
         was_open = self._panel_open
@@ -1758,15 +1851,53 @@ class MainWindow(QMainWindow):
         self.volume_text.setText(str(level))
         self._sync_volume_slider(level)
         self._volume_until = time.monotonic() + VOLUME_LIFE
+        if self._volume_overlay() == "vertical":
+            self.volume_box.hide()
+            self._volume_flash = True
+            self._place_overlays()
+            return
+        self._volume_flash = False
+        if not self._volume_open:
+            self.volume_pop.hide()
         self.volume_box.show()
         self.volume_box.raise_()
+
+    def _volume_overlay(self):
+        mode = self.app.store.data["appearance"].get("volumeOverlay") or "horizontal"
+        return "vertical" if mode == "vertical" else "horizontal"
+
+    def _saved_volume_max(self):
+        return _volume_limit(self.app.store.data["appearance"].get("volumeMax", 100))
+
+    def _apply_volume_max(self):
+        ceiling = self._saved_volume_max()
+        self._set("volume-max", ceiling)
+        if hasattr(self, "volume"):
+            self.volume.setRange(0, ceiling)
+        if hasattr(self, "volume_slider"):
+            self.volume_slider.blockSignals(True)
+            self.volume_slider.setRange(0, ceiling)
+            self.volume_slider.blockSignals(False)
+        raw = self._get("volume")
+        try:
+            level = int(round(float(raw)))
+        except (TypeError, ValueError):
+            return
+        if level > ceiling:
+            self._set("volume", ceiling)
+            level = ceiling
+        if hasattr(self, "volume"):
+            self.volume.setValue(level)
+            self.volume_text.setText(str(level))
+        self._sync_volume_slider(level)
 
     def _volume_ceiling(self):
         raw = self._get("volume-max")
         try:
-            return max(101, int(round(float(raw))))
+            value = int(round(float(raw)))
         except (TypeError, ValueError):
-            return VOLUME_MAX
+            value = self._saved_volume_max()
+        return max(100, min(VOLUME_MAX, value))
 
     def _typing(self):
         widget = QApplication.focusWidget()
@@ -2007,6 +2138,7 @@ class MainWindow(QMainWindow):
             return
         self.app.on_command({"c": "appearance", **dialog.appearance})
         self.apply_theme()
+        self._apply_volume_max()
         if dialog.connection and (dialog.wants_connect or self._connection_changed(dialog.connection)):
             self.app.on_command({"c": "connect", **dialog.connection})
             self._refresh_banner()
@@ -2061,6 +2193,10 @@ class MainWindow(QMainWindow):
         self._follow_cursor()
         if self.volume_box.isVisible() and time.monotonic() >= self._volume_until:
             self.volume_box.hide()
+        if self._volume_flash and time.monotonic() >= self._volume_until:
+            self._volume_flash = False
+            if not self._volume_open:
+                self.volume_pop.hide()
         self._read_events()
         self._refresh_banner()
         self._refresh_transport()

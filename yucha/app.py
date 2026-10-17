@@ -124,6 +124,13 @@ class App(object):
             appearance["autoplayNext"] = bool(command.get("autoplayNext"))
             appearance["fastforwardOnDesync"] = bool(command.get("fastforwardOnDesync", True))
             appearance["slowOnDesync"] = bool(command.get("slowOnDesync", True))
+            try:
+                ceiling = int(command.get("volumeMax", 100))
+            except (TypeError, ValueError):
+                ceiling = 100
+            appearance["volumeMax"] = max(100, min(130, ceiling))
+            overlay = command.get("volumeOverlay") or "horizontal"
+            appearance["volumeOverlay"] = "vertical" if overlay == "vertical" else "horizontal"
             self.client._config["pauseOnLeave"] = True
             self.client._config["fastforwardOnDesync"] = appearance["fastforwardOnDesync"]
             self.client._config["slowOnDesync"] = appearance["slowOnDesync"]

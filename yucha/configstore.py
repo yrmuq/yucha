@@ -49,6 +49,8 @@ DEFAULTS = {
         "autoplayNext": False,
         "fastforwardOnDesync": True,
         "slowOnDesync": True,
+        "volumeMax": 100,
+        "volumeOverlay": "horizontal",
     },
 }
 
