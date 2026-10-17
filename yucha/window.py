@@ -42,6 +42,7 @@ from PySide6.QtWidgets import (
     QSlider,
     QSpinBox,
     QStyledItemDelegate,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -149,6 +150,40 @@ def _stylesheet(theme, accent=None):
         height: 14px;
         margin: -4px 0;
         border-radius: 7px;
+    }}
+    QSlider#volumebar::groove:horizontal {{
+        height: 3px;
+        background: {border};
+        border: none;
+        border-radius: 2px;
+    }}
+    QSlider#volumebar::sub-page:horizontal {{
+        background: {accent};
+        border-radius: 2px;
+    }}
+    QSlider#volumebar::add-page:horizontal {{
+        background: transparent;
+    }}
+    QSlider#volumebar::handle:horizontal {{
+        background: {fg};
+        width: 12px;
+        height: 12px;
+        margin: -5px 0;
+        border-radius: 6px;
+    }}
+    QTabWidget::pane {{
+        border: 1px solid {border};
+        background: {bg};
+    }}
+    QTabBar::tab {{
+        background: {field};
+        color: {fg};
+        padding: 8px 16px;
+        border: 1px solid {border};
+    }}
+    QTabBar::tab:selected {{
+        background: {accent};
+        color: {on_fg};
     }}
     QListWidget {{
         background: {field};
@@ -902,12 +937,37 @@ class IconButton(QPushButton):
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, appearance, parent):
+    def __init__(self, appearance, connection, parent, page=1):
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.setModal(True)
-        self.values = None
-        layout = QFormLayout(self)
+        self.appearance = None
+        self.connection = None
+        root = QVBoxLayout(self)
+        tabs = QTabWidget()
+        root.addWidget(tabs)
+
+        room = QWidget()
+        room_form = QFormLayout(room)
+        self.host = QLineEdit(str(connection.get("host") or "syncplay.pl"))
+        self.port = QLineEdit(str(connection.get("port") or 8999))
+        self.name = QLineEdit(str(connection.get("name") or ""))
+        self.password = QLineEdit(str(connection.get("password") or ""))
+        self.password.setEchoMode(QLineEdit.EchoMode.Password)
+        self.room_name = QLineEdit(str(connection.get("room") or ""))
+        for label, field in (
+            ("Server", self.host),
+            ("Port", self.port),
+            ("Username", self.name),
+            ("Password", self.password),
+            ("Room", self.room_name),
+        ):
+            room_form.addRow(label, field)
+            field.returnPressed.connect(self._accept)
+        tabs.addTab(room, "Room")
+
+        theme_page = QWidget()
+        theme_form = QFormLayout(theme_page)
         self.theme = QComboBox()
         self.theme.addItem("Dark", "dark")
         self.theme.addItem("Light", "light")
@@ -922,15 +982,43 @@ class SettingsDialog(QDialog):
         self.ui_size = QSpinBox()
         self.ui_size.setRange(1, 32)
         self.ui_size.setValue(int(appearance.get("uiFontSize") or 16))
-        layout.addRow("Theme", self.theme)
-        layout.addRow("Chat color", self.color)
-        layout.addRow("Accent color", self.accent)
-        layout.addRow("Second accent", self.accent2)
-        layout.addRow("Chat size", self.chat_size)
-        layout.addRow("Interface size", self.ui_size)
+        theme_form.addRow("Theme", self.theme)
+        theme_form.addRow("Chat color", self.color)
+        theme_form.addRow("Accent color", self.accent)
+        theme_form.addRow("Second accent", self.accent2)
+        theme_form.addRow("Chat size", self.chat_size)
+        theme_form.addRow("Interface size", self.ui_size)
+        tabs.addTab(theme_page, "Theme")
+
+        other = QWidget()
+        other_form = QFormLayout(other)
         self.autoplay = QCheckBox("Play the next episode automatically")
         self.autoplay.setChecked(bool(appearance.get("autoplayNext")))
-        layout.addRow(self.autoplay)
+        other_form.addRow(self.autoplay)
+        tabs.addTab(other, "Other")
+
+        about = QWidget()
+        about_layout = QVBoxLayout(about)
+        title = QLabel("yucha")
+        title.setObjectName("heading")
+        from yucha import __version__
+        version = QLabel("{} beta".format(__version__))
+        heart = appearance.get("accentColor") or "#9A3A52"
+        thanks = QLabel(
+            'Thanks <span style="color: {};">♥</span> '
+            '<a href="https://syncplay.pl">Syncplay</a> and '
+            '<a href="https://mpv.io">mpv</a>'.format(heart)
+        )
+        thanks.setTextFormat(Qt.TextFormat.RichText)
+        thanks.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        thanks.setOpenExternalLinks(True)
+        about_layout.addWidget(title)
+        about_layout.addWidget(version)
+        about_layout.addStretch(1)
+        about_layout.addWidget(thanks)
+        about_layout.addStretch(2)
+        tabs.addTab(about, "About")
+
         buttons = QHBoxLayout()
         ok = QPushButton("OK")
         cancel = QPushButton("Cancel")
@@ -938,8 +1026,18 @@ class SettingsDialog(QDialog):
         cancel.clicked.connect(self.reject)
         buttons.addWidget(ok)
         buttons.addWidget(cancel)
-        layout.addRow(buttons)
-        layout.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
+        root.addLayout(buttons)
+
+        wide = 0
+        tall = 0
+        for index in range(tabs.count()):
+            hint = tabs.widget(index).sizeHint()
+            wide = max(wide, hint.width())
+            tall = max(tall, hint.height())
+        for index in range(tabs.count()):
+            tabs.widget(index).setMinimumSize(max(360, wide), tall)
+        tabs.setCurrentIndex(page if 0 <= page < tabs.count() else 0)
+        root.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
 
     def _accept(self):
         color = self.color.text().strip()
@@ -951,7 +1049,7 @@ class SettingsDialog(QDialog):
         accent2 = self.accent2.text().strip()
         if len(accent2) != 7 or not accent2.startswith("#"):
             accent2 = "#1F6A8A"
-        self.values = {
+        self.appearance = {
             "theme": self.theme.currentData(),
             "chatColor": color,
             "accentColor": accent,
@@ -960,43 +1058,7 @@ class SettingsDialog(QDialog):
             "uiFontSize": self.ui_size.value(),
             "autoplayNext": self.autoplay.isChecked(),
         }
-        self.accept()
-
-
-class ConnectionDialog(QDialog):
-    def __init__(self, connection, parent):
-        super().__init__(parent)
-        self.setWindowTitle("Connection")
-        self.setModal(True)
-        self.values = None
-        layout = QFormLayout(self)
-        self.host = QLineEdit(str(connection.get("host") or "syncplay.pl"))
-        self.port = QLineEdit(str(connection.get("port") or 8999))
-        self.name = QLineEdit(str(connection.get("name") or ""))
-        self.password = QLineEdit(str(connection.get("password") or ""))
-        self.password.setEchoMode(QLineEdit.EchoMode.Password)
-        self.room_name = QLineEdit(str(connection.get("room") or ""))
-        for label, field in (
-            ("Server", self.host),
-            ("Port", self.port),
-            ("Username", self.name),
-            ("Password", self.password),
-            ("Room", self.room_name),
-        ):
-            layout.addRow(label, field)
-            field.returnPressed.connect(self._accept)
-        buttons = QHBoxLayout()
-        connect = QPushButton("Connect")
-        cancel = QPushButton("Cancel")
-        connect.clicked.connect(self._accept)
-        cancel.clicked.connect(self.reject)
-        buttons.addWidget(connect)
-        buttons.addWidget(cancel)
-        layout.addRow(buttons)
-        layout.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
-
-    def _accept(self):
-        self.values = {
+        self.connection = {
             "host": self.host.text(),
             "port": self.port.text(),
             "name": self.name.text(),
@@ -1033,6 +1095,7 @@ class MainWindow(QMainWindow):
         self._current_path = ""
         self._eof_seen = False
         self._volume_until = 0
+        self._hold_pause = None
         self.setWindowTitle("yucha")
         self.resize(1280, 720)
         self.setMinimumSize(860, 520)
@@ -1119,6 +1182,7 @@ class MainWindow(QMainWindow):
         volume_row = QHBoxLayout(self.volume_box)
         volume_row.setContentsMargins(12, 8, 12, 8)
         self.volume = QSlider(Qt.Orientation.Horizontal)
+        self.volume.setObjectName("volumebar")
         self.volume.setRange(0, VOLUME_MAX)
         self.volume.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.volume_text = QLabel("0")
@@ -1144,7 +1208,7 @@ class MainWindow(QMainWindow):
         self.banner.setAutoFillBackground(True)
         self.banner.setFixedHeight(44)
         self.banner.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.banner.clicked.connect(self._open_connection)
+        self.banner.clicked.connect(lambda: self._open_settings(0))
         inside = QHBoxLayout(self.banner)
         inside.setContentsMargins(14, 0, 14, 0)
         self.banner_text = QLabel("Not configured")
@@ -1155,7 +1219,7 @@ class MainWindow(QMainWindow):
         inside.addStretch(1)
         inside.addWidget(self.banner_dot)
         self.gear = IconButton("gear")
-        self.gear.clicked.connect(self._open_settings)
+        self.gear.clicked.connect(lambda: self._open_settings(1))
         banner_row.addWidget(self.banner, 1)
         banner_row.addWidget(self.gear)
         side.addLayout(banner_row)
@@ -1431,6 +1495,15 @@ class MainWindow(QMainWindow):
                 bar.raise_()
 
     def _toggle_pause(self):
+        loaded = str(self._get("path") or "")
+        wanted = self._current_path
+        same = bool(wanted) and bool(loaded) and (
+            loaded == wanted or Path(loaded).name == Path(wanted).name
+        )
+        if wanted and not same:
+            self._play_path(wanted, start=True)
+            return
+        self._hold_pause = None
         eof = self._get("eof-reached")
         if eof in (True, "yes", "true", 1) and len(self._playlist) == 1:
             self._cmd("seek", "0", "absolute")
@@ -1451,9 +1524,18 @@ class MainWindow(QMainWindow):
             batch.append({"path": path, "name": Path(path).name})
             known.add(path)
         batch.sort(key=lambda item: _natural(item["name"]))
+        fresh = not self._playlist
         staying = bool(self._playlist) and self._current_path == self._playlist[0]["path"]
         self._playlist.extend(batch)
-        if staying or not batch:
+        if not batch:
+            self._refresh_files()
+            return
+        if fresh:
+            self._current_path = batch[0]["path"]
+            self._paused = True
+            self._refresh_files()
+            return
+        if staying:
             self._refresh_files()
             return
         self._play_path(batch[0]["path"], start=True)
@@ -1461,10 +1543,11 @@ class MainWindow(QMainWindow):
     def _play_path(self, path, start=False):
         self._current_path = path
         self._eof_seen = True
-        self._paused = False
+        self._paused = not start
         self._pos_at = 0
         self._pos_when = time.monotonic()
         self._arm_play = path if start else None
+        self._hold_pause = None if start else path
         client = getattr(self.app, "client", None)
         player = getattr(client, "_player", None) if client is not None else None
         if player is not None:
@@ -1472,7 +1555,10 @@ class MainWindow(QMainWindow):
             reactor.callFromThread(client.openFile, path, True)
         elif self.video.mpv is not None:
             try:
-                self.video.mpv.command("loadfile", path, "replace", "start=0")
+                if start:
+                    self.video.mpv.command("loadfile", path, "replace", "start=0")
+                else:
+                    self.video.mpv.command("loadfile", path, "replace", "pause=yes")
             except Exception:
                 pass
         self._refresh_files()
@@ -1542,12 +1628,33 @@ class MainWindow(QMainWindow):
         self._pos_when = time.monotonic()
         self._cmd("seek", str(at), "absolute")
 
-    def _open_connection(self):
-        dialog = ConnectionDialog(self.app.store.data["connection"], self)
-        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.values:
+    def _connection_changed(self, values):
+        old = self.app.store.data["connection"]
+
+        def norm(key, value):
+            if key == "port":
+                try:
+                    return int(value)
+                except (TypeError, ValueError):
+                    return 8999
+            return str(value or "")
+
+        return any(norm(key, old.get(key)) != norm(key, values.get(key)) for key in ("host", "port", "name", "password", "room"))
+
+    def _open_settings(self, page=1):
+        dialog = SettingsDialog(
+            self.app.store.data["appearance"],
+            self.app.store.data["connection"],
+            self,
+            page,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.appearance:
             return
-        self.app.on_command({"c": "connect", **dialog.values})
-        self._refresh_banner()
+        self.app.on_command({"c": "appearance", **dialog.appearance})
+        self.apply_theme()
+        if dialog.connection and self._connection_changed(dialog.connection):
+            self.app.on_command({"c": "connect", **dialog.connection})
+            self._refresh_banner()
 
     def _send_bar_chat(self):
         text = self.bar_message.text().strip()
@@ -1568,13 +1675,6 @@ class MainWindow(QMainWindow):
             "room": conn.get("room") or "",
         })
         self._refresh_banner()
-
-    def _open_settings(self):
-        dialog = SettingsDialog(self.app.store.data["appearance"], self)
-        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.values:
-            return
-        self.app.on_command({"c": "appearance", **dialog.values})
-        self.apply_theme()
 
     def _get(self, name):
         if not self.ctl:
@@ -1792,6 +1892,13 @@ class MainWindow(QMainWindow):
                 self._set("pause", "no")
                 self._paused = False
                 self._arm_play = None
+        elif self._hold_pause and self._duration > 0:
+            current = self._get("path") or ""
+            same = current == self._hold_pause or Path(str(current)).name == Path(self._hold_pause).name
+            if same and current:
+                self._set("pause", "yes")
+                self._paused = True
+                self._hold_pause = None
         self._move_knob()
 
     def _shown_position(self):
