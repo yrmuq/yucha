@@ -1,7 +1,7 @@
 # Third-party snapshots
 
 These trees are unmodified copies of upstream source. Do not edit them
-in place. yucha's own code is `yucha/` and `ui/mpv/`.
+in place. yucha's own code is `yucha/`.
 
 | Directory | Upstream | Snapshot |
 | --- | --- | --- |

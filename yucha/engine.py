@@ -5,6 +5,7 @@ Frames are drawn into this widget the same way mpv's own OpenGL example draws
 them: into the widget's framebuffer."""
 
 import os
+import re
 import time
 from pathlib import Path
 
@@ -24,6 +25,18 @@ PLAYING_MSG = (
     "</SyncplayUpdateFile>"
 )
 GL_COLOR_BUFFER_BIT = 0x00004000
+
+
+def _library_version(player):
+    raw = None
+    try:
+        raw = player.mpv_version
+    except Exception:
+        raw = None
+    found = re.search(r"(\d+)\.(\d+)", str(raw or ""))
+    if not found:
+        return None
+    return int(found.group(1)), int(found.group(2))
 
 
 def _import_mpv():
@@ -89,6 +102,9 @@ class Picture(QOpenGLWidget):
             input_ipc_server=str(self.ipc_path),
             term_playing_msg=PLAYING_MSG,
         )
+        found = _library_version(self.mpv)
+        if found is None or (found[0] == 0 and found[1] < 23):
+            raise RuntimeError("yucha needs libmpv 0.23 or newer")
         # "script" is only a command-line alias. libmpv does not accept it
         # as an option, and the player quit before the window opened.
         self.mpv.command("load-script", str(SCRIPT))

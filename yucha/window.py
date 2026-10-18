@@ -61,6 +61,7 @@ CHAT_EXTRA = 52
 SEEK_STEPS = 100000
 CHAT_BOX = 300
 VOLUME_MAX = 130
+CHAT_CAP = 300
 
 
 def _volume_limit(value):
@@ -1154,6 +1155,10 @@ class SettingsDialog(QDialog):
             room_form.addRow(label, field)
             field.returnPressed.connect(self._connect_now)
         room_box.addLayout(room_form)
+        self.port_error = QLabel("")
+        self.port_error.setWordWrap(True)
+        self.port_error.hide()
+        room_box.addWidget(self.port_error)
         room_box.addStretch(1)
         connect = QPushButton("Connect")
         connect.clicked.connect(self._connect_now)
@@ -1253,6 +1258,13 @@ class SettingsDialog(QDialog):
         self._accept()
 
     def _accept(self):
+        from yucha.configstore import port_number
+        raw_port = self.port.text().strip()
+        if raw_port and port_number(raw_port) is None:
+            self.port_error.setText("Port must be a number from 1 to 65535.")
+            self.port_error.show()
+            return
+        self.port_error.hide()
         color = self.color.text().strip()
         if len(color) != 7 or not color.startswith("#"):
             color = "#F4F1EA"
@@ -1355,6 +1367,7 @@ class MainWindow(QMainWindow):
         self._volume_flash = False
         self._tracks_lock = None
         self._muted = False
+        self._chat_held = False
         self.setWindowTitle("yucha")
         self.resize(1280, 720)
         self.setMinimumSize(860, 520)
@@ -1457,6 +1470,7 @@ class MainWindow(QMainWindow):
         self.volume.setObjectName("volumebar")
         self.volume.setRange(0, VOLUME_MAX)
         self.volume.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.volume.valueChanged.connect(self._on_horizontal_volume)
         self.volume_text = QLabel("0")
         self.volume_text.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         volume_row.addWidget(self.mute_h)
@@ -1736,6 +1750,12 @@ class MainWindow(QMainWindow):
         self.volume_text.setText(str(level))
         self.volume_readout.setText(str(level))
 
+    def _on_horizontal_volume(self, value):
+        level = int(value)
+        self._set("volume", level)
+        self.volume_text.setText(str(level))
+        self._sync_volume_slider(level)
+
     def _sync_volume_slider(self, level):
         if not hasattr(self, "volume_slider"):
             return
@@ -1943,7 +1963,9 @@ class MainWindow(QMainWindow):
         level = max(0, min(ceiling, int(level)))
         if self.volume.maximum() != ceiling:
             self.volume.setRange(0, ceiling)
+        self.volume.blockSignals(True)
         self.volume.setValue(level)
+        self.volume.blockSignals(False)
         self.volume_text.setText(str(level))
         self._sync_volume_slider(level)
         self._volume_until = time.monotonic() + VOLUME_LIFE
@@ -1995,7 +2017,9 @@ class MainWindow(QMainWindow):
             self._set("volume", ceiling)
             level = ceiling
         if hasattr(self, "volume"):
+            self.volume.blockSignals(True)
             self.volume.setValue(level)
+            self.volume.blockSignals(False)
             self.volume_text.setText(str(level))
         self._sync_volume_slider(level)
 
@@ -2259,6 +2283,13 @@ class MainWindow(QMainWindow):
         text = self.bar_message.text().strip()
         if not text:
             return
+        client = getattr(self.app, "client", None)
+        running = client is not None and getattr(client, "_running", False)
+        if not self._connected or not running:
+            self._chat_held = True
+            self._refresh_banner()
+            return
+        self._chat_held = False
         self.app.on_command({"c": "chat", "text": text})
         self.bar_message.clear()
 
@@ -2371,11 +2402,14 @@ class MainWindow(QMainWindow):
         if not self._configured():
             text, color = "Not configured", "#D6B23A"
         elif self._connected:
+            self._chat_held = False
             text, color = "Room connected", "#3EAD62"
+        elif self._chat_held:
+            text, color = "Not connected", "#D6B23A"
         elif self._failed:
             text, color = "Error connecting", pal["bad"]
         else:
-            text, color = "Not configured", "#D6B23A"
+            text, color = "Connecting...", "#D6B23A"
         self.banner_text.setText(text)
         self.banner_dot.setStyleSheet("color: {}; background: transparent;".format(color))
         self.reconnect.setVisible(bool(self._failed and self._configured()))
@@ -2467,6 +2501,13 @@ class MainWindow(QMainWindow):
         for spans in self._chat_lines:
             self.chat.append(_spans_html(spans, me, mine, other, bad))
 
+    def _append_chat_line(self, spans):
+        if not hasattr(self, "chat"):
+            return
+        me, mine, other = self._nick_colors()
+        bad = _palette(self.app.store.data["appearance"].get("theme"))["bad"]
+        self.chat.append(_spans_html(spans, me, mine, other, bad))
+
     def _add_chat(self, user, text):
         if not text or _hidden_line(text):
             return
@@ -2479,9 +2520,13 @@ class MainWindow(QMainWindow):
             if any(span["k"] == "nick" and span["v"] in ("", "None") for span in spans):
                 return
         self._chat_lines.append(spans)
+        if len(self._chat_lines) > CHAT_CAP:
+            del self._chat_lines[:-CHAT_CAP]
+            self._paint_chat()
+        else:
+            self._append_chat_line(spans)
         if not _startup_line(text):
             self._osd.append((time.monotonic(), spans))
-        self._paint_chat()
 
     def _refresh_transport(self):
         paused = self._get("pause")

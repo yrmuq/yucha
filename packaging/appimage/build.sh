@@ -14,26 +14,35 @@ DIST="$ROOT/dist"
 mkdir -p "$CACHE" "$DIST"
 
 PY_URL="https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.12.15%2B20261013-x86_64-unknown-linux-gnu-install_only.tar.gz"
+PY_SHA="5d546fc004fc2435fa142eb8f42ed8de5eb4725963dc22f7e6671014a80eb560"
 PY_TAR="$CACHE/cpython-3.12.15-install_only.tar.gz"
 MPV_URL="https://github.com/pkgforge-dev/mpv-AppImage/releases/download/v0.41.0@2026-10-07_1791382432/mpv-v0.41.0-anylinux-x86_64.AppImage"
+MPV_SHA="0b0dcd36ab761b266c96e382c527c668d7cd36a6ced1654ab068fdf92111d70b"
 MPV_FILE="${MPV_APPIMAGE:-$CACHE/mpv-v0.41.0-anylinux-x86_64.AppImage}"
 TOOL="$CACHE/appimagetool-x86_64.AppImage"
-TOOL_URL="https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+TOOL_URL="https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage"
+TOOL_SHA="ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"
 
 fetch() {
     url="$1"
     dest="$2"
-    if [ -s "$dest" ]; then
+    want="$3"
+    if [ -s "$dest" ] && echo "$want  $dest" | sha256sum -c - >/dev/null 2>&1; then
         return 0
     fi
     echo "fetch $url"
     curl -fL --retry 3 -o "$dest.part" "$url"
     mv "$dest.part" "$dest"
+    if ! echo "$want  $dest" | sha256sum -c -; then
+        echo "sha256 mismatch for $dest" >&2
+        rm -f "$dest"
+        exit 1
+    fi
 }
 
-fetch "$PY_URL" "$PY_TAR"
-fetch "$MPV_URL" "$MPV_FILE"
-fetch "$TOOL_URL" "$TOOL"
+fetch "$PY_URL" "$PY_TAR" "$PY_SHA"
+fetch "$MPV_URL" "$MPV_FILE" "$MPV_SHA"
+fetch "$TOOL_URL" "$TOOL" "$TOOL_SHA"
 chmod +x "$TOOL" "$MPV_FILE"
 
 if ! command -v file >/dev/null 2>&1; then
@@ -80,7 +89,7 @@ test -x "$APPDIR/mpv-bundle/AppRun"
 rm -f "$APPDIR/mpv-bundle/bin/05-get-yt-dlp.hook" \
     "$APPDIR/mpv-bundle/bin/10-self-updater.hook"
 
-cp -a "$ROOT/yucha" "$ROOT/ui" "$ROOT/LICENSE" "$ROOT/NOTICE" "$ROOT/README.md" \
+cp -a "$ROOT/yucha" "$ROOT/LICENSE" "$ROOT/NOTICE" "$ROOT/README.md" \
     "$APPDIR/payload/"
 cp -a "$ROOT/third_party/syncplay" "$ROOT/third_party/README.md" \
     "$APPDIR/payload/third_party/"

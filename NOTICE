@@ -20,14 +20,13 @@ Unmodified source snapshots are in this repository:
                         does not patch it. Playback uses an mpv binary
                         on PATH, or the path in YUCHA_MPV.
   third_party/syncplay  Syncplay 1.7.7. yucha does not patch these
-                        files. The Qt window is never started. yucha's
-                        own code, under yucha/ and ui/mpv/, is what
-                        draws the controls in the mpv window.
+                        files and does not start Syncplay's Qt window.
+                        yucha's own window, under yucha/, draws the
+                        controls.
 
-  A test AppImage built by packaging/appimage/build.sh is not a
-  release. It bundles CPython 3.12.15, the unmodified Syncplay
-  client, and a prebuilt mpv 0.41.0 binary taken from
-  pkgforge-dev/mpv-AppImage release
+  An AppImage built by packaging/appimage/build.sh bundles
+  CPython 3.12.15, the unmodified Syncplay client, and a prebuilt
+  mpv 0.41.0 binary taken from pkgforge-dev/mpv-AppImage release
   v0.41.0@2026-10-07_1791382432 (anylinux x86_64). That binary is
   GPL-2.0-or-later. Corresponding source for it is the source
   published with that build and the mpv project. third_party/mpv
@@ -89,8 +88,8 @@ the Apache-2.0 conditions that still apply to the Syncplay material:
     (third_party/syncplay/LICENSE)
   * the snapshot is unmodified, so there is no changed file inside it
     that needs a "yucha modified this file" line. The different behavior
-    (no Syncplay window; the controls are the mpv script) lives in
-    yucha/ and ui/mpv/, which are yucha's own GPL-3.0-or-later code
+    (no Syncplay window; the controls are yucha's own window) lives in
+    yucha/, which is yucha's own GPL-3.0-or-later code
   * if Syncplay ships a NOTICE or third-party-notices file, reproduce
     the attributions it contains. That file is
     third_party/syncplay/syncplay/resources/third-party-notices.txt
@@ -102,7 +101,7 @@ files are BSD or MIT, as written in the file header. Those notices stay
 on those files. They are compatible with GPL-3.0-or-later and are not
 relicensed by being shipped inside yucha. yucha loads syncplayintf.lua
 from the snapshot so pause and position still reach the client. Chat
-on screen is drawn by ui/mpv/chat.lua, not by that script.
+on screen is drawn by yucha's window, not by that script.
 
 Do not present yucha as the official Syncplay client, and do not use
 the Syncplay logo as the logo of yucha.

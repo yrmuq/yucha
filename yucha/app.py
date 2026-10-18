@@ -3,7 +3,6 @@
 """Wire the saved config, the mpv window, and the Syncplay client."""
 
 import sys
-import threading
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,8 +11,7 @@ sys.path.insert(0, str(ROOT / "third_party" / "syncplay"))
 from twisted.internet import reactor
 
 from yucha.bridge import Bridge
-from yucha.configstore import runtime_dir
-from yucha.configstore import ConfigStore
+from yucha.configstore import ConfigStore, port_number, runtime_dir
 from yucha.player_ui import PlayerUI
 from yucha.session import launch_player, make_client, submit_login
 
@@ -28,19 +26,6 @@ class App(object):
         self.ui.addClient(self.client)
 
     def boot(self):
-        conn = self.store.data["connection"]
-        self.bridge.emit({
-            "e": "boot",
-            "openPanel": not self.store.has_connection(),
-            "form": {
-                "host": conn.get("host") or "syncplay.pl",
-                "port": str(conn.get("port") or 8999),
-                "name": conn.get("name") or "",
-                "password": conn.get("password") or "",
-                "room": conn.get("room") or "",
-            },
-            "appearance": self.store.data["appearance"],
-        })
         if self.store.has_connection():
             reactor.callWhenRunning(lambda: self._connect_saved())
 
@@ -76,22 +61,32 @@ class App(object):
     def on_command(self, command):
         kind = command.get("c")
         if kind == "connect":
+            host = str(command.get("host") or "").strip()
+            name = str(command.get("name") or "").strip()
+            room = str(command.get("room") or "").strip()
+            password = str(command.get("password") or "")
+            raw_port = command.get("port")
+            if raw_port is None or str(raw_port).strip() == "":
+                port = 8999
+            else:
+                port = port_number(raw_port)
+            if port is None or not host or not name or not room:
+                self.bridge.emit({
+                    "e": "conn",
+                    "state": "failed",
+                    "text": "Need a server, a username, a room, and a port.",
+                    "openPanel": True,
+                })
+                return
             self.store.data["connection"].update({
-                "host": str(command.get("host") or "").strip(),
-                "port": int(command.get("port") or 8999),
-                "name": str(command.get("name") or "").strip(),
-                "password": str(command.get("password") or ""),
-                "room": str(command.get("room") or "").strip(),
+                "host": host,
+                "port": port,
+                "name": name,
+                "password": password,
+                "room": room,
             })
             self.store.save()
-            reactor.callFromThread(
-                self._connect,
-                self.store.data["connection"]["host"],
-                self.store.data["connection"]["port"],
-                self.store.data["connection"]["name"],
-                self.store.data["connection"]["room"],
-                self.store.data["connection"]["password"],
-            )
+            reactor.callFromThread(self._connect, host, port, name, room, password)
         elif kind == "chat":
             text = str(command.get("text") or "").strip()
             if text and self.client._running:
@@ -136,25 +131,6 @@ class App(object):
             self.client._config["slowOnDesync"] = appearance["slowOnDesync"]
             self.store.save()
 
-    def serve_commands(self):
-        def loop():
-            import time
-            while True:
-                for command in self.bridge.read_commands():
-                    try:
-                        self.on_command(command)
-                    except Exception as exc:
-                        self.bridge.emit({
-                            "e": "conn",
-                            "state": "failed",
-                            "text": str(exc),
-                            "openPanel": True,
-                        })
-                time.sleep(0.05)
-        thread = threading.Thread(target=loop, name="yucha-commands", daemon=True)
-        thread.start()
-
-
 def main():
     from pathlib import Path
 
@@ -179,7 +155,6 @@ def main():
     player = launch_player(app.client, app.runtime, window.video.ipc_path)
     window.set_player(player)
     app.boot()
-    app.serve_commands()
 
     def tick():
         try:

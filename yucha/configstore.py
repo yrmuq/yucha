@@ -19,6 +19,24 @@ def config_dir():
     return path
 
 
+def port_number(value):
+    try:
+        port = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    if 1 <= port <= 65535:
+        return port
+    return None
+
+
+def bounded_int(value, default, low, high):
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(low, min(high, number))
+
+
 def runtime_dir():
     base = os.environ.get("XDG_RUNTIME_DIR")
     root = Path(base) if base else config_dir()
@@ -71,6 +89,9 @@ class ConfigStore(object):
         for section in ("connection", "appearance"):
             if isinstance(loaded.get(section), dict):
                 self.data[section].update(loaded[section])
+        look = self.data["appearance"]
+        look["uiFontSize"] = bounded_int(look.get("uiFontSize"), 16, 1, 32)
+        look["chatFontSize"] = bounded_int(look.get("chatFontSize"), 18, 12, 48)
 
     def save(self):
         payload = json.dumps(self.data, indent=2, ensure_ascii=False) + "\n"

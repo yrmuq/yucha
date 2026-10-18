@@ -20,6 +20,7 @@ from syncplay import constants
 from syncplay.client import SSL_CERT_FILE, SyncClientFactory, SyncplayClient
 from syncplay.messages import getMessage, setLanguage
 from syncplay.players.mpv import MpvPlayer
+from yucha.configstore import port_number
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -128,10 +129,15 @@ def mpv_path():
     return chosen
 
 
-def player_args(runtime, wid=None):
-    # The picture is drawn by libmpv inside the window. These args are not
-    # used to start a second mpv. The version check still looks at the binary.
-    return []
+def load_client_tls(host, cert_path):
+    try:
+        import pem
+        from twisted.internet.ssl import Certificate, optionsForClientTLS, trustRootFromCertificates
+        certs = pem.parse_file(cert_path)
+        trust = trustRootFromCertificates([Certificate.loadPEM(str(cert)) for cert in certs])
+        return optionsForClientTLS(hostname=host, trustRoot=trust)
+    except Exception:
+        return None
 
 
 def make_client(ui, store):
@@ -140,11 +146,11 @@ def make_client(ui, store):
     conn = store.data["connection"]
     config["playerPath"] = mpv_path()
     config["host"] = str(conn.get("host") or "syncplay.pl")
-    config["port"] = int(conn.get("port") or constants.DEFAULT_PORT)
+    config["port"] = port_number(conn.get("port")) or constants.DEFAULT_PORT
     config["name"] = str(conn.get("name") or "yucha")
     config["room"] = str(conn.get("room") or config["name"])
     config["password"] = None
-    config["playerArgs"] = player_args(store_runtime_placeholder())
+    config["playerArgs"] = []
     look = store.data.get("appearance") or {}
     config["pauseOnLeave"] = True
     config["fastforwardOnDesync"] = bool(look.get("fastforwardOnDesync", True))
@@ -152,10 +158,6 @@ def make_client(ui, store):
     client = SyncplayClient(MpvPlayer, ui, config)
     _keep_window_on_login_failure(client)
     return client
-
-
-def store_runtime_placeholder():
-    return ""
 
 
 def launch_player(client, runtime, socket_path):
@@ -243,17 +245,16 @@ def connect_network(client, host, port):
         host = host.strip("[]")
     port = int(port)
     client._endpoint = HostnameEndpoint(reactor, host, port)
-    try:
-        import pem
-        from twisted.internet.ssl import Certificate, optionsForClientTLS, trustRootFromCertificates
-        certs = pem.parse_file(SSL_CERT_FILE)
-        trust = trustRootFromCertificates([Certificate.loadPEM(str(cert)) for cert in certs])
-        client.protocolFactory.options = optionsForClientTLS(hostname=host, trustRoot=trust)
-        client._clientSupportsTLS = True
-    except Exception as exc:
-        client.ui.showDebugMessage(str(exc))
+    options = load_client_tls(host, SSL_CERT_FILE)
+    if options is None:
         client.protocolFactory.options = None
         client._clientSupportsTLS = False
+        client.ui.showMessage(
+            "The certificate file could not be loaded. This connection is not encrypted."
+        )
+    else:
+        client.protocolFactory.options = options
+        client._clientSupportsTLS = True
 
     def retry(retries):
         client._performRetryStateReset()
