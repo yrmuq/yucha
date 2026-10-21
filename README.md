@@ -8,64 +8,69 @@
   <img src="assets/banner.png" alt="yucha — in active development" width="880">
 </p>
 
-> **In active development.** There is no 1.0 release. Beta AppImages are on the releases page. Flatpak waits until 1.0.
+> **Note:** `yucha` is in active beta development. Pre-release `x86_64` AppImages are available on the [Releases](https://github.com/yrmuq/yucha/releases) page.
 
-yucha is a media player for watching the same file at the same time as other people. Playback is [mpv](https://mpv.io/)'s engine, inside this window. Rooms, sync, and chat come from the [Syncplay](https://github.com/Syncplay/syncplay) client. Neither program's own window is used. The fields and buttons are ordinary ones. The picture is a frame drawn in the window, not a second window.
+**yucha** is a unified desktop media player for synchronized group watch parties. It embeds the [mpv](https://mpv.io/) playback engine (`libmpv`) and the [Syncplay](https://github.com/Syncplay/syncplay) synchronization client into a single native window with an integrated overlay UI. 
 
-yucha is an independent project. It is not part of mpv and it is not part of Syncplay. Their names appear here only to identify the code it is built from.
+The primary goal of this integration is to provide a self-contained, zero-configuration solution tailored for atomic/immutable Linux distributions — eliminating the need to layer packages, configure external player paths, or manage separate client and player windows.
 
-## Run
+*`yucha` is an independent project and is not affiliated with or endorsed by `mpv` or `Syncplay`.*
 
-You need Python 3, the mpv library (libmpv), and an mpv binary on `PATH` for the version check. Point `YUCHA_MPV` at the binary if it is not on `PATH`. The AppImage already contains both.
+## Features
 
-```sh
-python3 -m pip install -r requirements.txt
-python3 -m yucha
-```
+- **Single-Window Architecture:** Hardware-accelerated video rendering via `libmpv` combined with `Syncplay` room state, playlist synchronization, and chat in one interface.
+- **Atomic-Friendly Portability:** Distributed as a self-contained bundle that runs cleanly on immutable Linux systems without host modifications.
+- **Overlay UI & OSD:** Auto-hiding playback controls, an overlay side panel for room/playlist management, and themed on-screen display (OSD) notifications for chat messages and user readiness states.
+- **Customizable Appearance:** Built-in support for light/dark themes, custom accent colors, and scalable UI/OSD font sizes.
+- **Persistent Configuration:** Automatically saves connection credentials and preferences to `~/.config/yucha/config.json` (`0600` permissions) for automatic reconnection on startup.
 
-Drop a video on the picture. It starts at 0:00. Right click pauses and resumes. Space does the same when the picture is focused. Double click toggles fullscreen. The wheel changes the volume, dragging the volume bar does the same, and the level shows for two seconds. A click on the time bar jumps to that moment. The first launch opens the room panel, because nothing is saved yet. The login is written to `~/.config/yucha/config.json` (mode 0600). The next launch leaves the panel closed and connects with the saved server, username, password, and room. The panel shows Room connected, Connecting..., Not configured, Not connected, or Error connecting. A click on that banner opens the connection fields. The gear beside it opens the theme, colors, and sizes. Chat lines, and the notices Syncplay itself would show, stay in the panel. Chat lines also show on the picture for five seconds, in a fixed column. Each message has its own theme-colored box, and a long line wraps inside it. The name is in the accent color. Dropped files are listed between the banner and the chat, sorted by name. The one playing is marked with the accent color. A left click plays that file from the start. A right click removes the row. The next file also starts from the beginning. If the list has one file, Play starts it again from 0:00. A person who is not ready stays at the top right of the picture with a red dot. A person who is ready shows with a green dot for two seconds.
+## Installation & Usage
 
-## AppImage
+### AppImage
 
-Beta builds for x86_64 are on the [releases page](https://github.com/yrmuq/yucha/releases). Each version stays there. The image carries its own Python, the Syncplay client, and an mpv 0.41.0 binary, so the machine does not need those installed. What is bundled, and under which license, is in [packaging/appimage/BUNDLED.txt](packaging/appimage/BUNDLED.txt).
+Pre-built AppImages bundle Python, the `Syncplay` client, and `mpv`, requiring no external host dependencies. Download the latest `.AppImage` from the [Releases](https://github.com/yrmuq/yucha/releases) page.
+
+For the easiest desktop integration and updates, use [Gear Lever](https://flathub.org/apps/it.mijorus.gearlever) to manage and launch the AppImage directly from your application menu.
+
+Alternatively, make the file executable and run it from the terminal:
 
 ```sh
 chmod +x yucha-x86_64.AppImage
 ./yucha-x86_64.AppImage
+
 ```
 
-On Bazzite, Gear Lever (from Bazaar) can add it to the menu. If the file refuses to start because FUSE is missing, run:
+If your system lacks FUSE support, extract and run the image directly:
 
 ```sh
 ./yucha-x86_64.AppImage --appimage-extract-and-run
+
 ```
 
-A version tag `vX.Y.Z` makes GitHub build the image and attach it to that release. The release title is `yucha X.Y.Z beta`. To rebuild the same image on your own machine, run `packaging/appimage/build.sh`. It downloads CPython, the mpv AppImage it wraps, and appimagetool. The result is `dist/yucha-x86_64.AppImage`, which is not committed.
+### Flatpak
 
-## What is on the window
+Flatpak packaging is planned for the `v1.0` stable release.
 
-1. One window. mpv's engine draws the picture inside it and does not open a window of its own. The Syncplay client keeps pause, seek, and position in sync. The protocol is the existing Syncplay client, not a rewrite.
-2. The room button at the right end of the playback bar opens the room panel. The panel sits on top of the picture and stops above the bar. The picture is not resized. A click on the banner opens the connection fields. The gear opens the appearance settings.
-3. The bar sits on top of the picture. It has play, the time bar, ready, chat, and room, as icons. Ready marks you ready, and marks you not ready if you already are. The chat button opens a message field above the bar. The bar itself does not move, and it stays while that field is open. A failed connection shows Reconnect under the banner. The bar uses the theme and hides after 3 seconds without the mouse, unless the room panel or the message field is open. Right click and Space pause and resume. Double click toggles fullscreen. The wheel changes the volume. A click on the time bar jumps to that moment.
-4. No saved login: the panel opens by itself. Saved login: it stays closed and the client connects.
-5. The gear in the panel sets the theme, colors, sizes, and whether the next episode starts by itself. Your name uses the first accent. Other names use the second accent. The Users list shows who is in the room and which file they have open. Text on the picture follows the theme.
+## Controls & Shortcuts
 
-## Status
+| Input | Action |
+| --- | --- |
+| **Drag & Drop** | Add media files to the playlist (sorted alphabetically) |
+| **Right Click** / `Space` | Toggle Play / Pause |
+| **Double Click** | Toggle Fullscreen |
+| `Left` / `Right` | Seek backward / forward (`5s`) |
+| `Up` / `Down` / **Mouse Wheel** | Adjust volume (`10%` steps via keys, up to `130%` max) |
+| `M` | Toggle Mute |
+| **Left Click (Playlist)** | Play selected file from `0:00` |
+| **Right Click (Playlist)** | Remove file from playlist |
 
-This is the first working stage. The layout is functional, not finished. Playlist controls, a file dialog, and a more careful look are not in this tree yet. Flatpak is planned for 1.0, not before.
+## License & Attribution
 
-Saved passwords are stored the same way Syncplay stores them: plaintext in the user config file, readable only by that user. Do not commit that file.
+`yucha` is free software distributed under the **GNU General Public License v3.0 or later** (`GPL-3.0-or-later`). See [LICENSE](https://www.google.com/search?q=LICENSE) and [NOTICE](https://www.google.com/search?q=NOTICE) for full terms and third-party attributions. Bundled AppImage component licenses are listed in [packaging/appimage/BUNDLED.txt](https://www.google.com/search?q=packaging/appimage/BUNDLED.txt).
 
-## License
-
-yucha is free software under the **GNU General Public License v3.0 or any later version**. The license text is [LICENSE](LICENSE). That file is the Free Software Foundation's GPL v3, copied verbatim. The GPL itself says the license document must not be changed, so attributions are not pasted into it. They are in [NOTICE](NOTICE). Keep both files with any copy of the program.
+| Component | Upstream | License | Integration Details |
+| --- | --- | --- | --- |
+| Playback Engine | [mpv](https://github.com/mpv-player/mpv) | `GPL-2.0-or-later` | Unmodified source snapshot in `third_party/mpv`; links against `libmpv`. |
+| Sync & Chat Client | [Syncplay](https://github.com/Syncplay/syncplay) | `Apache-2.0` | Unmodified snapshot in `third_party/syncplay` (including `ISC`/`BSD`/`MIT` submodules). |
 
 Copyright (C) 2026 yrmuq.
-
-| Piece | Upstream | Its license | What yucha does about it |
-| --- | --- | --- | --- |
-| Playback | [mpv](https://github.com/mpv-player/mpv) | GPL-2.0-or-later | "Or later" is what allows the combination to be shipped as GPL-3.0-or-later. An unmodified source snapshot is in `third_party/mpv`. The program runs an mpv binary you supply. The result is not called mpv. |
-| Rooms, sync, chat, playlist | [Syncplay](https://github.com/Syncplay/syncplay) | Apache-2.0 | An unmodified snapshot is in `third_party/syncplay`. yucha does not patch those files. It runs the client and does not open Syncplay's window. The Apache license, copyright headers, and Syncplay's own notices stay with that tree. The result is not called Syncplay. |
-| Individual Syncplay files, including `syncplayintf.lua` | Syncplay contributors and others | ISC, BSD, MIT, as each file says | Those notices stay on the files. They are compatible with GPL-3.0 and are not relicensed by being carried inside yucha. |
-
-The combined program is distributed under GPL-3.0-or-later. Including Apache-2.0 code in that combination does not erase the Apache notices. Details are in [NOTICE](NOTICE).
