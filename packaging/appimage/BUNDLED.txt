@@ -21,28 +21,23 @@ What this image contains:
             third_party/syncplay/syncplay/resources/third-party-notices.txt.
     yucha does not patch these files and does not open Syncplay's window.
 
-  mpv 0.41.0 binary
-    File bundled here: mpv-v0.41.0-anylinux-x86_64.AppImage
-    Build: https://github.com/pkgforge-dev/mpv-AppImage/releases/tag/v0.41.0@2026-10-07_1791382432
-    Upstream: https://github.com/mpv-player/mpv
-    License: GPL-2.0-or-later
-    This binary is not produced by compiling third_party/mpv in the
-    yucha repository. Corresponding source for this binary is the
-    source published with that mpv-AppImage build and the mpv project.
-    The result is not called mpv, and the mpv logo is not used.
-
   CPython 3.12.15
     Build: https://github.com/astral-sh/python-build-standalone/releases/tag/20261013
     License: Python Software Foundation License
-    File: cpython-3.12.15+20261013-x86_64-unknown-linux-gnu-install_only.tar.gz
+    File: cpython-3.12.15+20261013-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz
 
   libmpv
     Copied from the build machine's libmpv package, with the libraries
     it needs. This is the engine that draws the picture. It does not
     open a window. Upstream is the same mpv project.
     License: GPL-2.0-or-later
+    Syncplay asks a program named mpv for its version. The image
+    answers with a stub that prints this package's version. No second
+    mpv program is bundled.
 
-Python dependencies (Twisted, its TLS stack, PySide6, and python-mpv)
-are installed from PyPI into the bundled interpreter. Their licenses stay
-with those packages. PySide6 is the Qt for Python bindings, LGPL.
-python-mpv is GPL-2.0-or-later or LGPL-2.1-or-later, same terms as libmpv.
+Python dependencies (Twisted, its TLS stack, PySide6 Essentials, and
+python-mpv) are installed from PyPI into the bundled interpreter. Their
+licenses stay with those packages. PySide6 Essentials is the Qt for
+Python bindings that the window uses, LGPL. The WebEngine, add-on, and
+PDF modules are not installed. python-mpv is GPL-2.0-or-later or
+LGPL-2.1-or-later, same terms as libmpv.

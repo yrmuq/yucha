@@ -17,22 +17,26 @@ Unmodified source snapshots are in this repository:
 
   third_party/mpv       mpv source. The version file in that tree
                         reads 0.41.0. yucha does not compile it and
-                        does not patch it. Playback uses an mpv binary
-                        on PATH, or the path in YUCHA_MPV.
+                        does not patch it. The window plays through
+                        libmpv. Syncplay asks a separate program for
+                        a version; a source checkout uses PATH or
+                        YUCHA_MPV.
   third_party/syncplay  Syncplay 1.7.7. yucha does not patch these
                         files and does not start Syncplay's Qt window.
                         yucha's own window, under yucha/, draws the
                         controls.
 
   An AppImage built by packaging/appimage/build.sh bundles
-  CPython 3.12.15, the unmodified Syncplay client, and a prebuilt
-  mpv 0.41.0 binary taken from pkgforge-dev/mpv-AppImage release
-  v0.41.0@2026-10-07_1791382432 (anylinux x86_64). That binary is
-  GPL-2.0-or-later. Corresponding source for it is the source
-  published with that build and the mpv project. third_party/mpv
-  in this repository is a source snapshot; it is not a claim that
-  it is the exact tree which produced that binary. The image
-  carries the same statement in BUNDLED.txt.
+  CPython 3.12.15, the stripped install_only build from
+  python-build-standalone release 20261013, and the unmodified
+  Syncplay client. It does not bundle a third-party mpv program.
+  The picture is drawn by libmpv copied from the build machine's
+  libmpv package, with the libraries that package needs.
+  Corresponding source for that library is the source of that
+  package. third_party/mpv is a source snapshot only; it is not
+  the tree that produced the packaged library. The image carries
+  the same statement in BUNDLED.txt. Syncplay's version question
+  is answered by a stub that prints the version of that libmpv.
 
 Copyright headers and license files stay inside each snapshot.
 This notice stays with every copy of yucha.

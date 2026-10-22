@@ -13,12 +13,9 @@ APPDIR="$WORK/AppDir"
 DIST="$ROOT/dist"
 mkdir -p "$CACHE" "$DIST"
 
-PY_URL="https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.12.15%2B20261013-x86_64-unknown-linux-gnu-install_only.tar.gz"
-PY_SHA="5d546fc004fc2435fa142eb8f42ed8de5eb4725963dc22f7e6671014a80eb560"
-PY_TAR="$CACHE/cpython-3.12.15-install_only.tar.gz"
-MPV_URL="https://github.com/pkgforge-dev/mpv-AppImage/releases/download/v0.41.0@2026-10-07_1791382432/mpv-v0.41.0-anylinux-x86_64.AppImage"
-MPV_SHA="0b0dcd36ab761b266c96e382c527c668d7cd36a6ced1654ab068fdf92111d70b"
-MPV_FILE="${MPV_APPIMAGE:-$CACHE/mpv-v0.41.0-anylinux-x86_64.AppImage}"
+PY_URL="https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.12.15%2B20261013-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
+PY_SHA="178d3d83b6e8e99285a65d3fce9c16b87952cc5efdb4d1a0e3ff3be18ff0fc9c"
+PY_TAR="$CACHE/cpython-3.12.15-install_only_stripped.tar.gz"
 TOOL="$CACHE/appimagetool-x86_64.AppImage"
 TOOL_URL="https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage"
 TOOL_SHA="ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"
@@ -41,9 +38,8 @@ fetch() {
 }
 
 fetch "$PY_URL" "$PY_TAR" "$PY_SHA"
-fetch "$MPV_URL" "$MPV_FILE" "$MPV_SHA"
 fetch "$TOOL_URL" "$TOOL" "$TOOL_SHA"
-chmod +x "$TOOL" "$MPV_FILE"
+chmod +x "$TOOL"
 
 if ! command -v file >/dev/null 2>&1; then
     echo "appimagetool needs the file(1) command. Install the 'file' package and rerun." >&2
@@ -63,31 +59,10 @@ test -x "$APPDIR/python/bin/python3"
     --disable-pip-version-check \
     --no-warn-script-location \
     -r "$ROOT/requirements.txt"
-
-EXTRACT="$WORK/mpv-extract"
-rm -rf "$EXTRACT"
-mkdir -p "$EXTRACT"
-(
-    cd "$EXTRACT"
-    APPIMAGE_EXTRACT_AND_RUN=1 "$MPV_FILE" --appimage-extract >/dev/null
-)
-# The pkgforge runtime extracts into ./AppDir and also drops a relative
-# symlink squashfs-root -> ./AppDir. Move the real directory, not the link.
-if [ -d "$EXTRACT/AppDir" ] && [ ! -L "$EXTRACT/AppDir" ]; then
-    mv "$EXTRACT/AppDir" "$APPDIR/mpv-bundle"
-elif [ -d "$EXTRACT/squashfs-root" ] && [ ! -L "$EXTRACT/squashfs-root" ]; then
-    mv "$EXTRACT/squashfs-root" "$APPDIR/mpv-bundle"
-else
-    echo "mpv extract layout was not recognized" >&2
-    ls -la "$EXTRACT" >&2
-    exit 1
-fi
-test -x "$APPDIR/mpv-bundle/AppRun"
-# These hooks ask to download yt-dlp and to update the AppImage. Inside
-# yucha that prompt is the wrong program, and it prints an error when no
-# terminal emulator is installed. Host yt-dlp on PATH still works.
-rm -f "$APPDIR/mpv-bundle/bin/05-get-yt-dlp.hook" \
-    "$APPDIR/mpv-bundle/bin/10-self-updater.hook"
+# pip itself is not used when the image runs.
+site=$("$APPDIR/python/bin/python3" -c 'import sysconfig; print(sysconfig.get_path("purelib"))')
+rm -rf "$site/pip" "$site"/pip-*.dist-info
+rm -f "$APPDIR/python/bin/pip" "$APPDIR/python/bin/pip3" "$APPDIR/python/bin/pip3.12"
 
 cp -a "$ROOT/yucha" "$ROOT/LICENSE" "$ROOT/NOTICE" "$ROOT/README.md" \
     "$APPDIR/payload/"
@@ -171,7 +146,24 @@ print("bundled libmpv from", src)
 PY
 
 cp "$PACK/AppRun" "$APPDIR/AppRun"
-cp "$PACK/mpv-launch" "$APPDIR/mpv-launch"
+# Syncplay runs `mpv --version` and then attaches to libmpv. The stub
+# prints the version of the libmpv package copied above.
+raw=""
+if dpkg-query -W -f='${Status}' libmpv2 2>/dev/null | grep -q 'install ok installed'; then
+    raw=$(dpkg-query -W -f='${Version}' libmpv2)
+elif dpkg-query -W -f='${Status}' libmpv-dev 2>/dev/null | grep -q 'install ok installed'; then
+    raw=$(dpkg-query -W -f='${Version}' libmpv-dev)
+else
+    echo "libmpv2 is not installed" >&2
+    exit 1
+fi
+raw=${raw#*:}
+raw=${raw%%[-+]*}
+if ! printf '%s\n' "$raw" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+    echo "libmpv version is not numeric: $raw" >&2
+    exit 1
+fi
+printf '%s\n' '#!/bin/sh' "echo \"mpv ${raw}\"" > "$APPDIR/mpv-launch"
 chmod +x "$APPDIR/AppRun" "$APPDIR/mpv-launch"
 ln -s ../../AppRun "$APPDIR/usr/bin/yucha"
 cp "$PACK/yucha.desktop" "$APPDIR/yucha.desktop"
