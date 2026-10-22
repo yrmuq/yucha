@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Wire the saved config, the mpv window, and the Syncplay client."""
 
+import os
 import sys
 from pathlib import Path
 
@@ -138,10 +139,18 @@ def main():
     from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import QApplication
 
+    from yucha.configstore import runtime_dir
+    from yucha.system import FileBridge, handoff, media_paths
     from yucha.window import MainWindow
+
+    paths = media_paths(sys.argv[1:])
+    sock = runtime_dir() / "open.sock"
+    if paths and handoff(paths, sock, os.environ.get("XDG_ACTIVATION_TOKEN") or ""):
+        return
 
     qt = QApplication([])
     qt.setApplicationName("yucha")
+    qt.setDesktopFileName("yucha")
     icon = Path(__file__).resolve().parent / "icon.png"
     if icon.is_file():
         qt.setWindowIcon(QIcon(str(icon)))
@@ -151,9 +160,14 @@ def main():
     app = App()
     window = MainWindow(app)
     window.show()
+    bridge = FileBridge(sock)
+    bridge.opened.connect(window.accept_files)
+    bridge.start()
     qt.processEvents()
     player = launch_player(app.client, app.runtime, window.video.ipc_path)
     window.set_player(player)
+    if paths:
+        window.accept_files(paths, "")
     app.boot()
 
     def tick():
@@ -167,5 +181,6 @@ def main():
     timer = QTimer()
     timer.timeout.connect(tick)
     timer.start(10)
+    qt.aboutToQuit.connect(bridge.stop)
     qt.aboutToQuit.connect(timer.stop)
     qt.exec()

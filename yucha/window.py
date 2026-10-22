@@ -4,6 +4,7 @@
 the picture into the video area."""
 
 import html
+import os
 import re
 import time
 from pathlib import Path
@@ -47,6 +48,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from yucha.system import Notifier, SleepInhibit, join_line, people_joined
 
 from yucha.engine import Picture
 
@@ -1368,6 +1370,10 @@ class MainWindow(QMainWindow):
         self._tracks_lock = None
         self._muted = False
         self._chat_held = False
+        self._known_names = None
+        self._awake = SleepInhibit()
+        icon = Path(__file__).resolve().parent / "icon.png"
+        self._notes = Notifier(str(icon) if icon.is_file() else "")
         self.setWindowTitle("yucha")
         self.resize(1280, 720)
         self.setMinimumSize(860, 520)
@@ -2373,12 +2379,15 @@ class MainWindow(QMainWindow):
 
     def _on_conn(self, event):
         state = event.get("state") or ""
+        was = self._connected
         self._connected = state == "connected"
         self._failed = state == "failed"
         if state == "failed":
             self._set_status(event.get("text") or "")
         if state == "connected":
             self._set_status("")
+        if self._connected and not was:
+            self._notify_background("yucha", "Room connected")
         self._refresh_banner()
         if event.get("openPanel"):
             self.set_panel(True)
@@ -2440,6 +2449,11 @@ class MainWindow(QMainWindow):
             if name not in ready_names:
                 self._ready_until.pop(name, None)
         self._users = people
+        me = str(self.app.store.data["connection"].get("name") or "")
+        self._known_names, joined = people_joined(self._known_names, [person["name"] for person in people], me)
+        line = join_line(joined)
+        if line:
+            self._notify_background("yucha", line)
         self._paint_users()
         self._start_when_everyone_ready(people)
 
@@ -2527,6 +2541,9 @@ class MainWindow(QMainWindow):
             self._append_chat_line(spans)
         if not _startup_line(text):
             self._osd.append((time.monotonic(), spans))
+        me = str(self.app.store.data["connection"].get("name") or "")
+        if user and user != me:
+            self._notify_background(user, text)
 
     def _refresh_transport(self):
         paused = self._get("pause")
@@ -2574,6 +2591,8 @@ class MainWindow(QMainWindow):
                 self._paused = True
                 self._hold_pause = None
         self._move_knob()
+        loaded = bool(self._current_path) or bool(self._get("path"))
+        self._awake.set_playing(loaded and not self._paused and not ended)
 
     def _shown_position(self):
         if self.slider.isSliderDown() and self._duration > 0:
@@ -2722,9 +2741,25 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+    def accept_files(self, paths, token=""):
+        self._add_dropped(list(paths))
+        if token:
+            os.environ["XDG_ACTIVATION_TOKEN"] = token
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        if token:
+            os.environ.pop("XDG_ACTIVATION_TOKEN", None)
+
+    def _notify_background(self, summary, body):
+        if self.isActiveWindow():
+            return
+        self._notes.show(summary, body)
+
     def closeEvent(self, event):
         self._ui_timer.stop()
         self._knob_timer.stop()
+        self._awake.close()
         self.video.shutdown()
         event.accept()
         QApplication.instance().quit()

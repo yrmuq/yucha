@@ -105,6 +105,10 @@ class Picture(QOpenGLWidget):
         found = _library_version(self.mpv)
         if found is None or (found[0] == 0 and found[1] < 23):
             raise RuntimeError("yucha needs libmpv 0.23 or newer")
+        try:
+            self.mpv.audio_client_name = "yucha"
+        except Exception:
+            pass
         # "script" is only a command-line alias. libmpv does not accept it
         # as an option, and the player quit before the window opened.
         self.mpv.command("load-script", str(SCRIPT))
