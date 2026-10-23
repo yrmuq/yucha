@@ -21,6 +21,7 @@ from syncplay.client import SSL_CERT_FILE, SyncClientFactory, SyncplayClient
 from syncplay.messages import getMessage, setLanguage
 from syncplay.players.mpv import MpvPlayer
 from yucha.configstore import port_number
+from yucha.i18n import tr
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -250,7 +251,7 @@ def connect_network(client, host, port):
         client.protocolFactory.options = None
         client._clientSupportsTLS = False
         client.ui.showMessage(
-            "The certificate file could not be loaded. This connection is not encrypted."
+            tr("The certificate file could not be loaded. This connection is not encrypted.")
         )
     else:
         client.protocolFactory.options = options

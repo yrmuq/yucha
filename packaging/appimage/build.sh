@@ -64,7 +64,7 @@ site=$("$APPDIR/python/bin/python3" -c 'import sysconfig; print(sysconfig.get_pa
 rm -rf "$site/pip" "$site"/pip-*.dist-info
 rm -f "$APPDIR/python/bin/pip" "$APPDIR/python/bin/pip3" "$APPDIR/python/bin/pip3.12"
 
-cp -a "$ROOT/yucha" "$ROOT/LICENSE" "$ROOT/NOTICE" "$ROOT/README.md" \
+cp -a "$ROOT/yucha" "$ROOT/languages" "$ROOT/LICENSE" "$ROOT/NOTICE" "$ROOT/README.md" \
     "$APPDIR/payload/"
 cp -a "$ROOT/third_party/syncplay" "$ROOT/third_party/README.md" \
     "$APPDIR/payload/third_party/"
