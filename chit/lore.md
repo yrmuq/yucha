@@ -7,4 +7,4 @@ Picture: build-machine `libmpv`. No third-party `mpv` program. Syncplay `mpv --v
 Qt: `PySide6_Essentials` only. No add-ons, WebEngine, or PDF.
 Playlist: the first drop does not start playback. A later drop may start only if the first episode is no longer selected.
 TLS: do not refuse a server without TLS. If yucha's certificate bundle fails to load, warn that the connection is not encrypted and still connect.
-Version: do not bump unless the user asks. To keep the current version is to keep that number. Current: `0.3.1`.
+Version: do bump unless the user asks to not. To keep the current version is to keep that number. Current: `0.3.1`.
