@@ -11,12 +11,51 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "third_party" / "syncplay"))
 
+from yucha import i18n
 from yucha.bridge import Bridge
 from yucha.configstore import ConfigStore, port_number
 from yucha.session import load_client_tls
 
 
 class Guards(unittest.TestCase):
+    def test_language_file(self):
+        i18n.use("English")
+        self.assertEqual(i18n.tr("Users"), "Users")
+        self.assertEqual(i18n.tr("Language"), "Language")
+        self.assertEqual(i18n.languages()[0], "English")
+        for line in (i18n.FOLDER / "English.txt").read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            left, right = line.rsplit("=", 1)
+            self.assertEqual(left.strip(), right.strip())
+        previous = i18n.FOLDER
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                folder = Path(tmp)
+                (folder / "English.txt").write_text("Users=Users\n", encoding="utf-8")
+                (folder / "Demo.txt").write_text(
+                    "# note\n\nPeople=Users\n Chat = Chat \nA=B=Playlist\n=Skip\nNoEquals\n",
+                    encoding="utf-8",
+                )
+                i18n.FOLDER = folder
+                self.assertEqual(i18n.languages(), ["English", "Demo"])
+                i18n.use("Demo")
+                self.assertEqual(i18n.current(), "Demo")
+                self.assertEqual(i18n.tr("Users"), "People")
+                self.assertEqual(i18n.tr("Chat"), "Chat")
+                self.assertEqual(i18n.tr("Playlist"), "A=B")
+                self.assertEqual(i18n.tr("Missing"), "Missing")
+                self.assertEqual(i18n.trf("Track {}", 4), "Track 4")
+                i18n.use("Nope")
+                self.assertEqual(i18n.current(), "English")
+                self.assertEqual(i18n.tr("Users"), "Users")
+                i18n.use("../outside")
+                self.assertEqual(i18n.current(), "English")
+        finally:
+            i18n.FOLDER = previous
+            i18n.use("English")
+
     def test_port(self):
         self.assertIsNone(port_number("abc"))
         self.assertEqual(port_number("8999"), 8999)

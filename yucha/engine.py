@@ -14,6 +14,8 @@ from PySide6.QtGui import QOpenGLFunctions
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QSizePolicy
 
+from yucha.i18n import trf
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "third_party" / "syncplay" / "syncplay" / "resources" / "syncplayintf.lua"
 # Syncplay reads this line from mpv to learn the filename and duration.
@@ -140,7 +142,7 @@ class Picture(QOpenGLWidget):
                 opengl_init_params={"get_proc_address": self._proc_cb},
             )
         except Exception as exc:
-            self.error = "The picture could not start: {}".format(exc)
+            self.error = trf("The picture could not start: {}", exc)
             self.ctx = None
             return
         self.ctx.update_cb = self.update
@@ -167,7 +169,7 @@ class Picture(QOpenGLWidget):
             )
             self.ctx.report_swap()
         except Exception as exc:
-            self.error = "The picture stopped: {}".format(exc)
+            self.error = trf("The picture stopped: {}", exc)
             self.ctx = None
 
     def mousePressEvent(self, event):

@@ -40,7 +40,7 @@ jobs:
           sudo apt-get install -y libmpv2 || sudo apt-get install -y libmpv-dev
 
       - name: Build
-        run: packaging/appimage/build.sh
+        run: bash packaging/appimage/build.sh
 
       - name: Publish beta release
         if: github.ref_type == 'tag'

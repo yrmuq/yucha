@@ -13,6 +13,7 @@ from twisted.internet import reactor
 
 from yucha.bridge import Bridge
 from yucha.configstore import ConfigStore, port_number, runtime_dir
+from yucha.i18n import languages, tr, use
 from yucha.player_ui import PlayerUI
 from yucha.session import launch_player, make_client, submit_login
 
@@ -20,6 +21,7 @@ from yucha.session import launch_player, make_client, submit_login
 class App(object):
     def __init__(self):
         self.store = ConfigStore()
+        use(self.store.data["appearance"].get("language"))
         self.runtime = runtime_dir()
         self.bridge = Bridge(self.runtime)
         self.ui = PlayerUI(self.bridge)
@@ -52,11 +54,11 @@ class App(object):
             self.bridge.emit({
                 "e": "conn",
                 "state": "failed",
-                "text": "Need a server, a username, a room, and a port.",
+                "text": tr("Need a server, a username, a room, and a port."),
                 "openPanel": True,
             })
             return
-        self.bridge.emit({"e": "conn", "state": "connecting", "text": "Connecting..."})
+        self.bridge.emit({"e": "conn", "state": "connecting", "text": tr("Connecting...")})
         submit_login(self.client, host, port, name, room, password)
 
     def on_command(self, command):
@@ -75,7 +77,7 @@ class App(object):
                 self.bridge.emit({
                     "e": "conn",
                     "state": "failed",
-                    "text": "Need a server, a username, a room, and a port.",
+                    "text": tr("Need a server, a username, a room, and a port."),
                     "openPanel": True,
                 })
                 return
@@ -127,6 +129,12 @@ class App(object):
             appearance["volumeMax"] = max(100, min(130, ceiling))
             overlay = command.get("volumeOverlay") or "horizontal"
             appearance["volumeOverlay"] = "vertical" if overlay == "vertical" else "horizontal"
+            language = command.get("language", appearance.get("language") or "English")
+            language = str(language or "English")
+            if language not in languages():
+                language = "English"
+            appearance["language"] = language
+            use(language)
             self.client._config["pauseOnLeave"] = True
             self.client._config["fastforwardOnDesync"] = appearance["fastforwardOnDesync"]
             self.client._config["slowOnDesync"] = appearance["slowOnDesync"]

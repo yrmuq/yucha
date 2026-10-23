@@ -48,9 +48,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from yucha.system import Notifier, SleepInhibit, join_line, people_joined
-
 from yucha.engine import Picture
+from yucha.i18n import languages, tr, trf
+from yucha.system import Notifier, SleepInhibit, join_line, people_joined
 
 HIDE_AFTER = 3.0
 CHAT_LIFE = 5.0
@@ -1095,7 +1095,7 @@ class BoxCheck(QCheckBox):
 class SettingsDialog(QDialog):
     def __init__(self, appearance, connection, parent, page=1):
         super().__init__(parent)
-        self.setWindowTitle("Settings")
+        self.setWindowTitle(tr("Settings"))
         self.setModal(True)
         self.appearance = None
         self.connection = None
@@ -1107,8 +1107,8 @@ class SettingsDialog(QDialog):
         theme_page = QWidget()
         theme_form = QFormLayout(theme_page)
         self.theme = QComboBox()
-        self.theme.addItem("Dark", "dark")
-        self.theme.addItem("Light", "light")
+        self.theme.addItem(tr("Dark"), "dark")
+        self.theme.addItem(tr("Light"), "light")
         current = appearance.get("theme") or "dark"
         self.theme.setCurrentIndex(0 if current != "light" else 1)
         self._look_theme = current if current == "light" else "dark"
@@ -1123,12 +1123,12 @@ class SettingsDialog(QDialog):
         self.ui_size = QSpinBox()
         self.ui_size.setRange(1, 32)
         self.ui_size.setValue(int(appearance.get("uiFontSize") or 16))
-        theme_form.addRow("Theme", self.theme)
-        theme_form.addRow("Chat color", self.color)
-        theme_form.addRow("Accent color", self.accent)
-        theme_form.addRow("Second accent", self.accent2)
-        theme_form.addRow("Chat size", self.chat_size)
-        theme_form.addRow("Interface size", self.ui_size)
+        theme_form.addRow(tr("Theme"), self.theme)
+        theme_form.addRow(tr("Chat color"), self.color)
+        theme_form.addRow(tr("Accent color"), self.accent)
+        theme_form.addRow(tr("Second accent"), self.accent2)
+        theme_form.addRow(tr("Chat size"), self.chat_size)
+        theme_form.addRow(tr("Interface size"), self.ui_size)
 
         room = QWidget()
         room_box = QVBoxLayout(room)
@@ -1154,7 +1154,7 @@ class SettingsDialog(QDialog):
             ("Password", self.password),
             ("Room", self.room_name),
         ):
-            room_form.addRow(label, field)
+            room_form.addRow(tr(label), field)
             field.returnPressed.connect(self._connect_now)
         room_box.addLayout(room_form)
         self.port_error = QLabel("")
@@ -1162,11 +1162,11 @@ class SettingsDialog(QDialog):
         self.port_error.hide()
         room_box.addWidget(self.port_error)
         room_box.addStretch(1)
-        connect = QPushButton("Connect")
+        connect = QPushButton(tr("Connect"))
         connect.clicked.connect(self._connect_now)
         room_box.addWidget(connect)
-        tabs.addTab(room, "Room")
-        tabs.addTab(theme_page, "Theme")
+        tabs.addTab(room, tr("Room"))
+        tabs.addTab(theme_page, tr("Theme"))
 
         other = QWidget()
         other_form = QFormLayout(other)
@@ -1179,9 +1179,9 @@ class SettingsDialog(QDialog):
         look = _palette(self._look_theme, self._look_accent)
         for box in (self.autoplay, self.fastforward, self.slowdown):
             box.set_colors(look["field"], look["border"], look["on_fg"], look["accent"])
-        self._check_row(other_form, "Play the next episode automatically", self.autoplay)
-        self._check_row(other_form, "Fast-forward if lagging behind", self.fastforward)
-        self._check_row(other_form, "Slow down on minor desync", self.slowdown)
+        self._check_row(other_form, tr("Play the next episode automatically"), self.autoplay)
+        self._check_row(other_form, tr("Fast-forward if lagging behind"), self.fastforward)
+        self._check_row(other_form, tr("Slow down on minor desync"), self.slowdown)
         stepper = QWidget()
         stepper_row = QHBoxLayout(stepper)
         stepper_row.setContentsMargins(0, 0, 0, 0)
@@ -1201,27 +1201,37 @@ class SettingsDialog(QDialog):
         stepper_row.addStretch(1)
         self.volume_max = _volume_limit(appearance.get("volumeMax"))
         self._show_volume_max()
-        other_form.addRow("Volume max", stepper)
+        other_form.addRow(tr("Volume max"), stepper)
         self.overlay = QComboBox()
-        self.overlay.addItem("Horizontal bar", "horizontal")
-        self.overlay.addItem("Vertical bar", "vertical")
+        self.overlay.addItem(tr("Horizontal bar"), "horizontal")
+        self.overlay.addItem(tr("Vertical bar"), "vertical")
         overlay = appearance.get("volumeOverlay") or "horizontal"
         self.overlay.setCurrentIndex(1 if overlay == "vertical" else 0)
         self._style_popup(self.overlay)
-        other_form.addRow("Volume on scroll", self.overlay)
-        tabs.addTab(other, "Other")
+        other_form.addRow(tr("Volume on scroll"), self.overlay)
+        self.language = QComboBox()
+        for name in languages():
+            self.language.addItem(name, name)
+        picked = str(appearance.get("language") or "English")
+        index = self.language.findData(picked)
+        if index < 0:
+            index = max(0, self.language.findData("English"))
+        self.language.setCurrentIndex(index)
+        self._style_popup(self.language)
+        other_form.addRow(tr("Language"), self.language)
+        tabs.addTab(other, tr("Other"))
 
         about = QWidget()
         about_layout = QVBoxLayout(about)
         title = QLabel("yucha")
         title.setObjectName("heading")
         from yucha import __version__
-        version = QLabel("{} beta".format(__version__))
+        version = QLabel(trf("{} beta", __version__))
         heart = appearance.get("accentColor") or "#9A3A52"
         thanks = QLabel(
-            'Thanks <span style="color: {};">♥</span> '
-            '<a href="https://syncplay.pl">Syncplay</a> and '
-            '<a href="https://mpv.io">mpv</a>'.format(heart)
+            '{} <span style="color: {};">♥</span> '
+            '<a href="https://syncplay.pl">Syncplay</a> {} '
+            '<a href="https://mpv.io">mpv</a>'.format(tr("Thanks"), heart, tr("and"))
         )
         thanks.setTextFormat(Qt.TextFormat.RichText)
         thanks.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
@@ -1231,11 +1241,11 @@ class SettingsDialog(QDialog):
         about_layout.addStretch(1)
         about_layout.addWidget(thanks)
         about_layout.addStretch(2)
-        tabs.addTab(about, "About")
+        tabs.addTab(about, tr("About"))
 
         buttons = QHBoxLayout()
-        ok = QPushButton("OK")
-        cancel = QPushButton("Cancel")
+        ok = QPushButton(tr("OK"))
+        cancel = QPushButton(tr("Cancel"))
         ok.clicked.connect(self._accept)
         cancel.clicked.connect(self.reject)
         buttons.addWidget(ok)
@@ -1263,7 +1273,7 @@ class SettingsDialog(QDialog):
         from yucha.configstore import port_number
         raw_port = self.port.text().strip()
         if raw_port and port_number(raw_port) is None:
-            self.port_error.setText("Port must be a number from 1 to 65535.")
+            self.port_error.setText(tr("Port must be a number from 1 to 65535."))
             self.port_error.show()
             return
         self.port_error.hide()
@@ -1288,6 +1298,7 @@ class SettingsDialog(QDialog):
             "slowOnDesync": self.slowdown.isChecked(),
             "volumeMax": self.volume_max,
             "volumeOverlay": self.overlay.currentData() or "horizontal",
+            "language": self.language.currentData() or "English",
         }
         self.connection = {
             "host": self.host.text(),
@@ -1453,7 +1464,7 @@ class MainWindow(QMainWindow):
         chat_row = QHBoxLayout(self.chat_line)
         chat_row.setContentsMargins(10, 6, 10, 6)
         self.bar_message = QLineEdit()
-        self.bar_message.setPlaceholderText("Message")
+        self._mark(self.bar_message, "Message", "placeholder")
         self.bar_message.returnPressed.connect(self._send_bar_chat)
         self.bar_send = IconButton("send")
         self.bar_send.clicked.connect(self._send_bar_chat)
@@ -1536,7 +1547,7 @@ class MainWindow(QMainWindow):
         self.banner.clicked.connect(lambda: self._open_settings(0))
         inside = QHBoxLayout(self.banner)
         inside.setContentsMargins(14, 0, 14, 0)
-        self.banner_text = QLabel("Not configured")
+        self.banner_text = QLabel(tr("Not configured"))
         self.banner_dot = QLabel("●")
         self.banner_text.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.banner_dot.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
@@ -1550,19 +1561,22 @@ class MainWindow(QMainWindow):
         banner_row.addWidget(self.gear)
         side.addLayout(banner_row)
 
-        self.reconnect = QPushButton("Reconnect")
+        self.reconnect = QPushButton()
+        self._mark(self.reconnect, "Reconnect")
         self.reconnect.clicked.connect(self._reconnect)
         self.reconnect.hide()
         side.addWidget(self.reconnect)
 
-        users_title = QLabel("Users")
+        users_title = QLabel()
         users_title.setObjectName("heading")
+        self._mark(users_title, "Users")
         side.addWidget(users_title)
         self.room_users = UserTable()
         side.addWidget(self.room_users)
 
-        playlist_title = QLabel("Playlist")
+        playlist_title = QLabel()
         playlist_title.setObjectName("heading")
+        self._mark(playlist_title, "Playlist")
         side.addWidget(playlist_title)
         self.files = FileList()
         self.files.setObjectName("playlist")
@@ -1577,8 +1591,9 @@ class MainWindow(QMainWindow):
         self.status.hide()
         side.addWidget(self.status)
 
-        chat_title = QLabel("Chat")
+        chat_title = QLabel()
         chat_title.setObjectName("heading")
+        self._mark(chat_title, "Chat")
         side.addWidget(chat_title)
         self.chat = QTextEdit()
         self.chat.setObjectName("roomchat")
@@ -1801,7 +1816,7 @@ class MainWindow(QMainWindow):
             return title
         if lang:
             return lang
-        return "Track {}".format(track.get("id"))
+        return trf("Track {}", track.get("id"))
 
     def _fill_tracks(self):
         layout = self.tracks_pop.layout()
@@ -1818,10 +1833,10 @@ class MainWindow(QMainWindow):
         subs = [track for track in raw if isinstance(track, dict) and track.get("type") == "sub"]
         audios = [track for track in raw if isinstance(track, dict) and track.get("type") == "audio"]
         if subs:
-            self._track_heading(layout, "Subs")
+            self._track_heading(layout, tr("Subs"))
             for track in subs:
                 self._track_row(layout, track, "sid")
-        self._track_heading(layout, "Audio")
+        self._track_heading(layout, tr("Audio"))
         for track in audios:
             self._track_row(layout, track, "aid")
         layout.activate()
@@ -2269,6 +2284,27 @@ class MainWindow(QMainWindow):
 
         return any(norm(key, old.get(key)) != norm(key, values.get(key)) for key in ("host", "port", "name", "password", "room"))
 
+    def _mark(self, widget, english, kind="text"):
+        widget.setProperty("en", english)
+        widget.setProperty("enKind", kind)
+        self._apply_phrase(widget, english)
+
+    def _apply_phrase(self, widget, english):
+        shown = tr(english)
+        if widget.property("enKind") == "placeholder":
+            widget.setPlaceholderText(shown)
+        else:
+            widget.setText(shown)
+
+    def _retranslate(self):
+        for widget in self.findChildren(QWidget):
+            english = widget.property("en")
+            if english:
+                self._apply_phrase(widget, str(english))
+        self._refresh_banner()
+        if self._tracks_open:
+            self._fill_tracks()
+
     def _open_settings(self, page=1):
         dialog = SettingsDialog(
             self.app.store.data["appearance"],
@@ -2281,6 +2317,7 @@ class MainWindow(QMainWindow):
         self.app.on_command({"c": "appearance", **dialog.appearance})
         self.apply_theme()
         self._apply_volume_max()
+        self._retranslate()
         if dialog.connection and (dialog.wants_connect or self._connection_changed(dialog.connection)):
             self.app.on_command({"c": "connect", **dialog.connection})
             self._refresh_banner()
@@ -2387,7 +2424,7 @@ class MainWindow(QMainWindow):
         if state == "connected":
             self._set_status("")
         if self._connected and not was:
-            self._notify_background("yucha", "Room connected")
+            self._notify_background("yucha", tr("Room connected"))
         self._refresh_banner()
         if event.get("openPanel"):
             self.set_panel(True)
@@ -2409,16 +2446,16 @@ class MainWindow(QMainWindow):
             return
         pal = _palette(self.app.store.data["appearance"].get("theme"))
         if not self._configured():
-            text, color = "Not configured", "#D6B23A"
+            text, color = tr("Not configured"), "#D6B23A"
         elif self._connected:
             self._chat_held = False
-            text, color = "Room connected", "#3EAD62"
+            text, color = tr("Room connected"), "#3EAD62"
         elif self._chat_held:
-            text, color = "Not connected", "#D6B23A"
+            text, color = tr("Not connected"), "#D6B23A"
         elif self._failed:
-            text, color = "Error connecting", pal["bad"]
+            text, color = tr("Error connecting"), pal["bad"]
         else:
-            text, color = "Connecting...", "#D6B23A"
+            text, color = tr("Connecting..."), "#D6B23A"
         self.banner_text.setText(text)
         self.banner_dot.setStyleSheet("color: {}; background: transparent;".format(color))
         self.reconnect.setVisible(bool(self._failed and self._configured()))
@@ -2649,7 +2686,7 @@ class MainWindow(QMainWindow):
         y = 16
         pad = 8
         if self._files_differ():
-            notice = "Not the same file"
+            notice = tr("Not the same file")
             notice_w = metrics.horizontalAdvance(notice) + pad * 2
             notice_h = row_h + pad * 2
             lines.append(

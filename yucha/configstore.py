@@ -69,6 +69,7 @@ DEFAULTS = {
         "slowOnDesync": True,
         "volumeMax": 100,
         "volumeOverlay": "horizontal",
+        "language": "English",
     },
 }
 

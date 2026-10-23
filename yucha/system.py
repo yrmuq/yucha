@@ -16,6 +16,8 @@ from urllib.parse import unquote, urlparse
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtDBus import QDBus, QDBusConnection, QDBusMessage
 
+from yucha.i18n import tr, trf
+
 
 # Idle keeps the screen from blanking. Suspend keeps the machine awake.
 _AWAKE_FLAGS = 4 | 8
@@ -65,10 +67,10 @@ def join_line(names):
     if not names:
         return ""
     if len(names) == 1:
-        return "{} joined".format(names[0])
+        return trf("{} joined", names[0])
     if len(names) == 2:
-        return "{} and {} joined".format(names[0], names[1])
-    return "{} people joined".format(len(names))
+        return trf("{} and {} joined", names[0], names[1])
+    return trf("{} people joined", len(names))
 
 
 def handoff(paths, socket_path, token="", timeout=1.0):
@@ -201,7 +203,7 @@ class SleepInhibit(object):
         self._want = playing
         if playing:
             try:
-                self._held = bool(self._backend.acquire("yucha", "Playing a video"))
+                self._held = bool(self._backend.acquire("yucha", tr("Playing a video")))
             except Exception:
                 self._held = False
             return

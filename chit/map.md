@@ -11,6 +11,8 @@ Read only the row the task needs. Do not read `third_party/` or `packaging/appim
 - `yucha/bridge.py` — writes those calls to `events.jsonl` for the window.
 - `yucha/system.py` — open a file in an already running window, sleep inhibit, notifications.
 - `yucha/configstore.py` — saved host, room, and settings.
+- `yucha/i18n.py` — reads `languages/*.txt`. Left of `=` is shown. Right is the English original.
+- `languages/` — one text file per language. `English.txt` is the only file.
 - `tests/test_guards.py`, `tests/test_system.py` — the only tests.
 
 ## Packaging
