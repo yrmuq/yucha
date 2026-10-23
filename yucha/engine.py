@@ -142,7 +142,7 @@ class Picture(QOpenGLWidget):
                 opengl_init_params={"get_proc_address": self._proc_cb},
             )
         except Exception as exc:
-            self.error = trf("The picture could not start: {}", exc)
+            self.error = trf(47, exc)
             self.ctx = None
             return
         self.ctx.update_cb = self.update
@@ -169,7 +169,7 @@ class Picture(QOpenGLWidget):
             )
             self.ctx.report_swap()
         except Exception as exc:
-            self.error = trf("The picture stopped: {}", exc)
+            self.error = trf(48, exc)
             self.ctx = None
 
     def mousePressEvent(self, event):

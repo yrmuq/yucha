@@ -67,10 +67,10 @@ def join_line(names):
     if not names:
         return ""
     if len(names) == 1:
-        return trf("{} joined", names[0])
+        return trf(50, names[0])
     if len(names) == 2:
-        return trf("{} and {} joined", names[0], names[1])
-    return trf("{} people joined", len(names))
+        return trf(51, names[0], names[1])
+    return trf(52, len(names))
 
 
 def handoff(paths, socket_path, token="", timeout=1.0):
@@ -203,7 +203,7 @@ class SleepInhibit(object):
         self._want = playing
         if playing:
             try:
-                self._held = bool(self._backend.acquire("yucha", tr("Playing a video")))
+                self._held = bool(self._backend.acquire("yucha", tr(53)))
             except Exception:
                 self._held = False
             return

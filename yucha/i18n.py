@@ -1,6 +1,6 @@
 # Copyright (C) 2026 yrmuq
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Labels from languages/*.txt. Left of '=' is shown. Right is the English original."""
+"""Labels from languages/*.ini. A line is `id = English original = text shown`."""
 
 from pathlib import Path
 
@@ -11,10 +11,10 @@ _name = "English"
 
 
 def languages():
-    """File names in languages/, without .txt. English stays first."""
+    """File names in languages/, without .ini. English stays first."""
     names = []
     if FOLDER.is_dir():
-        names = sorted(path.stem for path in FOLDER.glob("*.txt") if path.is_file())
+        names = sorted(path.stem for path in FOLDER.glob("*.ini") if path.is_file())
     if "English" in names:
         names.remove("English")
     names.insert(0, "English")
@@ -22,42 +22,69 @@ def languages():
 
 
 def use(name):
-    """Load one language file. A missing file stays on English."""
+    """Load one language file over the English originals. A missing file stays on English."""
     global _phrases, _name
+    base = _read(_file("English"))
     chosen = str(name or "").strip() or "English"
     path = _file(chosen)
     if path is None:
         chosen = "English"
-        path = _file(chosen)
+        overlay = {}
+    else:
+        overlay = _read(path)
+    merged = {}
+    for number in set(base) | set(overlay):
+        original = base.get(number, {}).get("en") or overlay.get(number, {}).get("en") or ""
+        shown = overlay.get(number, {}).get("text") if number in overlay else ""
+        merged[number] = {"en": original, "text": shown or original}
     _name = chosen
-    _phrases = _read(path)
+    _phrases = merged
 
 
 def current():
     return _name
 
 
-def tr(english):
-    """The label shown for this English original."""
-    return _phrases.get(english, english)
+def tr(number):
+    """The label shown for this numeric id."""
+    number = _number(number)
+    row = _phrases.get(number)
+    if row is None:
+        return "" if number is None else str(number)
+    return row["text"] or row["en"] or str(number)
 
 
-def trf(english, *args):
-    """Like tr, but keeps the original when a translation drops a {}."""
-    pattern = tr(english)
-    if pattern.count("{}") != english.count("{}"):
-        pattern = english
+def trf(number, *args):
+    """Like tr, but keeps the English original when a translation drops a {}."""
+    number = _number(number)
+    row = _phrases.get(number)
+    if row is None:
+        return "" if number is None else str(number)
+    original = row["en"]
+    pattern = row["text"] or original
+    if pattern.count("{}") != original.count("{}"):
+        pattern = original
     try:
         return pattern.format(*args)
     except (IndexError, KeyError, ValueError):
-        return english.format(*args)
+        try:
+            return original.format(*args)
+        except (IndexError, KeyError, ValueError):
+            return original or str(number)
+
+
+def _number(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _file(name):
     if not name or name in (".", "..") or "/" in name or "\\" in name:
         return None
     folder = FOLDER.resolve()
-    path = (folder / "{}.txt".format(name)).resolve()
+    path = (folder / "{}.ini".format(name)).resolve()
     if path.parent != folder or not path.is_file():
         return None
     return path
@@ -73,11 +100,19 @@ def _read(path):
         return table
     for line in lines:
         line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
+        if not line or line.startswith("#") or line.startswith(";") or line.startswith("["):
             continue
-        left, right = line.rsplit("=", 1)
-        right = right.strip()
-        left = left.strip()
-        if right:
-            table[right] = left or right
+        if line.count("=") < 2:
+            continue
+        left, rest = line.split("=", 1)
+        original, shown = rest.rsplit("=", 1)
+        number = left.strip()
+        if not number.isdigit():
+            continue
+        original = original.strip()
+        shown = shown.strip()
+        table[int(number)] = {"en": original, "text": shown or original}
     return table
+
+
+use("English")

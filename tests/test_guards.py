@@ -20,36 +20,46 @@ from yucha.session import load_client_tls
 class Guards(unittest.TestCase):
     def test_language_file(self):
         i18n.use("English")
-        self.assertEqual(i18n.tr("Users"), "Users")
-        self.assertEqual(i18n.tr("Language"), "Language")
+        self.assertEqual(i18n.tr(1), "Users")
+        self.assertEqual(i18n.tr(38), "Language")
         self.assertEqual(i18n.languages()[0], "English")
-        for line in (i18n.FOLDER / "English.txt").read_text(encoding="utf-8").splitlines():
+        seen = set()
+        for line in (i18n.FOLDER / "English.ini").read_text(encoding="utf-8").splitlines():
             line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
+            if not line or line.startswith(";") or line.startswith("#") or line.startswith("["):
                 continue
-            left, right = line.rsplit("=", 1)
-            self.assertEqual(left.strip(), right.strip())
+            number, rest = line.split("=", 1)
+            original, shown = rest.rsplit("=", 1)
+            self.assertEqual(original.strip(), shown.strip())
+            self.assertNotIn(number.strip(), seen)
+            seen.add(number.strip())
+        self.assertEqual(len(seen), 53)
         previous = i18n.FOLDER
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 folder = Path(tmp)
-                (folder / "English.txt").write_text("Users=Users\n", encoding="utf-8")
-                (folder / "Demo.txt").write_text(
-                    "# note\n\nPeople=Users\n Chat = Chat \nA=B=Playlist\n=Skip\nNoEquals\n",
+                (folder / "English.ini").write_text(
+                    "1 = Users = Users\n14 = Track {} = Track {}\n",
+                    encoding="utf-8",
+                )
+                (folder / "Demo.ini").write_text(
+                    "; note\n\n1 = Users = People\n 3 = Chat = Chat \n"
+                    "2 = A = B = Playlist\n[side]\n14 = Track {} = Track\n"
+                    "= Skip = Skip\nNoEquals\n",
                     encoding="utf-8",
                 )
                 i18n.FOLDER = folder
                 self.assertEqual(i18n.languages(), ["English", "Demo"])
                 i18n.use("Demo")
                 self.assertEqual(i18n.current(), "Demo")
-                self.assertEqual(i18n.tr("Users"), "People")
-                self.assertEqual(i18n.tr("Chat"), "Chat")
-                self.assertEqual(i18n.tr("Playlist"), "A=B")
-                self.assertEqual(i18n.tr("Missing"), "Missing")
-                self.assertEqual(i18n.trf("Track {}", 4), "Track 4")
+                self.assertEqual(i18n.tr(1), "People")
+                self.assertEqual(i18n.tr(3), "Chat")
+                self.assertEqual(i18n.tr(2), "Playlist")
+                self.assertEqual(i18n.tr(99), "99")
+                self.assertEqual(i18n.trf(14, 4), "Track 4")
                 i18n.use("Nope")
                 self.assertEqual(i18n.current(), "English")
-                self.assertEqual(i18n.tr("Users"), "Users")
+                self.assertEqual(i18n.tr(1), "Users")
                 i18n.use("../outside")
                 self.assertEqual(i18n.current(), "English")
         finally:

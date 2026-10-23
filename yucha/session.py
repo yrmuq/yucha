@@ -251,7 +251,7 @@ def connect_network(client, host, port):
         client.protocolFactory.options = None
         client._clientSupportsTLS = False
         client.ui.showMessage(
-            tr("The certificate file could not be loaded. This connection is not encrypted.")
+            tr(49)
         )
     else:
         client.protocolFactory.options = options
