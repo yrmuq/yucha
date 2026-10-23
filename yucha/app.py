@@ -54,11 +54,11 @@ class App(object):
             self.bridge.emit({
                 "e": "conn",
                 "state": "failed",
-                "text": tr("Need a server, a username, a room, and a port."),
+                "text": tr(46),
                 "openPanel": True,
             })
             return
-        self.bridge.emit({"e": "conn", "state": "connecting", "text": tr("Connecting...")})
+        self.bridge.emit({"e": "conn", "state": "connecting", "text": tr(9)})
         submit_login(self.client, host, port, name, room, password)
 
     def on_command(self, command):
@@ -77,7 +77,7 @@ class App(object):
                 self.bridge.emit({
                     "e": "conn",
                     "state": "failed",
-                    "text": tr("Need a server, a username, a room, and a port."),
+                    "text": tr(46),
                     "openPanel": True,
                 })
                 return
