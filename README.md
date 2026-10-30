@@ -23,13 +23,11 @@
 ## Features
 
 * **Single-Window Architecture:** Hardware-accelerated video rendering via `libmpv` combined with `Syncplay` room state, playlist synchronization, and chat in one unified interface.
-* **Atomic-Friendly Portability:** Distributed as a self-contained bundle that runs cleanly on immutable Linux distributions without layering packages, configuring external player paths, or modifying the host system.
 * **Overlay UI & OSD:** Auto-hiding playback controls, an overlay side panel for room and playlist management, and themed on-screen display (`OSD`) notifications for chat messages and user readiness states.
 * **Customizable Appearance:** Built-in support for light and dark themes, custom accent colors, and scalable UI/OSD font sizes.
-* **Language files:** The Other page in Settings has a Language choice. Choices are the file names in `languages/`, without the `.ini` suffix, and only `languages/English.ini` is included. Each line is `id = English original = text shown`. The id is a number. The middle stays English. The right side is the text on screen. Sections only group lines for a person editing the file. The choice is saved with the other settings.
+* **Language:** The interface language comes from `languages/*.ini`.
 * **Persistent Configuration:** Automatically saves connection credentials and user preferences to `~/.config/yucha/config.json` (`0600` permissions) for automatic reconnection on startup.
 * **Playback Power:** The screen stays awake while a video is playing. Pause lets the system blank and sleep again.
-* **File Manager:** A video opened from the file manager is added to the playlist. If `yucha` is already open, that window receives the file.
 * **Session Notifications:** When the window is in the background, the system reports a joined room, a person who enters, and a chat message.
 * **Desktop Identity:** The window and the audio stream are named `yucha`, so the task bar and the volume mixer do not show `mpv`.
 
@@ -62,7 +60,7 @@
 
 ### AppImage
 
-Pre-built `AppImage` packages bundle `Python`, the `Syncplay` client, and `mpv`, requiring no external host dependencies. Download the latest `.AppImage` from the [Releases](https://github.com/yrmuq/yucha/releases) page.
+Pre-built `AppImage` packages bundle `Python`, the `Syncplay` client, and `libmpv` copied from the build machine. No separate `mpv` program is included. Download the latest `.AppImage` from the [Releases](https://github.com/yrmuq/yucha/releases) page.
 
 For seamless desktop integration and updates, use `Gear Lever` ([Flathub](https://flathub.org/apps/it.mijorus.gearlever)) to manage and launch the `AppImage` directly from your application menu. If the menu entry is from an older image, add it again so the file manager can open videos in `yucha`.
 
@@ -97,7 +95,7 @@ If the host system lacks `FUSE` support, extract and run the bundle directly:
 
 | Component | Upstream | License | Integration Details |
 | --- | --- | --- | --- |
-| `mpv` (`libmpv`) | [mpv-player/mpv](https://github.com/mpv-player/mpv) | `GPL-2.0-or-later` | Unmodified source snapshot in `third_party/mpv`; linked against `libmpv`. |
+| `libmpv` | [mpv-player/mpv](https://github.com/mpv-player/mpv) | `GPL-2.0-or-later` | Copied from the build machine. `third_party/mpv` is not built or shipped. |
 | `Syncplay` | [Syncplay/syncplay](https://github.com/Syncplay/syncplay) | `Apache-2.0` | Unmodified source snapshot in `third_party/syncplay` (including `ISC`, `BSD`, and `MIT` submodules). |
 
 *Copyright (C) 2026 yrmuq.*
