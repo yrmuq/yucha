@@ -1,0 +1,79 @@
+# Copyright (C) 2026 yrmuq
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Dependabot does not land on main. The pull request is closed. The commits
+# are on deps, as the next prerelease, for a manual merge into dev.
+
+name: Dependency prerelease
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  prerelease:
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Install file
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y file binutils
+          sudo apt-get install -y libmpv2 || sudo apt-get install -y libmpv-dev
+
+      - name: Tag the next prerelease
+        id: tag
+        env:
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+        run: |
+          git fetch origin main
+          ver="$(bash packaging/release/prerelease.sh | tail -n 1)"
+          echo "version=${ver}" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: bash packaging/appimage/build.sh
+
+      - name: Publish and drop the previous prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          ver="${{ steps.tag.outputs.version }}"
+          major="$(printf '%s\n' "$ver" | awk -F. '{ print $1 }')"
+          minor="$(printf '%s\n' "$ver" | awk -F. '{ print $2 }')"
+          patch="$(printf '%s\n' "$ver" | awk -F. '{ print $3 }')"
+          git push --force origin HEAD:refs/heads/deps
+          git push origin "refs/tags/v${ver}"
+          bash packaging/release/publish.sh "v${ver}"
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,isPrerelease \
+            | python3 -c 'import json,sys; [print(i["tagName"]) for i in json.load(sys.stdin) if i["isPrerelease"]]' \
+            | while read -r tag; do
+                case "$tag" in
+                  "v${major}.${minor}."*) ;;
+                  *) continue ;;
+                esac
+                old="$(printf '%s\n' "$tag" | awk -F. '{ print $3 }' | tr -cd '0-9')"
+                body="$(git tag -l --format='%(contents)' "$tag" || true)"
+                case "$body" in
+                  "Dependency updates."*) ;;
+                  *) continue ;;
+                esac
+                if [ -n "$old" ] && [ "$old" -gt 0 ] && [ "$old" -lt "$patch" ]; then
+                  gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes
+                fi
+              done
+          gh pr close "${{ github.event.pull_request.number }}" --repo "$GITHUB_REPOSITORY" \
+            --comment "Prerelease [${ver}](https://github.com/${GITHUB_REPOSITORY}/releases/tag/v${ver}) is ready to try. \`main\` was not changed. Merge branch \`deps\` into \`dev\` by hand. Do not merge this pull request into \`main\`."

@@ -7,4 +7,4 @@ Picture: build-machine `libmpv`. No third-party `mpv` program. Syncplay `mpv --v
 Qt: `PySide6_Essentials` only. No add-ons, WebEngine, or PDF.
 Playlist: the first drop does not start playback. A later drop may start only if the first episode is no longer selected.
 TLS: do not refuse a server without TLS. If yucha's certificate bundle fails to load, warn that the connection is not encrypted and still connect.
-Version: do bump unless the user asks to not. To keep the current version is to keep that number. Current: `0.3.1`.
+Version: X.Y.Z. Work goes on `dev`, not on `main`. Merging `dev` into `main` with a merge commit raises Y and sets Z to 0. That is a normal release, not a prerelease. A squash does not release. Dependabot publishes `X.Y.1`, `X.Y.2` from `main` plus dependency updates, and deletes the previous prerelease of that kind. Merge `deps` into `dev` by hand. Do not bump the number on a `dev` commit. Current: `0.3.1`.

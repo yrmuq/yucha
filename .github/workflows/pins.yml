@@ -1,0 +1,64 @@
+# Copyright (C) 2026 yrmuq
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The 28th, 09:00 UTC: refresh the appimagetool pin Dependabot cannot see.
+# The result is a dependency prerelease on deps, not a commit on main.
+
+name: Pins
+
+on:
+  schedule:
+    - cron: "0 9 28 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  pins:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Install file
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y file binutils
+          sudo apt-get install -y libmpv2 || sudo apt-get install -y libmpv-dev
+
+      - name: Update pin
+        id: pins
+        run: |
+          set +e
+          sh packaging/release/pin-tool.sh
+          code=$?
+          set -e
+          if [ "$code" = 2 ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$code" != 0 ]; then
+            exit "$code"
+          fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Prerelease
+        if: steps.pins.outputs.changed == 'true'
+        env:
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          git add packaging/appimage/build.sh
+          git commit -m "Update the pinned appimagetool."
+          ver="$(bash packaging/release/prerelease.sh | tail -n 1)"
+          bash packaging/appimage/build.sh
+          git push --force origin HEAD:refs/heads/deps
+          git push origin "refs/tags/v${ver}"
+          bash packaging/release/publish.sh "v${ver}"

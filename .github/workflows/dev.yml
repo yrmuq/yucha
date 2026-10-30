@@ -1,0 +1,45 @@
+# Copyright (C) 2026 yrmuq
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Manual AppImage from the dev branch.
+# It updates the draft release "yucha dev" and does not replace an X.Y.0 release.
+
+name: Development build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  appimage:
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install file
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y file binutils
+          sudo apt-get install -y libmpv2 || sudo apt-get install -y libmpv-dev
+
+      - name: Build
+        run: bash packaging/appimage/build.sh
+
+      - name: Publish draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          printf '%s\n' 'Development build from dev. Not a release.' > notes.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          gh release delete dev --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
+          git tag -a dev -m "$(cat notes.md)"
+          git push origin refs/tags/dev
+          gh release create dev dist/yucha-x86_64.AppImage \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft \
+            --title "yucha dev" \
+            --notes-file notes.md
