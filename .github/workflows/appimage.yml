@@ -21,11 +21,11 @@ jobs:
   appimage:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: packaging/appimage/build/cache
           key: appimage-deps-20261013
