@@ -135,6 +135,8 @@ class App(object):
             appearance["subFont"] = font_name(command.get("subFont", appearance.get("subFont")))
             appearance["subFontSize"] = bounded_int(command.get("subFontSize"), 55, 8, 120)
             appearance["subColor"] = hex_color(command.get("subColor"), "#FFFFFF")
+            style = command.get("style") or appearance.get("style") or "modern"
+            appearance["style"] = "classic" if style == "classic" else "modern"
             use(language)
             self.client._config["pauseOnLeave"] = True
             self.client._config["fastforwardOnDesync"] = appearance["fastforwardOnDesync"]
@@ -144,9 +146,16 @@ class App(object):
 def main():
     from pathlib import Path
 
-    from PySide6.QtCore import QTimer
-    from PySide6.QtGui import QIcon
+    from PySide6.QtCore import Qt, QTimer
+    from PySide6.QtGui import QGuiApplication, QIcon
     from PySide6.QtWidgets import QApplication
+
+    # The desktop scale is the only scale. Fontconfig's own DPI was a second
+    # one, so the same point size grew again on a 2K screen.
+    os.environ["QT_FONT_DPI"] = "96"
+    QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
+        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+    )
 
     from yucha.configstore import runtime_dir
     from yucha.system import FileBridge, handoff, media_paths

@@ -138,6 +138,8 @@ DEFAULTS = {
         "subFontSize": 55,
         "subColor": "#FFFFFF",
         "panelWidth": 380,
+        "devTab": False,
+        "style": "modern",
     },
 }
 
@@ -169,6 +171,9 @@ class ConfigStore(object):
         look["subColor"] = hex_color(look.get("subColor"), "#FFFFFF")
         look["subFont"] = font_name(look.get("subFont"))
         look["panelWidth"] = bounded_int(look.get("panelWidth"), 380, 240, 900)
+        look["devTab"] = bool(look.get("devTab", False))
+        if look.get("style") not in ("classic", "modern"):
+            look["style"] = "modern"
         if look.get("theme") not in ("auto", "dark", "light"):
             look["theme"] = "dark"
 
