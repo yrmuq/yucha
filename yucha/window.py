@@ -2553,9 +2553,8 @@ class MainWindow(QMainWindow):
             self._refresh_files()
             return
         if fresh:
-            self._current_path = batch[0]["path"]
-            self._paused = True
-            self._refresh_files()
+            # Open paused so the room sees the file. Do not start playback.
+            self._play_path(batch[0]["path"], start=False)
             return
         if staying:
             self._refresh_files()
