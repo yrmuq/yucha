@@ -53,6 +53,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from yucha.configstore import font_name, hex_color, move_entry, wheel_rgb
+from yucha.engine import Picture
 from yucha.i18n import languages, tr, trf
 from yucha.player_ui import room_file_notes
 from yucha.system import Notifier, SleepInhibit, join_line, people_joined
