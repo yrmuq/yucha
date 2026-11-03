@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "third_party" / "syncplay"))
 
+from yucha import newer_stable
 from yucha.configstore import font_name, hex_color, move_entry, wheel_rgb
 from yucha.i18n import system_language
 from yucha.player_ui import room_file_notes
@@ -77,6 +78,17 @@ class Color(unittest.TestCase):
             {"name": "c", "file": "", "size": None, "duration": None},
         ]
         self.assertEqual(room_file_notes(missing), (False, ["c"]))
+
+    def test_update_check_skips_drafts_and_prereleases(self):
+        releases = [
+            {"tag_name": "v0.9.0", "prerelease": True, "draft": False},
+            {"tag_name": "dev", "prerelease": False, "draft": True},
+            {"tag_name": "v0.3.1", "prerelease": False, "draft": False},
+            {"tag_name": "v0.3.2", "prerelease": False, "draft": False},
+        ]
+        self.assertEqual(newer_stable("0.3.1", releases), "0.3.2")
+        self.assertIsNone(newer_stable("0.3.2", releases))
+        self.assertIsNone(newer_stable("0.4.0", releases))
 
 
 if __name__ == "__main__":

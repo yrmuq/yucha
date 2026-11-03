@@ -4,10 +4,13 @@
 the picture into the video area."""
 
 import html
+import json
 import math
 import os
 import re
+import threading
 import time
+import urllib.request
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt, QTimer, Signal
@@ -54,6 +57,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from yucha import __version__, newer_stable
 from yucha.configstore import font_name, hex_color, move_entry, wheel_rgb
 from yucha.engine import Picture
 from yucha.i18n import languages, tr, trf
@@ -855,25 +859,6 @@ class NoticeBoard(QWidget):
         color.setAlpha(232)
         painter.setBrush(color)
         painter.drawRoundedRect(QRectF(x, y, w, h), 8, 8)
-    words = []
-    for span in spans:
-        for part in re.split(r"(\s+)", span["v"]):
-            if part:
-                words.append({"k": span["k"], "v": part})
-    lines = []
-    current = []
-    used = 0
-    for word in words:
-        wide = metrics.horizontalAdvance(word["v"])
-        if current and used + wide > width and word["v"].strip():
-            lines.append(current)
-            current = []
-            used = 0
-        current.append(word)
-        used += wide
-    if current:
-        lines.append(current)
-    return lines or [[{"k": "text", "v": ""}]]
 
 
 class ClickBox(QWidget):
@@ -1610,6 +1595,8 @@ class BoxCheck(QCheckBox):
 
 
 class SettingsDialog(QDialog):
+    release_text = Signal(str)
+
     def __init__(self, appearance, connection, parent, page=1):
         super().__init__(parent)
         self.setWindowTitle(tr(15))
@@ -1617,6 +1604,8 @@ class SettingsDialog(QDialog):
         self.appearance = None
         self.connection = None
         self.wants_connect = False
+        self._checking = False
+        self.release_text.connect(self._show_release)
         root = QVBoxLayout(self)
         tabs = QTabWidget()
         root.addWidget(tabs)
@@ -1777,6 +1766,12 @@ class SettingsDialog(QDialog):
         thanks.setOpenExternalLinks(True)
         about_layout.addWidget(title)
         about_layout.addWidget(version)
+        self.update_button = QPushButton(tr(62))
+        self.update_button.clicked.connect(self._check_release)
+        self.update_note = QLabel("")
+        self.update_note.setWordWrap(True)
+        about_layout.addWidget(self.update_button)
+        about_layout.addWidget(self.update_note)
         about_layout.addStretch(1)
         about_layout.addWidget(thanks)
         about_layout.addStretch(2)
@@ -1803,6 +1798,36 @@ class SettingsDialog(QDialog):
             tabs.widget(index).setMinimumSize(wide, tall)
         tabs.setCurrentIndex(page if 0 <= page < tabs.count() else 0)
         root.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
+
+    def _check_release(self):
+        if self._checking:
+            return
+        self._checking = True
+        self.update_button.setEnabled(False)
+        self.update_note.setText("")
+        threading.Thread(target=self._load_release, daemon=True).start()
+
+    def _load_release(self):
+        try:
+            request = urllib.request.Request(
+                "https://api.github.com/repos/yrmuq/yucha/releases?per_page=30",
+                headers={"Accept": "application/vnd.github+json", "User-Agent": "yucha"},
+            )
+            with urllib.request.urlopen(request, timeout=8) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            found = newer_stable(__version__, payload)
+            text = tr(63) if found is None else trf(64, found)
+        except Exception:
+            text = tr(65)
+        try:
+            self.release_text.emit(text)
+        except RuntimeError:
+            pass
+
+    def _show_release(self, text):
+        self._checking = False
+        self.update_button.setEnabled(True)
+        self.update_note.setText(text)
 
     def _connect_now(self):
         self.wants_connect = True
