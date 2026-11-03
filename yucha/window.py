@@ -1793,8 +1793,7 @@ class SettingsDialog(QDialog):
         repo_line = QHBoxLayout(repo_row)
         repo_line.setContentsMargins(0, 0, 0, 0)
         repo_line.setSpacing(8)
-        repo_line.addWidget(QLabel(tr(66)))
-        repo = QLabel('<a href="https://github.com/yrmuq/yucha">github.com/yrmuq/yucha</a>')
+        repo = QLabel('github: <a href="https://github.com/yrmuq/yucha">yucha</a>')
         repo.setTextFormat(Qt.TextFormat.RichText)
         repo.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
         repo.setOpenExternalLinks(True)
@@ -1898,15 +1897,20 @@ class SettingsDialog(QDialog):
         self._checking = False
         self.update_button.setEnabled(True)
         if token == "fail":
+            self.update_note.setTextFormat(Qt.TextFormat.PlainText)
             self.update_note.setText(tr(65))
             self.download_button.hide()
             return
         if token:
             self._download_version = token
+            self.update_note.setTextFormat(Qt.TextFormat.PlainText)
             self.update_note.setText(trf(64, token))
             self.download_button.show()
             return
-        self.update_note.setText(tr(63))
+        self.update_note.setTextFormat(Qt.TextFormat.RichText)
+        self.update_note.setText(
+            '<span style="color: #3EAD62;">✓ {}</span>'.format(html.escape(tr(63)))
+        )
         self.download_button.hide()
 
     def _connect_now(self):
