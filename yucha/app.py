@@ -109,7 +109,8 @@ class App(object):
                 size = int(command.get("chatFontSize"))
             except (TypeError, ValueError):
                 size = appearance.get("chatFontSize") or 18
-            appearance["chatFontSize"] = max(12, min(48, size))
+            appearance["chatFontSize"] = max(1, min(48, size))
+            appearance["checkUpdates"] = bool(command.get("checkUpdates", appearance.get("checkUpdates", True)))
             if command.get("uiFontSize") is not None:
                 try:
                     ui = int(command.get("uiFontSize"))

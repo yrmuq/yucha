@@ -127,6 +127,7 @@ DEFAULTS = {
         "accentColor2": "#1F6A8A",
         "chatFontSize": 18,
         "uiFontSize": 16,
+        "checkUpdates": True,
         "autoplayNext": False,
         "fastforwardOnDesync": True,
         "slowOnDesync": True,
@@ -162,7 +163,8 @@ class ConfigStore(object):
                 self.data[section].update(loaded[section])
         look = self.data["appearance"]
         look["uiFontSize"] = bounded_int(look.get("uiFontSize"), 16, 1, 32)
-        look["chatFontSize"] = bounded_int(look.get("chatFontSize"), 18, 12, 48)
+        look["chatFontSize"] = bounded_int(look.get("chatFontSize"), 18, 1, 48)
+        look["checkUpdates"] = bool(look.get("checkUpdates", True))
         look["subFontSize"] = bounded_int(look.get("subFontSize"), 55, 8, 120)
         look["subColor"] = hex_color(look.get("subColor"), "#FFFFFF")
         look["subFont"] = font_name(look.get("subFont"))

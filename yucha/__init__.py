@@ -41,3 +41,16 @@ def newer_stable(current, releases):
     if best is None:
         return None
     return ".".join(str(part) for part in best)
+
+
+def fetch_newer_stable(current):
+    """Newest stable release newer than current, or None. Drafts and prereleases are ignored."""
+    import json
+    import urllib.request
+    request = urllib.request.Request(
+        "https://api.github.com/repos/yrmuq/yucha/releases?per_page=30",
+        headers={"Accept": "application/vnd.github+json", "User-Agent": "yucha"},
+    )
+    with urllib.request.urlopen(request, timeout=8) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    return newer_stable(current, payload)

@@ -4,20 +4,19 @@
 the picture into the video area."""
 
 import html
-import json
 import math
 import os
 import re
 import threading
 import time
-import urllib.request
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QBrush,
     QColor,
     QCursor,
+    QDesktopServices,
     QFont,
     QFontDatabase,
     QFontInfo,
@@ -57,7 +56,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from yucha import __version__, newer_stable
+from yucha import __version__, fetch_newer_stable
 from yucha.configstore import font_name, hex_color, move_entry, wheel_rgb
 from yucha.engine import Picture
 from yucha.i18n import languages, tr, trf
@@ -776,7 +775,7 @@ class NoticeBoard(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
         font = QFont(self.font())
-        font.setPixelSize(max(12, int(self.font_px)))
+        font.setPointSize(max(1, int(self.font_px)))
         painter.setFont(font)
         metrics = QFontMetrics(font)
         row_h = metrics.height()
@@ -799,7 +798,6 @@ class NoticeBoard(QWidget):
             left_w = max(left_w, 16 + box_w)
         if self.ready:
             name_w = max(metrics.horizontalAdvance(person["name"]) for person in self.ready)
-            name_w = min(name_w, max(80, int(width * 0.4)))
             dot = max(8, xh)
             box_w = pad * 2 + name_w + 10 + dot
             box_h = pad * 2 + len(self.ready) * row_h
@@ -808,9 +806,8 @@ class NoticeBoard(QWidget):
                 top = y + pad + index * row_h
                 baseline = top + metrics.ascent()
                 ink = self.mine if person["name"] == self.me else self.other
-                shown = metrics.elidedText(person["name"], Qt.TextElideMode.ElideRight, name_w)
                 painter.setPen(QColor(ink))
-                painter.drawText(16 + pad, baseline, shown)
+                painter.drawText(16 + pad, baseline, person["name"])
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.setBrush(QColor("#3EAD62" if person["ready"] else "#C4453C"))
                 cy = top + (row_h - dot) / 2
@@ -1271,7 +1268,8 @@ class UserTable(QWidget):
             if isinstance(widget, QLabel):
                 labels.append(widget)
         for label, full in zip(labels, self._full_names):
-            label.setText(metrics.elidedText(full, Qt.TextElideMode.ElideRight, width))
+            label.setText(full)
+            label.setMinimumWidth(metrics.horizontalAdvance(full) + 8)
 
     def _clear(self, layout):
         while layout.count():
@@ -1594,6 +1592,27 @@ class BoxCheck(QCheckBox):
         painter.end()
 
 
+class RoundSwatch(QPushButton):
+    def __init__(self):
+        super().__init__()
+        self._color = QColor("#FFFFFF")
+        self.setFixedSize(28, 28)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+    def set_color(self, value):
+        self._color = QColor(value)
+        self.update()
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(QPen(QColor("#5C584F"), 1))
+        painter.setBrush(self._color)
+        painter.drawEllipse(QRectF(1, 1, self.width() - 2, self.height() - 2))
+        painter.end()
+
+
 class SettingsDialog(QDialog):
     release_text = Signal(str)
 
@@ -1627,7 +1646,7 @@ class SettingsDialog(QDialog):
         self.accent, accent_row = self._color_row(appearance.get("accentColor"), "#9A3A52", tr(26))
         self.accent2, accent2_row = self._color_row(appearance.get("accentColor2"), "#1F6A8A", tr(27))
         self.chat_size = QuietSpin()
-        self.chat_size.setRange(12, 48)
+        self.chat_size.setRange(1, 48)
         self.chat_size.setValue(int(appearance.get("chatFontSize") or 18))
         self.ui_size = QuietSpin()
         self.ui_size.setRange(1, 32)
@@ -1704,12 +1723,16 @@ class SettingsDialog(QDialog):
         self.fastforward.setChecked(bool(appearance.get("fastforwardOnDesync", True)))
         self.slowdown = BoxCheck()
         self.slowdown.setChecked(bool(appearance.get("slowOnDesync", True)))
+        self.check_updates = BoxCheck()
+        self.check_updates.setChecked(bool(appearance.get("checkUpdates", True)))
         look = _palette(self._look_theme, self._look_accent)
-        for box in (self.autoplay, self.fastforward, self.slowdown):
+        for box in (self.autoplay, self.fastforward, self.slowdown, self.check_updates):
             box.set_colors(look["field"], look["border"], look["on_fg"], look["accent"])
         self._check_row(other_form, tr(31), self.autoplay)
         self._check_row(other_form, tr(32), self.fastforward)
         self._check_row(other_form, tr(33), self.slowdown)
+        self._check_row(other_form, tr(67), self.check_updates)
+        self.check_updates.toggled.connect(lambda _checked: self._sync_update_row())
         stepper = QWidget()
         stepper_row = QHBoxLayout(stepper)
         stepper_row.setContentsMargins(0, 0, 0, 0)
@@ -1766,16 +1789,37 @@ class SettingsDialog(QDialog):
         thanks.setOpenExternalLinks(True)
         about_layout.addWidget(title)
         about_layout.addWidget(version)
+        repo_row = QWidget()
+        repo_line = QHBoxLayout(repo_row)
+        repo_line.setContentsMargins(0, 0, 0, 0)
+        repo_line.setSpacing(8)
+        repo_line.addWidget(QLabel(tr(66)))
+        repo = QLabel('<a href="https://github.com/yrmuq/yucha">github.com/yrmuq/yucha</a>')
+        repo.setTextFormat(Qt.TextFormat.RichText)
+        repo.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        repo.setOpenExternalLinks(True)
+        repo_line.addWidget(repo)
+        repo_line.addStretch(1)
+        about_layout.addWidget(repo_row)
         self.update_button = QPushButton(tr(62))
         self.update_button.clicked.connect(self._check_release)
         self.update_note = QLabel("")
         self.update_note.setWordWrap(True)
+        self.download_button = QPushButton(tr(68))
+        self.download_button.clicked.connect(self._open_release)
+        self.download_button.hide()
+        self._download_version = ""
         about_layout.addWidget(self.update_button)
         about_layout.addWidget(self.update_note)
+        about_layout.addWidget(self.download_button)
         about_layout.addStretch(1)
         about_layout.addWidget(thanks)
         about_layout.addStretch(2)
         tabs.addTab(about, tr(39))
+        window = self.parent()
+        if window is not None and hasattr(window, "release_ready"):
+            window.release_ready.connect(self._on_release_ready)
+        self._sync_update_row()
 
         buttons = QHBoxLayout()
         ok = QPushButton(tr(43))
@@ -1799,6 +1843,38 @@ class SettingsDialog(QDialog):
         tabs.setCurrentIndex(page if 0 <= page < tabs.count() else 0)
         root.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
 
+    def _sync_update_row(self):
+        auto = self.check_updates.isChecked()
+        self.update_button.setVisible(not auto)
+        self.download_button.hide()
+        if not auto:
+            self.update_note.setText("")
+            return
+        window = self.parent()
+        state = getattr(window, "_release", None) if window is not None else None
+        if state and state.get("done"):
+            token = "fail" if state.get("error") else (state.get("version") or "")
+            self._show_release(token)
+            return
+        if window is not None and getattr(window, "_release_running", False):
+            self.update_note.setText("")
+            return
+        self.update_note.setText("")
+        self._check_release()
+
+    def _on_release_ready(self):
+        if not self.check_updates.isChecked():
+            return
+        state = getattr(self.parent(), "_release", None) or {}
+        token = "fail" if state.get("error") else (state.get("version") or "")
+        self._show_release(token)
+
+    def _open_release(self):
+        version = self._download_version
+        if not version:
+            return
+        QDesktopServices.openUrl(QUrl("https://github.com/yrmuq/yucha/releases/tag/v" + version))
+
     def _check_release(self):
         if self._checking:
             return
@@ -1809,25 +1885,29 @@ class SettingsDialog(QDialog):
 
     def _load_release(self):
         try:
-            request = urllib.request.Request(
-                "https://api.github.com/repos/yrmuq/yucha/releases?per_page=30",
-                headers={"Accept": "application/vnd.github+json", "User-Agent": "yucha"},
-            )
-            with urllib.request.urlopen(request, timeout=8) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-            found = newer_stable(__version__, payload)
-            text = tr(63) if found is None else trf(64, found)
+            found = fetch_newer_stable(__version__)
+            token = found or ""
         except Exception:
-            text = tr(65)
+            token = "fail"
         try:
-            self.release_text.emit(text)
+            self.release_text.emit(token)
         except RuntimeError:
             pass
 
-    def _show_release(self, text):
+    def _show_release(self, token):
         self._checking = False
         self.update_button.setEnabled(True)
-        self.update_note.setText(text)
+        if token == "fail":
+            self.update_note.setText(tr(65))
+            self.download_button.hide()
+            return
+        if token:
+            self._download_version = token
+            self.update_note.setText(trf(64, token))
+            self.download_button.show()
+            return
+        self.update_note.setText(tr(63))
+        self.download_button.hide()
 
     def _connect_now(self):
         self.wants_connect = True
@@ -1860,6 +1940,7 @@ class SettingsDialog(QDialog):
             "volumeMax": self.volume_max,
             "volumeOverlay": self.overlay.currentData() or "horizontal",
             "language": self.language.currentData() or "English",
+            "checkUpdates": self.check_updates.isChecked(),
         }
         self.connection = {
             "host": self.host.text(),
@@ -1872,17 +1953,10 @@ class SettingsDialog(QDialog):
 
     def _color_row(self, value, default, title):
         edit = QLineEdit(hex_color(value, default))
-        button = QPushButton()
-        button.setObjectName("swatch")
-        button.setFixedSize(28, 28)
-        button.setCursor(Qt.CursorShape.PointingHandCursor)
-        button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        button = RoundSwatch()
 
         def paint():
-            shown = hex_color(edit.text(), default)
-            button.setStyleSheet(
-                "background: {}; border: 1px solid #5C584F; padding: 0;".format(shown)
-            )
+            button.set_color(hex_color(edit.text(), default))
 
         paint()
         edit.textChanged.connect(lambda _text: paint())
@@ -1937,6 +2011,8 @@ class SettingsDialog(QDialog):
 
 
 class MainWindow(QMainWindow):
+    release_ready = Signal()
+
     def __init__(self, app):
         super().__init__()
         self.app = app
@@ -1994,6 +2070,29 @@ class MainWindow(QMainWindow):
         self._knob_timer.setInterval(33)
         self._knob_timer.timeout.connect(self._move_knob)
         self._knob_timer.start()
+        self._release = {"done": False, "version": None, "error": False}
+        self._release_running = False
+        self._begin_release_check()
+
+    def _begin_release_check(self):
+        if not self.app.store.data["appearance"].get("checkUpdates", True):
+            return
+        if self._release_running or self._release.get("done"):
+            return
+        self._release_running = True
+        threading.Thread(target=self._release_worker, daemon=True).start()
+
+    def _release_worker(self):
+        try:
+            found = fetch_newer_stable(__version__)
+            self._release = {"done": True, "version": found, "error": False}
+        except Exception:
+            self._release = {"done": True, "version": None, "error": True}
+        self._release_running = False
+        try:
+            self.release_ready.emit()
+        except RuntimeError:
+            pass
 
     def _build(self):
         root = QWidget()
@@ -3397,9 +3496,7 @@ class MainWindow(QMainWindow):
         appearance = self.app.store.data["appearance"]
         theme = _shown_theme(appearance.get("theme"))
         point = int(appearance.get("chatFontSize") or 18)
-        measure = QFont(self.font())
-        measure.setPointSize(max(10, min(48, point)))
-        font_px = max(14, QFontMetrics(measure).height())
+        point = max(1, min(48, point))
         page = _palette(theme, appearance.get("accentColor"))
         other = str(appearance.get("accentColor2") or "#1F6A8A")
         if len(other) != 7 or not other.startswith("#"):
@@ -3415,7 +3512,7 @@ class MainWindow(QMainWindow):
         if differ:
             notices.append(tr(11))
         notices.extend(trf(58, name) for name in missing)
-        self.board.show_state(font_px, page, me, page["accent"], other, notices, people, self._osd)
+        self.board.show_state(point, page, me, page["accent"], other, notices, people, self._osd)
 
     def accept_files(self, paths, token=""):
         self._add_dropped(list(paths))
