@@ -2,10 +2,17 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import os
+import sys
 import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "third_party" / "syncplay"))
 
 from yucha.configstore import font_name, hex_color, move_entry, wheel_rgb
 from yucha.i18n import system_language
+from yucha.player_ui import room_file_notes
 
 
 class Color(unittest.TestCase):
@@ -48,6 +55,28 @@ class Color(unittest.TestCase):
                 os.environ.pop("LANG", None)
             else:
                 os.environ["LANG"] = previous
+
+    def test_room_files_compare_size_and_duration_not_the_name(self):
+        same = [
+            {"name": "a", "file": "one.mkv", "size": 10, "duration": 90.0},
+            {"name": "b", "file": "other.mkv", "size": 10, "duration": 90.0},
+        ]
+        self.assertEqual(room_file_notes(same), (False, []))
+        different_size = [
+            {"name": "a", "file": "one.mkv", "size": 10, "duration": 90.0},
+            {"name": "b", "file": "one.mkv", "size": 11, "duration": 90.0},
+        ]
+        self.assertEqual(room_file_notes(different_size), (True, []))
+        close_duration = [
+            {"name": "a", "size": 10, "duration": 90.0},
+            {"name": "b", "size": 10, "duration": 92.0},
+        ]
+        self.assertEqual(room_file_notes(close_duration)[0], True)
+        missing = [
+            {"name": "a", "size": 10, "duration": 90.0},
+            {"name": "c", "file": "", "size": None, "duration": None},
+        ]
+        self.assertEqual(room_file_notes(missing), (False, ["c"]))
 
 
 if __name__ == "__main__":

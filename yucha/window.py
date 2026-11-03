@@ -54,6 +54,7 @@ from PySide6.QtWidgets import (
 )
 from yucha.configstore import font_name, hex_color, move_entry, wheel_rgb
 from yucha.i18n import languages, tr, trf
+from yucha.player_ui import room_file_notes
 from yucha.system import Notifier, SleepInhibit, join_line, people_joined
 
 HIDE_AFTER = 3.0
@@ -2155,28 +2156,6 @@ class MainWindow(QMainWindow):
         self._fill_tracks()
         self._place_overlays()
 
-    def _files_differ(self):
-        people = self._users
-        if len(people) < 2:
-            return False
-        known = []
-        missing = False
-        for person in people:
-            try:
-                value = float(person.get("duration"))
-            except (TypeError, ValueError):
-                value = 0
-            if value > 0:
-                known.append(round(value))
-            else:
-                missing = True
-        if missing and known:
-            return True
-        if len(known) < 2:
-            return False
-        base = known[0]
-        return any(abs(value - base) >= 3 for value in known[1:])
-
     def _bar_height(self):
         return BAR_HEIGHT
 
@@ -3078,18 +3057,23 @@ class MainWindow(QMainWindow):
         row_h = metrics.height()
         y = 16
         pad = 8
-        if self._files_differ():
-            notice = tr(11)
-            notice_w = metrics.horizontalAdvance(notice) + pad * 2
-            notice_h = row_h + pad * 2
+        differ, missing = room_file_notes(self._users)
+        notices = []
+        if differ:
+            notices.append(tr(11))
+        notices.extend(trf(58, name) for name in missing)
+        if notices:
+            notice_w = max(metrics.horizontalAdvance(line) for line in notices) + pad * 2
+            notice_h = pad * 2 + len(notices) * row_h
             lines.append(
                 "{{\\an7\\pos({},{})\\bord0\\shad0\\1c&H{}&\\p1}}{}".format(
                     16, 16, _bgr(page["bg"]), _round_box(notice_w, notice_h, 8)
                 )
             )
+            body = "\\N".join(_ass_escape(line) for line in notices)
             lines.append(
                 "{{\\an4\\pos({},{})\\bord0\\shad0\\fs{}\\1c&H{}&}}{}".format(
-                    16 + pad, int(16 + notice_h / 2), size, color, _ass_escape(notice)
+                    16 + pad, int(16 + notice_h / 2), size, color, body
                 )
             )
         if people:

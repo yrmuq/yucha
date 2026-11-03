@@ -11,6 +11,52 @@ from syncplay.messages import getMessage
 _CHAT = re.compile(r"^<([^>\n]+)> (.*)$", re.DOTALL)
 
 
+def room_file_notes(people):
+    """Whether loaded files differ, and who has not opened one.
+
+    Size and duration are the whole check. The file name is ignored.
+    """
+    if len(people) < 2:
+        return False, []
+    loaded = []
+    missing = []
+    for person in people:
+        size = _file_size(person.get("size"))
+        duration = _file_duration(person.get("duration"))
+        if size is None and duration is None:
+            missing.append(str(person.get("name") or ""))
+            continue
+        if size is None or duration is None:
+            continue
+        loaded.append((size, duration))
+    differ = len(loaded) >= 2 and any(item != loaded[0] for item in loaded[1:])
+    return differ, [name for name in missing if name]
+
+
+def _file_size(value):
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        size = int(value)
+    except (TypeError, ValueError):
+        return None
+    if size < 0:
+        return None
+    return size
+
+
+def _file_duration(value):
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        duration = float(value)
+    except (TypeError, ValueError):
+        return None
+    if duration <= 0:
+        return None
+    return round(duration, 3)
+
+
 class PlayerUI(object):
     """Methods Syncplay's UiManager expects. Unknown calls are ignored."""
 
