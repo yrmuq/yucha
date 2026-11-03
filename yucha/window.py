@@ -54,6 +54,7 @@ from PySide6.QtWidgets import (
     QSlider,
     QSpinBox,
     QStyledItemDelegate,
+    QTabBar,
     QTabWidget,
     QTextEdit,
     QVBoxLayout,
@@ -75,7 +76,7 @@ PANEL_MIN = 240
 PANEL_MAX = 900
 EDGE_PX = 12
 GRIP_PX = 8
-BAR_HEIGHT = 72
+BAR_HEIGHT = 57
 POP_GAP = 8
 FLOAT_GAP = 12
 CHAT_EXTRA = 52
@@ -2074,7 +2075,7 @@ class SettingsDialog(QDialog):
             "ui": {"size": 16, "bold": False, "family": family, "dark": dark, "light": light},
             "osd": {"size": 18, "bold": False, "family": family, "dark": dark, "light": light},
             "sub": {"size": 55, "bold": False, "family": "sans-serif", "dark": white, "light": white},
-            "titles": {"size": 14, "bold": True, "family": family, "dark": dark, "light": light},
+            "titles": {"size": 11, "bold": True, "family": family, "dark": dark, "light": light},
             "face": face,
             "panel": PANEL_WIDTH,
             "bar": BAR_HEIGHT,
@@ -3208,7 +3209,7 @@ class MainWindow(QMainWindow):
         theme = _shown_theme(self.app.store.data["appearance"].get("theme"))
         ink = _dev_ink(spec, theme)
         css = "background: transparent; font-size: {}pt; font-weight: {};".format(
-            int(spec.get("size") or 14),
+            int(spec.get("size") or 11),
             700 if spec.get("bold", True) else 400,
         )
         if spec.get("family"):
