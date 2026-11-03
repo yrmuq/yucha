@@ -2001,23 +2001,27 @@ class SettingsDialog(QDialog):
             wide = max(wide, hint.width())
         self._page_h = max(320, self._theme_page.sizeHint().height())
         self._page_w = min(640, max(420, wide if 0 < wide < 2000 else 520))
-        index = self.tabs.count() - 1
-        while index >= 0:
-            page = self.tabs.widget(index)
-            if page is self._dev_gap or isinstance(page, QScrollArea):
-                index -= 1
+        kept = []
+        for index in range(self.tabs.count()):
+            kept.append((self.tabs.tabText(index), self.tabs.widget(index), self.tabs.isTabEnabled(index)))
+        while self.tabs.count():
+            self.tabs.removeTab(0)
+        self._tabbar.spacer = -1
+        for title, page, enabled in kept:
+            if page is self._dev_gap:
+                self.tabs.addTab(page, "")
+                gap = self.tabs.count() - 1
+                self.tabs.setTabEnabled(gap, False)
+                self._tabbar.spacer = gap
                 continue
-            title = self.tabs.tabText(index)
-            enabled = self.tabs.isTabEnabled(index)
             area = self._scroll_page(page)
-            self.tabs.removeTab(index)
-            self.tabs.insertTab(index, area, title)
-            self.tabs.setTabEnabled(index, enabled)
+            self.tabs.addTab(area, title)
+            if not enabled:
+                self.tabs.setTabEnabled(self.tabs.count() - 1, False)
             if page is self._about_page:
                 self._about_page = area
             if page is self._dev_page:
                 self._dev_page = area
-            index -= 1
         self.tabs.setCurrentIndex(self._open_page if 0 <= self._open_page < self.tabs.count() else 0)
         root.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
 
@@ -2032,6 +2036,9 @@ class SettingsDialog(QDialog):
         area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         area.setWidget(page)
         area.setFixedSize(self._page_w, self._page_h)
+        area.setAutoFillBackground(False)
+        area.viewport().setAutoFillBackground(False)
+        area.viewport().setStyleSheet("background: transparent;")
         bar = EdgeScroll(Qt.Orientation.Vertical, area)
         bar.attach(area.verticalScrollBar())
         area.viewport().installEventFilter(self)
