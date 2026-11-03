@@ -10,7 +10,7 @@ import re
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QPoint, QPointF, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QBrush,
     QColor,
@@ -502,12 +502,17 @@ def _n(value):
 _TIME = r"\d+:\d+(?::\d+)?"
 
 
+def _ease(done):
+    return done * done * (3 - 2 * done)
+
+
 def _slide_x(now, born, leave, target, edge):
     """0 is off the right edge. 1 is the resting place."""
     if leave is None:
         done = min(1.0, max(0.0, (now - born) / SLIDE))
     else:
         done = 1.0 - min(1.0, max(0.0, (now - leave) / SLIDE))
+    done = _ease(done)
     return int(round(edge + (target - edge) * done))
 
 
@@ -529,39 +534,45 @@ def _status_spans(text):
     rules = (
         (r"^(.+?) paused at (" + _TIME + r")$", lambda m: (
             ("nick", m.group(1)),
-            ("mark", "||"),
+            ("text", ": "),
+            ("mark", "pause"),
             ("text", " " + tr(59) + " " + m.group(2)),
         )),
         (r"^(.+?) unpaused$", lambda m: (
             ("nick", m.group(1)),
-            ("mark", " ▶"),
+            ("text", ": "),
+            ("mark", "play"),
+            ("text", " " + tr(61)),
         )),
         (r"^(.+?) jumped from (" + _TIME + r") to (" + _TIME + r")$", lambda m: (
             ("nick", m.group(1)),
-            ("text", " " + m.group(2)),
-            ("mark", " → "),
-            ("text", m.group(3)),
+            ("text", ": " + m.group(2) + " "),
+            ("mark", "jump"),
+            ("text", " " + m.group(3)),
         )),
         (r"^Rewinded due to time difference with (.+)$", lambda m: (
-            ("mark", "◀◀ "),
             ("nick", m.group(1)),
+            ("text", ": "),
+            ("mark", "back"),
         )),
         (r"^Fast-forwarded due to time difference with (.+)$", lambda m: (
-            ("mark", "▶▶ "),
             ("nick", m.group(1)),
+            ("text", ": "),
+            ("mark", "forward"),
         )),
         (r"^Slowing down due to time difference with (.+)$", lambda m: (
-            ("mark", "↓ "),
             ("nick", m.group(1)),
+            ("text", ": "),
+            ("mark", "down"),
         )),
         (r"^Reverting speed back to normal$", lambda m: (
-            ("mark", "1× "),
-            ("text", tr(60)),
+            ("text", "1× " + tr(60)),
         )),
         (r"^(.+?) is playing '(.+?)' \([^)]*\)(?: in room: '.*')?$", lambda m: (
             ("nick", m.group(1)),
-            ("mark", " ▶ "),
-            ("text", m.group(2)),
+            ("text", ": "),
+            ("mark", "play"),
+            ("text", " " + tr(61) + " " + m.group(2)),
         )),
     )
     for pattern, build in rules:
@@ -580,12 +591,270 @@ def _spans_html(spans, me, mine, other, bad="#E07474"):
             bits.append('<span style="color: {}; font-weight: 700;">{}</span>'.format(color, safe))
         elif span["k"] == "leave":
             bits.append('<span style="color: {};">{}</span>'.format(bad, safe))
+        elif span["k"] == "mark":
+            glyph = html.escape(_MARK_GLYPH.get(span["v"], ""), quote=False)
+            bits.append('<span style="font-size: 0.5em; vertical-align: middle;">{}</span>'.format(glyph))
         else:
             bits.append(safe)
     return "".join(bits)
 
 
-def _wrap_spans(spans, metrics, width):
+_MARK_GLYPH = {
+    "play": "▶",
+    "pause": "❚❚",
+    "back": "◀◀",
+    "forward": "▶▶",
+    "down": "↓",
+    "jump": "→",
+}
+
+
+def _mark_width(kind, xh):
+    if kind == "pause":
+        return max(8, int(round(xh * 1.2)))
+    if kind in ("back", "forward"):
+        return max(8, int(round(xh * 1.45)))
+    if kind == "jump":
+        return max(8, int(round(xh * 1.15)))
+    return max(6, int(round(xh * 0.9)))
+
+
+def _piece_width(piece, metrics):
+    if piece["k"] == "mark":
+        return _mark_width(piece["v"], max(1, metrics.xHeight()))
+    return metrics.horizontalAdvance(piece["v"])
+
+
+def _toast_lines(spans, metrics, width):
+    words = []
+    for span in spans:
+        if span["k"] == "mark":
+            words.append(span)
+            continue
+        for part in re.split(r"(\s+)", span["v"]):
+            if part:
+                words.append({"k": span["k"], "v": part})
+    if not words:
+        return [[{"k": "text", "v": ""}]]
+    if sum(_piece_width(word, metrics) for word in words) <= width:
+        return [words]
+    lines = []
+    current = []
+    used = 0
+    for word in words:
+        wide = _piece_width(word, metrics)
+        if current and used + wide > width and word["v"].strip():
+            lines.append(current)
+            current = []
+            used = 0
+        current.append(word)
+        used += wide
+    if current:
+        lines.append(current)
+    return lines or [[{"k": "text", "v": ""}]]
+
+
+def _paint_mark(painter, kind, band, color):
+    painter.save()
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(color))
+    x = band.x()
+    y = band.y()
+    w = band.width()
+    h = band.height()
+    if kind == "pause":
+        gap = max(2.0, h * 0.22)
+        bar = max(2.0, (w - gap) / 2)
+        radius = max(0.6, h * 0.12)
+        painter.drawRoundedRect(QRectF(x, y, bar, h), radius, radius)
+        painter.drawRoundedRect(QRectF(x + bar + gap, y, bar, h), radius, radius)
+    elif kind == "back":
+        step = w / 2
+        for index in (0, 1):
+            left = x + index * step
+            path = QPainterPath()
+            path.moveTo(left + step * 0.85, y)
+            path.lineTo(left, y + h / 2)
+            path.lineTo(left + step * 0.85, y + h)
+            path.closeSubpath()
+            painter.drawPath(path)
+    elif kind == "forward":
+        step = w / 2
+        for index in (0, 1):
+            left = x + index * step
+            path = QPainterPath()
+            path.moveTo(left, y)
+            path.lineTo(left + step * 0.85, y + h / 2)
+            path.lineTo(left, y + h)
+            path.closeSubpath()
+            painter.drawPath(path)
+    elif kind == "down":
+        path = QPainterPath()
+        path.moveTo(x, y)
+        path.lineTo(x + w, y)
+        path.lineTo(x + w / 2, y + h)
+        path.closeSubpath()
+        painter.drawPath(path)
+    elif kind == "jump":
+        mid = y + h / 2
+        pen = QPen(QColor(color), max(1.4, h * 0.16))
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.drawLine(QPointF(x, mid), QPointF(x + w * 0.55, mid))
+        painter.setPen(Qt.PenStyle.NoPen)
+        path = QPainterPath()
+        path.moveTo(x + w, mid)
+        path.lineTo(x + w * 0.42, y)
+        path.lineTo(x + w * 0.42, y + h)
+        path.closeSubpath()
+        painter.drawPath(path)
+    else:
+        path = QPainterPath()
+        path.moveTo(x, y)
+        path.lineTo(x, y + h)
+        path.lineTo(x + w, y + h / 2)
+        path.closeSubpath()
+        painter.drawPath(path)
+    painter.restore()
+
+
+class NoticeBoard(QWidget):
+    """Toasts and the room notes drawn by Qt, so the slide is not tied to a video frame."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setObjectName("notices")
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAutoFillBackground(False)
+        self.font_px = 18
+        self.page = _palette("dark")
+        self.me = ""
+        self.mine = "#9A3A52"
+        self.other = "#1F6A8A"
+        self.notices = []
+        self.ready = []
+        self.toasts = []
+        self._timer = QTimer(self)
+        self._timer.setInterval(16)
+        self._timer.timeout.connect(self._tick)
+
+    def show_state(self, font_px, page, me, mine, other, notices, ready, toasts):
+        self.font_px = font_px
+        self.page = page
+        self.me = me
+        self.mine = mine
+        self.other = other
+        self.notices = notices
+        self.ready = ready
+        self.toasts = toasts
+        self._tick()
+
+    def _moving(self, now):
+        for item in self.toasts:
+            leave = item.get("leave")
+            if leave is not None or now - item["born"] < SLIDE:
+                return True
+        return False
+
+    def _tick(self):
+        now = time.monotonic()
+        if self._moving(now):
+            if not self._timer.isActive():
+                self._timer.start()
+        elif self._timer.isActive():
+            self._timer.stop()
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        font = QFont(self.font())
+        font.setPixelSize(max(12, int(self.font_px)))
+        painter.setFont(font)
+        metrics = QFontMetrics(font)
+        row_h = metrics.height()
+        xh = max(4, metrics.xHeight())
+        pad = 8
+        width = max(1, self.width())
+        now = time.monotonic()
+        y = 16
+        left_w = 0
+        if self.notices:
+            text_w = max(metrics.horizontalAdvance(line) for line in self.notices)
+            box_w = text_w + pad * 2
+            box_h = pad * 2 + len(self.notices) * row_h
+            self._box(painter, 16, y, box_w, box_h)
+            painter.setPen(QColor(self.page["fg"]))
+            for index, line in enumerate(self.notices):
+                baseline = y + pad + index * row_h + metrics.ascent()
+                painter.drawText(16 + pad, baseline, line)
+            y += box_h + 8
+            left_w = max(left_w, 16 + box_w)
+        if self.ready:
+            name_w = max(metrics.horizontalAdvance(person["name"]) for person in self.ready)
+            name_w = min(name_w, max(80, int(width * 0.4)))
+            dot = max(8, xh)
+            box_w = pad * 2 + name_w + 10 + dot
+            box_h = pad * 2 + len(self.ready) * row_h
+            self._box(painter, 16, y, box_w, box_h)
+            for index, person in enumerate(self.ready):
+                top = y + pad + index * row_h
+                baseline = top + metrics.ascent()
+                ink = self.mine if person["name"] == self.me else self.other
+                shown = metrics.elidedText(person["name"], Qt.TextElideMode.ElideRight, name_w)
+                painter.setPen(QColor(ink))
+                painter.drawText(16 + pad, baseline, shown)
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor("#3EAD62" if person["ready"] else "#C4453C"))
+                cy = top + (row_h - dot) / 2
+                painter.drawEllipse(QRectF(16 + pad + name_w + 10, cy, dot, dot))
+            left_w = max(left_w, 16 + box_w)
+        room = max(120, width - left_w - 32)
+        floor = max(24, self.height() - BAR_HEIGHT - 8)
+        y = 16
+        for item in self.toasts:
+            lines = _toast_lines(item["spans"], metrics, room)
+            widest = 0
+            for line in lines:
+                widest = max(widest, sum(_piece_width(piece, metrics) for piece in line))
+            box_w = min(room + pad * 2, widest + pad * 2)
+            box_h = pad * 2 + max(1, len(lines)) * row_h
+            if y + box_h > floor:
+                break
+            target = max(8, width - 8 - box_w)
+            draw_x = _slide_x(now, item["born"], item.get("leave"), target, width)
+            self._box(painter, draw_x, y, box_w, box_h)
+            text_y = y + pad
+            for line in lines:
+                baseline = text_y + metrics.ascent()
+                band_top = baseline - xh
+                cursor = draw_x + pad
+                for piece in line:
+                    if piece["k"] == "mark":
+                        wide = _mark_width(piece["v"], xh)
+                        ink = self.page["fg"]
+                        _paint_mark(painter, piece["v"], QRectF(cursor, band_top, wide, xh), ink)
+                        cursor += wide
+                        continue
+                    ink = self.mine if piece["k"] == "nick" and piece["v"] == self.me else self.page["fg"]
+                    if piece["k"] == "nick" and piece["v"] != self.me:
+                        ink = self.other
+                    painter.setPen(QColor(ink))
+                    painter.drawText(cursor, baseline, piece["v"])
+                    cursor += metrics.horizontalAdvance(piece["v"])
+                text_y += row_h
+            y += box_h + 6
+        painter.end()
+
+    def _box(self, painter, x, y, w, h):
+        painter.setPen(Qt.PenStyle.NoPen)
+        color = QColor(self.page["bg"])
+        color.setAlpha(232)
+        painter.setBrush(color)
+        painter.drawRoundedRect(QRectF(x, y, w, h), 8, 8)
     words = []
     for span in spans:
         for part in re.split(r"(\s+)", span["v"]):
@@ -1712,6 +1981,7 @@ class MainWindow(QMainWindow):
         column = QWidget()
         column.setObjectName("stage")
         self.stage = column
+        self.board = NoticeBoard(column)
         col = QVBoxLayout(column)
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(0)
@@ -1928,9 +2198,6 @@ class MainWindow(QMainWindow):
         changed = getattr(hints, "colorSchemeChanged", None)
         if changed is not None:
             changed.connect(self._on_system_theme)
-        self._osd_timer = QTimer(self)
-        self._osd_timer.setInterval(16)
-        self._osd_timer.timeout.connect(self._refresh_osd)
         self._chat_keys = []
         for key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             shortcut = QShortcut(QKeySequence(key), self)
@@ -2011,6 +2278,8 @@ class MainWindow(QMainWindow):
             min(box_width, width),
             box_height,
         )
+        self.board.setGeometry(0, 0, width, height)
+        self.board.raise_()
         self.bar.raise_()
         self.panel.raise_()
         if self._chat_open:
@@ -3007,7 +3276,8 @@ class MainWindow(QMainWindow):
         else:
             self._append_chat_line(spans)
         if not _startup_line(text):
-            self._osd.append((time.monotonic(), spans, None))
+            self._osd.append({"born": time.monotonic(), "spans": spans, "leave": None})
+            self._refresh_osd()
         me = str(self.app.store.data["connection"].get("name") or "")
         if user and user != me:
             self._notify_background(user, text)
@@ -3082,179 +3352,45 @@ class MainWindow(QMainWindow):
         self.elapsed.setText(_clock(shown))
 
     def _refresh_osd(self):
-        if not self.ctl:
-            return
+        if self.ctl is not None and not getattr(self, "_osd_cleared", False):
+            try:
+                self.ctl.command("osd-overlay", 1, "none", "", 1, 1, 0)
+            except Exception:
+                pass
+            self._osd_cleared = True
         now = time.monotonic()
         kept = []
         for item in self._osd:
-            born, spans = item[0], item[1]
-            leave = item[2] if len(item) > 2 else None
-            if leave is None and now - born >= CHAT_LIFE:
-                leave = now
-            if leave is not None and now - leave >= SLIDE:
+            if not isinstance(item, dict):
+                item = {"born": item[0], "spans": item[1], "leave": item[2] if len(item) > 2 else None}
+            if item.get("leave") is None and now - item["born"] >= CHAT_LIFE:
+                item["leave"] = now
+            if item.get("leave") is not None and now - item["leave"] >= SLIDE:
                 continue
-            kept.append((born, spans, leave))
+            kept.append(item)
         self._osd = kept
         appearance = self.app.store.data["appearance"]
         theme = _shown_theme(appearance.get("theme"))
         point = int(appearance.get("chatFontSize") or 18)
         measure = QFont(self.font())
         measure.setPointSize(max(10, min(48, point)))
-        size = max(14, QFontMetrics(measure).height())
-        measure.setPixelSize(size)
-        metrics = QFontMetrics(measure)
+        font_px = max(14, QFontMetrics(measure).height())
         page = _palette(theme, appearance.get("accentColor"))
-        color = _bgr(page["fg"])
-        accent = _bgr(page["accent"])
         other = str(appearance.get("accentColor2") or "#1F6A8A")
         if len(other) != 7 or not other.startswith("#"):
             other = "#1F6A8A"
-        accent2 = _bgr(other)
         me = str(self.app.store.data["connection"].get("name") or "")
-        width = max(1, self.video.width())
-        height = max(1, self.video.height())
         people = []
         for person in self._users:
-            name = person["name"]
-            ready = person["ready"]
-            if ready and now >= self._ready_until.get(name, 0):
+            if person["ready"] and now >= self._ready_until.get(person["name"], 0):
                 continue
             people.append(person)
-        if people:
-            if self._ready_leave is not None or self._ready_born is None:
-                self._ready_born = now
-                self._ready_leave = None
-            self._ready_people = people
-        elif self._ready_people and self._ready_leave is None:
-            self._ready_leave = now
-        if self._ready_leave is not None and now - self._ready_leave >= SLIDE:
-            self._ready_people = []
-            self._ready_born = None
-            self._ready_leave = None
-        lines = []
-        row_h = metrics.height()
-        y = 16
-        pad = 8
         differ, missing = room_file_notes(self._users)
         notices = []
         if differ:
             notices.append(tr(11))
         notices.extend(trf(58, name) for name in missing)
-        if notices:
-            notice_w = max(metrics.horizontalAdvance(line) for line in notices) + pad * 2
-            notice_h = pad * 2 + len(notices) * row_h
-            lines.append(
-                "{{\\an7\\pos({},{})\\bord0\\shad0\\1c&H{}&\\p1}}{}".format(
-                    16, 16, _bgr(page["bg"]), _round_box(notice_w, notice_h, 8)
-                )
-            )
-            body = "\\N".join(_ass_escape(line) for line in notices)
-            lines.append(
-                "{{\\an4\\pos({},{})\\bord0\\shad0\\fs{}\\1c&H{}&}}{}".format(
-                    16 + pad, int(16 + notice_h / 2), size, color, body
-                )
-            )
-        if self._ready_people:
-            widest = max(metrics.horizontalAdvance(person["name"]) for person in self._ready_people)
-            circle_w = max(metrics.height() + 8, 28)
-            name_w = widest + 16
-            ready_w = min(max(96, width - 16), name_w + circle_w + pad * 2)
-            inner = ready_w - pad * 2
-            name_col = max(24, inner - circle_w)
-            ready_h = pad * 2 + len(self._ready_people) * row_h
-            ready_x = max(8, width - 8 - ready_w)
-            draw_x = _slide_x(now, self._ready_born or now, self._ready_leave, ready_x, width)
-            lines.append(
-                "{{\\an7\\pos({},{})\\bord0\\shad0\\1c&H{}&\\p1}}{}".format(
-                    draw_x, y, _bgr(page["bg"]), _round_box(ready_w, ready_h, 8)
-                )
-            )
-            text_y = y + pad
-            for person in self._ready_people:
-                dot = "00FF00" if person["ready"] else "0000FF"
-                ink = accent if person["name"] == me else accent2
-                shown = metrics.elidedText(person["name"], Qt.TextElideMode.ElideRight, max(8, name_col - 4))
-                mid_y = int(text_y + row_h / 2)
-                lines.append(
-                    "{{\\an5\\pos({},{})\\bord0\\shad0\\fs{}\\1c&H{}&}}{}".format(
-                        int(draw_x + pad + name_col / 2), mid_y, size, ink, _ass_escape(shown)
-                    )
-                )
-                lines.append(
-                    "{{\\an5\\pos({},{})\\bord0\\shad0\\fs{}\\1c&H{}&}}●".format(
-                        int(draw_x + pad + name_col + (inner - name_col) / 2), mid_y, size, dot
-                    )
-                )
-                text_y += row_h
-            y += ready_h + 8
-        floor = max(24, height - BAR_HEIGHT - 8)
-        box_w = min(CHAT_BOX, max(160, width - 24))
-        x = max(8, width - 8 - box_w)
-        inner = max(40, box_w - pad * 2)
-        mark = max(8, int(round(size * 0.7)))
-        for born, spans, leave in self._osd:
-            wrapped = _wrap_spans(spans, metrics, inner)
-            block_h = pad * 2 + max(1, len(wrapped)) * row_h
-            if y + block_h > floor:
-                break
-            draw_x = _slide_x(now, born, leave, x, width)
-            lines.append(
-                "{{\\an7\\pos({},{})\\bord0\\shad0\\1c&H{}&\\p1}}{}".format(
-                    draw_x, y, _bgr(page["bg"]), _round_box(box_w, block_h, 8)
-                )
-            )
-            body = []
-            for line in wrapped:
-                bits = []
-                for span in line:
-                    if span["k"] == "nick":
-                        ink = accent if span["v"] == me else accent2
-                    else:
-                        ink = color
-                    # A symbol glyph is taller than the letters at the same size.
-                    span_size = mark if span["k"] == "mark" else size
-                    bits.append("{{\\fs{}\\1c&H{}&}}{}".format(span_size, ink, _ass_escape(span["v"])))
-                body.append("".join(bits))
-            lines.append(
-                "{{\\an4\\pos({},{})\\p0\\bord0\\shad0\\q2\\fs{}\\1c&H{}&}}{}".format(
-                    draw_x + pad, int(y + block_h / 2), size, color, "\\N".join(body)
-                )
-            )
-            y += block_h + 6
-        self._keep_osd_moving(now)
-        data = "\n".join(lines)
-        if data == getattr(self, "_osd_sent", None):
-            return
-        self._osd_sent = data
-        try:
-            self.ctl.command(
-                "osd-overlay",
-                1,
-                "ass-events" if data else "none",
-                data,
-                int(width),
-                int(height),
-                0,
-            )
-        except Exception:
-            pass
-
-    def _keep_osd_moving(self, now):
-        timer = getattr(self, "_osd_timer", None)
-        if timer is None:
-            return
-        moving = False
-        if self._ready_born is not None and (
-            self._ready_leave is not None or now - self._ready_born < SLIDE
-        ):
-            moving = True
-        for born, _spans, leave in self._osd:
-            if leave is not None or now - born < SLIDE:
-                moving = True
-        if moving and not timer.isActive():
-            timer.start()
-        elif not moving and timer.isActive():
-            timer.stop()
+        self.board.show_state(font_px, page, me, page["accent"], other, notices, people, self._osd)
 
     def accept_files(self, paths, token=""):
         self._add_dropped(list(paths))
