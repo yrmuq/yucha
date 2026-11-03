@@ -28,6 +28,7 @@ from PySide6.QtGui import (
     QPainterPath,
     QPalette,
     QPen,
+    QPixmap,
     QShortcut,
 )
 from PySide6.QtWidgets import (
@@ -35,6 +36,8 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QFileDialog,
+    QFontComboBox,
     QFormLayout,
     QFrame,
     QHBoxLayout,
@@ -737,6 +740,8 @@ class NoticeBoard(QWidget):
         self.ready = []
         self.toasts = []
         self.repaint_frame = None
+        self.bar_h = BAR_HEIGHT
+        self.force = None
         self._timer = QTimer(self)
         self._timer.setInterval(16)
         self._timer.timeout.connect(self._tick)
@@ -773,6 +778,10 @@ class NoticeBoard(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
         font = QFont(self.font())
+        forced = self.force or {}
+        if forced.get("family"):
+            font.setFamily(forced["family"])
+        font.setBold(bool(forced.get("bold")))
         font.setPointSize(max(1, int(self.font_px)))
         painter.setFont(font)
         metrics = QFontMetrics(font)
@@ -812,7 +821,7 @@ class NoticeBoard(QWidget):
                 painter.drawEllipse(QRectF(16 + pad + name_w + 10, cy, dot, dot))
             left_w = max(left_w, 16 + box_w)
         room = max(120, width - left_w - 32)
-        floor = max(24, height - BAR_HEIGHT - 8)
+        floor = max(24, height - self.bar_h - 8)
         y = 16
         for item in self.toasts:
             lines = _toast_lines(item["spans"], metrics, room)
@@ -1461,6 +1470,7 @@ class IconButton(QPushButton):
 
 
 class ColorDisc(QWidget):
+    picked = Signal(str)
     """A hue circle. The middle is white. A click chooses the color under the pointer."""
 
     def __init__(self, color):
@@ -1478,15 +1488,27 @@ class ColorDisc(QWidget):
         if self._image is not None:
             return self._image
         size = self.width()
-        image = QImage(size, size, QImage.Format.Format_ARGB32_Premultiplied)
+        scale = 2
+        image = QImage(size * scale, size * scale, QImage.Format.Format_ARGB32_Premultiplied)
         image.fill(Qt.GlobalColor.transparent)
-        center = size / 2
-        for y in range(size):
-            for x in range(size):
-                rgb = wheel_rgb(x - center, y - center, self._radius)
+        center = size * scale / 2
+        radius = self._radius * scale
+        for y in range(size * scale):
+            for x in range(size * scale):
+                dx = x - center
+                dy = y - center
+                dist = math.hypot(dx, dy)
+                if dist > radius + 0.5:
+                    continue
+                used = min(dist, radius)
+                factor = used / dist if dist else 0
+                rgb = wheel_rgb(dx * factor, dy * factor, radius)
                 if rgb is None:
                     continue
-                image.setPixelColor(x, y, QColor(*rgb))
+                color = QColor(*rgb)
+                if dist > radius - 1.5:
+                    color.setAlphaF(max(0.0, (radius + 0.5 - dist) / 2.0))
+                image.setPixelColor(x, y, color)
         self._image = image
         return image
 
@@ -1503,6 +1525,11 @@ class ColorDisc(QWidget):
             return
         self._chosen = QColor(*rgb)
         self.update()
+        self.picked.emit(self._chosen.name().upper())
+
+    def set_color(self, name):
+        self._chosen = QColor(name)
+        self.update()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -1517,7 +1544,8 @@ class ColorDisc(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        painter.drawImage(0, 0, self._bitmap())
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        painter.drawImage(QRectF(0, 0, self.width(), self.height()), self._bitmap())
         center = self.width() / 2
         hue, sat, _value, _alpha = self._chosen.getHsvF()
         if hue < 0:
@@ -1540,7 +1568,15 @@ class ColorPick(QDialog):
         self.picked = None
         root = QVBoxLayout(self)
         self.disc = ColorDisc(color)
+        self.disc.picked.connect(self._show_color)
         root.addWidget(self.disc, 0, Qt.AlignmentFlag.AlignHCenter)
+        self.sample = QLabel("")
+        self.sample.setFixedHeight(28)
+        root.addWidget(self.sample)
+        self.hex = QLineEdit(self.disc.color().name().upper())
+        self.hex.setMaxLength(7)
+        self.hex.textEdited.connect(self._typed)
+        root.addWidget(self.hex)
         buttons = QHBoxLayout()
         ok = QPushButton(tr(43))
         cancel = QPushButton(tr(44))
@@ -1549,9 +1585,26 @@ class ColorPick(QDialog):
         buttons.addWidget(ok)
         buttons.addWidget(cancel)
         root.addLayout(buttons)
+        self._show_color(self.hex.text())
+        self.setFixedSize(self.sizeHint())
+
+    def _show_color(self, text):
+        self.sample.setStyleSheet(
+            "background: {}; border: 1px solid #5C584F;".format(text)
+        )
+        if self.hex.text().upper() != text:
+            self.hex.setText(text)
+
+    def _typed(self, text):
+        found = hex_color(text, "")
+        if not found:
+            return
+        self.disc.set_color(found)
+        self._show_color(found)
 
     def _accept(self):
-        self.picked = self.disc.color().name().upper()
+        found = hex_color(self.hex.text(), "")
+        self.picked = found or self.disc.color().name().upper()
         self.accept()
 
 
@@ -1623,8 +1676,8 @@ class SettingsDialog(QDialog):
         self._checking = False
         self.release_text.connect(self._show_release)
         root = QVBoxLayout(self)
-        tabs = QTabWidget()
-        root.addWidget(tabs)
+        self.tabs = QTabWidget()
+        root.addWidget(self.tabs)
 
         theme_page = QWidget()
         theme_form = QFormLayout(theme_page)
@@ -1709,11 +1762,52 @@ class SettingsDialog(QDialog):
         connect = QPushButton(tr(21))
         connect.clicked.connect(self._connect_now)
         room_box.addWidget(connect)
-        tabs.addTab(room, tr(16))
-        tabs.addTab(theme_page, tr(22))
+        self.tabs.addTab(room, tr(16))
+        self.tabs.addTab(theme_page, tr(22))
 
         other = QWidget()
         other_form = QFormLayout(other)
+        other_form.setVerticalSpacing(12)
+        self.language = QComboBox()
+        for name in languages():
+            self.language.addItem(name, name)
+        picked = str(appearance.get("language") or "English")
+        index = self.language.findData(picked)
+        if index < 0:
+            index = max(0, self.language.findData("English"))
+        self.language.setCurrentIndex(index)
+        self._style_popup(self.language)
+        field_w = max(180, self.language.sizeHint().width())
+        row_h = self.language.sizeHint().height()
+        self.language.setFixedSize(field_w, row_h)
+        self.overlay = QComboBox()
+        self.overlay.addItem(tr(36), "horizontal")
+        self.overlay.addItem(tr(37), "vertical")
+        overlay = appearance.get("volumeOverlay") or "horizontal"
+        self.overlay.setCurrentIndex(1 if overlay == "vertical" else 0)
+        self._style_popup(self.overlay)
+        self.overlay.setFixedSize(field_w, row_h)
+        stepper = QWidget()
+        stepper.setFixedSize(field_w, row_h)
+        stepper_row = QHBoxLayout(stepper)
+        stepper_row.setContentsMargins(0, 0, 0, 0)
+        stepper_row.setSpacing(0)
+        self.vol_down = QPushButton("<")
+        self.vol_down.setObjectName("step")
+        self.vol_read = QLabel("100%")
+        self.vol_read.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.vol_up = QPushButton(">")
+        self.vol_up.setObjectName("step")
+        self.vol_down.clicked.connect(lambda: self._nudge_volume_max(-5))
+        self.vol_up.clicked.connect(lambda: self._nudge_volume_max(5))
+        stepper_row.addWidget(self.vol_down)
+        stepper_row.addWidget(self.vol_read, 1)
+        stepper_row.addWidget(self.vol_up)
+        self.volume_max = _volume_limit(appearance.get("volumeMax"))
+        self._show_volume_max()
+        other_form.addRow(tr(38), self.language)
+        other_form.addRow(tr(35), self.overlay)
+        other_form.addRow(tr(34), stepper)
         self.autoplay = BoxCheck()
         self.autoplay.setChecked(bool(appearance.get("autoplayNext")))
         self.fastforward = BoxCheck()
@@ -1725,56 +1819,37 @@ class SettingsDialog(QDialog):
         look = _palette(self._look_theme, self._look_accent)
         for box in (self.autoplay, self.fastforward, self.slowdown, self.check_updates):
             box.set_colors(look["field"], look["border"], look["on_fg"], look["accent"])
-        self._check_row(other_form, tr(31), self.autoplay)
-        self._check_row(other_form, tr(32), self.fastforward)
-        self._check_row(other_form, tr(33), self.slowdown)
-        self._check_row(other_form, tr(67), self.check_updates)
+        self._check_row(other_form, tr(31), self.autoplay, field_w, row_h)
+        self._check_row(other_form, tr(32), self.fastforward, field_w, row_h)
+        self._check_row(other_form, tr(33), self.slowdown, field_w, row_h)
+        self._check_row(other_form, tr(67), self.check_updates, field_w, row_h)
         self.check_updates.toggled.connect(lambda _checked: self._sync_update_row())
-        stepper = QWidget()
-        stepper_row = QHBoxLayout(stepper)
-        stepper_row.setContentsMargins(0, 0, 0, 0)
-        stepper_row.setSpacing(8)
-        self.vol_down = QPushButton("<")
-        self.vol_down.setObjectName("step")
-        self.vol_read = QLabel("100%")
-        self.vol_read.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.vol_read.setMinimumWidth(52)
-        self.vol_up = QPushButton(">")
-        self.vol_up.setObjectName("step")
-        self.vol_down.clicked.connect(lambda: self._nudge_volume_max(-5))
-        self.vol_up.clicked.connect(lambda: self._nudge_volume_max(5))
-        stepper_row.addWidget(self.vol_down)
-        stepper_row.addWidget(self.vol_read)
-        stepper_row.addWidget(self.vol_up)
-        stepper_row.addStretch(1)
-        self.volume_max = _volume_limit(appearance.get("volumeMax"))
-        self._show_volume_max()
-        other_form.addRow(tr(34), stepper)
-        self.overlay = QComboBox()
-        self.overlay.addItem(tr(36), "horizontal")
-        self.overlay.addItem(tr(37), "vertical")
-        overlay = appearance.get("volumeOverlay") or "horizontal"
-        self.overlay.setCurrentIndex(1 if overlay == "vertical" else 0)
-        self._style_popup(self.overlay)
-        other_form.addRow(tr(35), self.overlay)
-        self.language = QComboBox()
-        for name in languages():
-            self.language.addItem(name, name)
-        picked = str(appearance.get("language") or "English")
-        index = self.language.findData(picked)
-        if index < 0:
-            index = max(0, self.language.findData("English"))
-        self.language.setCurrentIndex(index)
-        self._style_popup(self.language)
-        other_form.addRow(tr(38), self.language)
-        tabs.addTab(other, tr(30))
+        self.tabs.addTab(other, tr(30))
 
         about = QWidget()
+        self._about_page = about
         about_layout = QVBoxLayout(about)
-        title = QLabel("yucha")
-        title.setObjectName("heading")
+        logo = QLabel()
+        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        logo.setCursor(Qt.CursorShape.PointingHandCursor)
+        icon = Path(__file__).resolve().parent / "icon.png"
+        if icon.is_file():
+            logo.setPixmap(QPixmap(str(icon)).scaled(96, 96, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        logo.installEventFilter(self)
+        self._logo = logo
+        self._logo_n = 0
+        self._logo_at = 0.0
+        name = QLabel("yucha")
+        name.setObjectName("heading")
+        name.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        repo = QLabel('github: <a href="https://github.com/yrmuq/yucha">yucha</a>')
+        repo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        repo.setTextFormat(Qt.TextFormat.RichText)
+        repo.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        repo.setOpenExternalLinks(True)
         from yucha import __version__
         version = QLabel(trf(42, __version__))
+        version.setAlignment(Qt.AlignmentFlag.AlignCenter)
         heart = appearance.get("accentColor") or "#9A3A52"
         thanks = QLabel(
             '{} <span style="color: {};">♥</span> '
@@ -1784,34 +1859,28 @@ class SettingsDialog(QDialog):
         thanks.setTextFormat(Qt.TextFormat.RichText)
         thanks.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
         thanks.setOpenExternalLinks(True)
-        about_layout.addWidget(title)
+        about_layout.addWidget(logo)
+        about_layout.addWidget(name)
+        about_layout.addWidget(repo)
         about_layout.addWidget(version)
-        repo_row = QWidget()
-        repo_line = QHBoxLayout(repo_row)
-        repo_line.setContentsMargins(0, 0, 0, 0)
-        repo_line.setSpacing(8)
-        repo = QLabel('github: <a href="https://github.com/yrmuq/yucha">yucha</a>')
-        repo.setTextFormat(Qt.TextFormat.RichText)
-        repo.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
-        repo.setOpenExternalLinks(True)
-        repo_line.addWidget(repo)
-        repo_line.addStretch(1)
-        about_layout.addWidget(repo_row)
         self.update_button = QPushButton(tr(62))
         self.update_button.clicked.connect(self._check_release)
         self.update_note = QLabel("")
+        self.update_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.update_note.setWordWrap(True)
         self.download_button = QPushButton(tr(68))
         self.download_button.clicked.connect(self._open_release)
         self.download_button.hide()
         self._download_version = ""
-        about_layout.addWidget(self.update_button)
+        about_layout.addWidget(self.update_button, 0, Qt.AlignmentFlag.AlignHCenter)
         about_layout.addWidget(self.update_note)
-        about_layout.addWidget(self.download_button)
+        about_layout.addWidget(self.download_button, 0, Qt.AlignmentFlag.AlignHCenter)
         about_layout.addStretch(1)
-        about_layout.addWidget(thanks)
-        about_layout.addStretch(2)
-        tabs.addTab(about, tr(39))
+        about_layout.addWidget(thanks, 0, Qt.AlignmentFlag.AlignLeft)
+        self.tabs.addTab(about, tr(39))
+        self._dev_page = None
+        if bool(appearance.get("devTab")):
+            self._insert_dev_tab()
         window = self.parent()
         if window is not None and hasattr(window, "release_ready"):
             window.release_ready.connect(self._on_release_ready)
@@ -1828,16 +1897,167 @@ class SettingsDialog(QDialog):
 
         wide = 0
         tall = 0
-        for index in range(tabs.count()):
-            hint = tabs.widget(index).sizeHint()
+        for index in range(self.tabs.count()):
+            hint = self.tabs.widget(index).sizeHint()
             wide = max(wide, hint.width())
             tall = max(tall, hint.height())
-        wide = min(640, max(420, wide if 0 < wide < 2000 else 520))
-        tall = min(700, max(320, tall if 0 < tall < 2000 else 480))
-        for index in range(tabs.count()):
-            tabs.widget(index).setMinimumSize(wide, tall)
-        tabs.setCurrentIndex(page if 0 <= page < tabs.count() else 0)
+        wide = min(720, max(420, wide if 0 < wide < 2000 else 520))
+        tall = min(760, max(320, tall if 0 < tall < 2000 else 480))
+        for index in range(self.tabs.count()):
+            self.tabs.widget(index).setMinimumSize(wide, tall)
+        self.tabs.setCurrentIndex(page if 0 <= page < self.tabs.count() else 0)
         root.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
+
+    def eventFilter(self, watched, event):
+        if watched is getattr(self, "_logo", None) and event.type() == QEvent.Type.MouseButtonPress:
+            if event.button() == Qt.MouseButton.LeftButton:
+                self._logo_pressed()
+                return True
+        return super().eventFilter(watched, event)
+
+    def _logo_pressed(self):
+        now = time.monotonic()
+        if now - self._logo_at > 2:
+            self._logo_n = 0
+        self._logo_at = now
+        self._logo_n += 1
+        if self._logo_n < 5:
+            return
+        self._logo_n = 0
+        enabled = self._dev_page is None
+        self._store_dev_tab(enabled)
+        if enabled:
+            self._insert_dev_tab()
+            self.tabs.setCurrentWidget(self._dev_page)
+        else:
+            self.tabs.removeTab(self.tabs.indexOf(self._dev_page))
+            self._dev_page = None
+            self.tabs.setCurrentWidget(self._about_page)
+
+    def _store_dev_tab(self, enabled):
+        window = self.parent()
+        if window is None:
+            return
+        window.app.store.data["appearance"]["devTab"] = bool(enabled)
+        window.app.store.save()
+
+    def _insert_dev_tab(self):
+        if self._dev_page is not None:
+            return
+        self._dev_page = self._build_dev_page()
+        self.tabs.insertTab(self.tabs.indexOf(self._about_page), self._dev_page, "dev")
+
+    def _dev_seed(self):
+        window = self.parent()
+        current = getattr(window, "_dev", None) if window is not None else None
+        if current:
+            return current
+        look = {}
+        if window is not None:
+            look = window.app.store.data["appearance"]
+        family = QFont().family() or "sans-serif"
+        fg = "#F4F1EA"
+        return {
+            "ui": {"size": int(look.get("uiFontSize") or 16), "bold": False, "family": family, "color": fg},
+            "osd": {"size": int(look.get("chatFontSize") or 18), "bold": False, "family": family, "color": fg},
+            "sub": {
+                "size": int(look.get("subFontSize") or 55),
+                "bold": False,
+                "family": font_name(look.get("subFont")),
+                "color": hex_color(look.get("subColor"), "#FFFFFF"),
+            },
+            "titles": {"size": 14, "bold": True, "family": family, "color": fg},
+            "panel": int(getattr(window, "_panel_width", 380) or 380),
+            "bar": int(getattr(window, "_bar_h", BAR_HEIGHT) or BAR_HEIGHT),
+        }
+
+    def _build_dev_page(self):
+        seed = self._dev_seed()
+        page = QWidget()
+        form = QFormLayout(page)
+        form.setVerticalSpacing(12)
+        self._dev_rows = {}
+        for key, title in (
+            ("ui", "Interface"),
+            ("osd", "OSD"),
+            ("sub", "Subtitles"),
+            ("titles", "Panel titles"),
+        ):
+            form.addRow(title, self._dev_font_row(key, seed[key]))
+        self._dev_panel = QuietSpin()
+        self._dev_panel.setRange(240, 900)
+        self._dev_panel.setValue(int(seed["panel"]))
+        self._dev_panel.valueChanged.connect(lambda _value: self._push_dev())
+        self._dev_bar = QuietSpin()
+        self._dev_bar.setRange(36, 160)
+        self._dev_bar.setValue(int(seed["bar"]))
+        self._dev_bar.valueChanged.connect(lambda _value: self._push_dev())
+        form.addRow("Panel width", self._dev_panel)
+        form.addRow("Bar height", self._dev_bar)
+        export = QPushButton(tr(69))
+        export.clicked.connect(self._export_dev)
+        form.addRow("", export)
+        return page
+
+    def _dev_font_row(self, key, seed):
+        host = QWidget()
+        row = QHBoxLayout(host)
+        row.setContentsMargins(0, 0, 0, 0)
+        size = QuietSpin()
+        size.setRange(1, 96)
+        size.setValue(int(seed["size"]))
+        bold = BoxCheck()
+        bold.setChecked(bool(seed["bold"]))
+        family = QFontComboBox()
+        family.setCurrentFont(QFont(str(seed["family"])))
+        family.setMaximumWidth(180)
+        color = QLineEdit(hex_color(seed["color"], "#F4F1EA"))
+        color.setMaximumWidth(90)
+        look = _palette(self._look_theme, self._look_accent)
+        bold.set_colors(look["field"], look["border"], look["on_fg"], look["accent"])
+        size.valueChanged.connect(lambda _value: self._push_dev())
+        bold.toggled.connect(lambda _value: self._push_dev())
+        family.currentFontChanged.connect(lambda _value: self._push_dev())
+        color.textEdited.connect(lambda _value: self._push_dev())
+        row.addWidget(size)
+        row.addWidget(bold)
+        row.addWidget(family, 1)
+        row.addWidget(color)
+        self._dev_rows[key] = {"size": size, "bold": bold, "family": family, "color": color}
+        return host
+
+    def _dev_spec(self):
+        spec = {"panel": self._dev_panel.value(), "bar": self._dev_bar.value()}
+        for key, row in self._dev_rows.items():
+            spec[key] = {
+                "size": row["size"].value(),
+                "bold": row["bold"].isChecked(),
+                "family": row["family"].currentFont().family(),
+                "color": hex_color(row["color"].text(), "#F4F1EA"),
+            }
+        return spec
+
+    def _push_dev(self):
+        window = self.parent()
+        if window is None or not hasattr(self, "_dev_rows"):
+            return
+        window.apply_dev(self._dev_spec())
+
+    def _export_dev(self):
+        spec = self._dev_spec()
+        lines = []
+        for key in ("ui", "osd", "sub", "titles"):
+            row = spec[key]
+            lines.append("{}.size={}".format(key, row["size"]))
+            lines.append("{}.bold={}".format(key, "yes" if row["bold"] else "no"))
+            lines.append("{}.family={}".format(key, row["family"]))
+            lines.append("{}.color={}".format(key, row["color"]))
+        lines.append("panel.width={}".format(spec["panel"]))
+        lines.append("bar.height={}".format(spec["bar"]))
+        path, _chosen = QFileDialog.getSaveFileName(self, tr(69), "yucha-dev.txt", "Text (*.txt)")
+        if not path:
+            return
+        Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     def _sync_update_row(self):
         auto = self.check_updates.isChecked()
@@ -1975,12 +2195,12 @@ class SettingsDialog(QDialog):
         if dialog.exec() == QDialog.DialogCode.Accepted and dialog.picked:
             edit.setText(dialog.picked)
 
-    def _check_row(self, form, text, box):
+    def _check_row(self, form, text, box, width, height):
         host = QWidget()
-        host.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        host.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        host.setFixedSize(width, height)
         row = QHBoxLayout(host)
         row.setContentsMargins(0, 0, 0, 0)
+        row.addStretch(1)
         row.addWidget(box)
         form.addRow(text, host)
 
@@ -2053,6 +2273,8 @@ class MainWindow(QMainWindow):
         self._muted = False
         self._chat_held = False
         self._known_names = None
+        self._bar_h = BAR_HEIGHT
+        self._dev = None
         self._awake = SleepInhibit()
         icon = Path(__file__).resolve().parent / "icon.png"
         self._notes = Notifier(str(icon) if icon.is_file() else "")
@@ -2270,6 +2492,7 @@ class MainWindow(QMainWindow):
         users_title = QLabel()
         users_title.setObjectName("heading")
         self._mark(users_title, 1)
+        self.users_title = users_title
         side.addWidget(users_title)
         self.room_users = UserTable()
         side.addWidget(self.room_users)
@@ -2277,6 +2500,7 @@ class MainWindow(QMainWindow):
         playlist_title = QLabel()
         playlist_title.setObjectName("heading")
         self._mark(playlist_title, 2)
+        self.playlist_title = playlist_title
         side.addWidget(playlist_title)
         self.files = FileList()
         self.files.setObjectName("playlist")
@@ -2295,6 +2519,7 @@ class MainWindow(QMainWindow):
         chat_title = QLabel()
         chat_title.setObjectName("heading")
         self._mark(chat_title, 3)
+        self.chat_title = chat_title
         side.addWidget(chat_title)
         self.chat = QTextEdit()
         self.chat.setObjectName("roomchat")
@@ -2375,7 +2600,7 @@ class MainWindow(QMainWindow):
             return
         width = self.stage.width()
         height = self.stage.height()
-        inset = BAR_HEIGHT
+        inset = self._bar_height()
         self.bar.setGeometry(0, max(0, height - inset), width, inset)
         panel_width = self._panel_span(width) if self._panel_open else 0
         panel_height = max(0, height - inset)
@@ -2604,7 +2829,15 @@ class MainWindow(QMainWindow):
         self._place_overlays()
 
     def _bar_height(self):
-        return BAR_HEIGHT
+        return getattr(self, "_bar_h", BAR_HEIGHT)
+
+    def apply_dev(self, spec):
+        self._dev = spec
+        self._bar_h = int(spec["bar"])
+        self._panel_width = bounded_panel(spec["panel"])
+        self.apply_theme()
+        self._place_overlays()
+        self._refresh_osd()
 
     def _fill_from_store(self):
         self._refresh_banner()
@@ -2614,9 +2847,14 @@ class MainWindow(QMainWindow):
         theme = _shown_theme(appearance.get("theme"))
         accent = appearance.get("accentColor")
         self.setStyleSheet(_stylesheet(theme, accent))
-        size = int(appearance.get("uiFontSize") or 16)
+        dev = self._dev or {}
+        ui = dev.get("ui") or {}
+        size = int(ui.get("size") or appearance.get("uiFontSize") or 16)
         font = QFont()
-        font.setPointSize(max(1, min(32, size)))
+        if ui.get("family"):
+            font.setFamily(ui["family"])
+        font.setBold(bool(ui.get("bold")))
+        font.setPointSize(max(1, min(96, size)))
         QApplication.instance().setFont(font)
         info = QFontInfo(self.chat.document().defaultFont())
         point = info.pointSize()
@@ -2641,6 +2879,9 @@ class MainWindow(QMainWindow):
             }}
             """.format(size=text_css)
         )
+        ui = (self._dev or {}).get("ui") or {}
+        if ui.get("color"):
+            self.setStyleSheet(self.styleSheet() + " QLabel {{ color: {}; }}".format(ui["color"]))
         pal = _palette(theme, appearance.get("accentColor"))
         for button in (self.play, self.ready, self.chat_btn, self.room, self.gear, self.bar_send, self.volume_btn, self.tracks_btn, self.mute_h, self.mute_v):
             button.set_ink(pal["button_fg"], pal["on_fg"], pal["accent"])
@@ -2648,7 +2889,21 @@ class MainWindow(QMainWindow):
         self._refresh_files()
         self._paint_chat()
         self._paint_users()
+        self._style_titles()
         self._apply_subtitles()
+
+    def _style_titles(self):
+        spec = (self._dev or {}).get("titles") or {}
+        css = "background: transparent; font-size: {}pt; font-weight: {};".format(
+            int(spec.get("size") or 14),
+            700 if spec.get("bold", True) else 400,
+        )
+        if spec.get("family"):
+            css += ' font-family: "{}";'.format(spec["family"])
+        if spec.get("color"):
+            css += " color: {};".format(spec["color"])
+        for label in (self.users_title, self.playlist_title, self.chat_title):
+            label.setStyleSheet(css)
 
     def set_player(self, player):
         listener = getattr(player, "_listener", None) if player is not None else None
@@ -2660,10 +2915,20 @@ class MainWindow(QMainWindow):
         if self.ctl is None:
             return
         look = self.app.store.data["appearance"]
-        # ASS subtitles keep their own style unless this override is force.
-        self._set("sub-font", font_name(look.get("subFont")))
-        self._set("sub-font-size", int(look.get("subFontSize") or 55))
-        color = hex_color(look.get("subColor"), "#FFFFFF")
+        dev = (self._dev or {}).get("sub")
+        if dev:
+            family = font_name(dev.get("family"))
+            size = int(dev.get("size") or 55)
+            color = hex_color(dev.get("color"), "#FFFFFF")
+            bold = "yes" if dev.get("bold") else "no"
+        else:
+            family = font_name(look.get("subFont"))
+            size = int(look.get("subFontSize") or 55)
+            color = hex_color(look.get("subColor"), "#FFFFFF")
+            bold = "no"
+        self._set("sub-font", family)
+        self._set("sub-font-size", size)
+        self._set("sub-bold", bold)
         self._set("sub-color", "#FF" + color[1:])
         self._set("sub-ass-override", "force")
 
@@ -3500,7 +3765,14 @@ class MainWindow(QMainWindow):
         appearance = self.app.store.data["appearance"]
         theme = _shown_theme(appearance.get("theme"))
         point = int(appearance.get("chatFontSize") or 18)
-        point = max(1, min(48, point))
+        osd = (getattr(self, "_dev", None) or {}).get("osd")
+        if osd:
+            point = int(osd.get("size") or point)
+            self.board.force = osd
+        else:
+            self.board.force = None
+        point = max(1, min(96, point))
+        self.board.bar_h = self._bar_height()
         page = _palette(theme, appearance.get("accentColor"))
         other = str(appearance.get("accentColor2") or "#1F6A8A")
         if len(other) != 7 or not other.startswith("#"):
@@ -3516,6 +3788,9 @@ class MainWindow(QMainWindow):
         if differ:
             notices.append(tr(11))
         notices.extend(trf(58, name) for name in missing)
+        if osd and osd.get("color"):
+            page = dict(page)
+            page["fg"] = osd["color"]
         self.board.show_state(point, page, me, page["accent"], other, notices, people, self._osd)
 
     def accept_files(self, paths, token=""):
