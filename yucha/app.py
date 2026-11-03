@@ -135,6 +135,8 @@ class App(object):
             appearance["subFont"] = font_name(command.get("subFont", appearance.get("subFont")))
             appearance["subFontSize"] = bounded_int(command.get("subFontSize"), 55, 8, 120)
             appearance["subColor"] = hex_color(command.get("subColor"), "#FFFFFF")
+            style = command.get("style") or appearance.get("style") or "classic"
+            appearance["style"] = "modern" if style == "modern" else "classic"
             use(language)
             self.client._config["pauseOnLeave"] = True
             self.client._config["fastforwardOnDesync"] = appearance["fastforwardOnDesync"]

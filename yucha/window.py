@@ -77,6 +77,7 @@ EDGE_PX = 12
 GRIP_PX = 8
 BAR_HEIGHT = 72
 POP_GAP = 8
+FLOAT_GAP = 12
 CHAT_EXTRA = 52
 SEEK_STEPS = 100000
 CHAT_BOX = 300
@@ -114,6 +115,12 @@ def _dev_ink(row, theme):
         return ""
     picked = row.get("light" if theme == "light" else "dark") or row.get("color") or ""
     return str(picked)
+
+
+def _rgba(text, percent):
+    color = QColor(text)
+    alpha = max(0, min(255, int(round(float(percent) / 100.0 * 255))))
+    return "rgba({}, {}, {}, {})".format(color.red(), color.green(), color.blue(), alpha)
 
 
 def _shown_theme(theme):
@@ -164,8 +171,10 @@ def _palette(theme, accent=None):
     return pal
 
 
-def _stylesheet(theme, accent=None):
+def _stylesheet(theme, accent=None, paint=None):
     p = _palette(theme, accent)
+    if paint:
+        p.update(paint)
     return """
     QMainWindow, QDialog, QWidget#root, QWidget#stage, QWidget#panel, QWidget#bar, QWidget#chatline, QWidget#volume, QLabel {{
         background: {bg};
@@ -334,6 +343,12 @@ def _stylesheet(theme, accent=None):
     QTabBar::tab:selected {{
         background: {accent};
         color: {on_fg};
+    }}
+    QTabBar::tab:disabled {{
+        background: transparent;
+        border: none;
+        padding: 0px;
+        margin: 0px;
     }}
     QListWidget {{
         background: {field};
@@ -745,6 +760,9 @@ class NoticeBoard(QWidget):
         self.other = "#1F6A8A"
         self.notices = []
         self.ready = []
+        self.plate_alpha = 232
+        self.ready_on = "#3EAD62"
+        self.ready_off = "#C4453C"
         self.toasts = []
         self.repaint_frame = None
         self.bar_h = BAR_HEIGHT
@@ -823,7 +841,7 @@ class NoticeBoard(QWidget):
                 painter.setPen(QColor(ink))
                 painter.drawText(16 + pad, baseline, person["name"])
                 painter.setPen(Qt.PenStyle.NoPen)
-                painter.setBrush(QColor("#3EAD62" if person["ready"] else "#C4453C"))
+                painter.setBrush(QColor(self.ready_on if person["ready"] else self.ready_off))
                 cy = top + (row_h - dot) / 2
                 painter.drawEllipse(QRectF(16 + pad + name_w + 10, cy, dot, dot))
             left_w = max(left_w, 16 + box_w)
@@ -866,7 +884,7 @@ class NoticeBoard(QWidget):
     def _box(self, painter, x, y, w, h):
         painter.setPen(Qt.PenStyle.NoPen)
         color = QColor(self.page["bg"])
-        color.setAlpha(232)
+        color.setAlpha(self.plate_alpha)
         painter.setBrush(color)
         painter.drawRoundedRect(QRectF(x, y, w, h), 8, 8)
 
@@ -1340,6 +1358,8 @@ class IconButton(QPushButton):
         self._ink = QColor("#F3EFE6")
         self._ink_on = QColor("#F7F4EE")
         self._accent = QColor("#9A3A52")
+        self._ready_on = QColor("#3EAD62")
+        self._ready_off = QColor("#C4453C")
         self.setObjectName("icon")
         self.setFixedSize(40, 36)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -1413,7 +1433,7 @@ class IconButton(QPushButton):
             painter.drawRoundedRect(int(cx + 2), int(cy - 7), 4, 14, 1, 1)
         elif kind == "ready":
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor("#3EAD62" if self.isChecked() else "#C4453C"))
+            painter.setBrush(self._ready_on if self.isChecked() else self._ready_off)
             painter.drawEllipse(QPointF(cx, cy), 7, 7)
         elif kind == "chat":
             painter.setPen(QPen(self._ink, 1.6))
@@ -1670,6 +1690,33 @@ class RoundSwatch(QPushButton):
         painter.end()
 
 
+class EdgeTabBar(QTabBar):
+    """One tab sits on the right. The disabled tab before it is the empty gap."""
+
+    def __init__(self):
+        super().__init__()
+        self.setExpanding(False)
+        self.spacer = -1
+
+    def tabSizeHint(self, index):
+        hint = super().tabSizeHint(index)
+        if index != self.spacer or self.spacer < 0:
+            return hint
+        used = 0
+        for other in range(self.count()):
+            if other == self.spacer:
+                continue
+            used += super().tabSizeHint(other).width()
+        hint.setWidth(max(0, self.width() - used))
+        return hint
+
+    def minimumTabSizeHint(self, index):
+        hint = super().minimumTabSizeHint(index)
+        if index == self.spacer:
+            hint.setWidth(0)
+        return hint
+
+
 class StarPassword(QLineEdit):
     """The field always shows five stars, so the length stays hidden."""
 
@@ -1721,6 +1768,8 @@ class SettingsDialog(QDialog):
         self.release_text.connect(self._show_release)
         root = QVBoxLayout(self)
         self.tabs = QTabWidget()
+        self._tabbar = EdgeTabBar()
+        self.tabs.setTabBar(self._tabbar)
         root.addWidget(self.tabs)
 
         theme_page = QWidget()
@@ -1737,6 +1786,12 @@ class SettingsDialog(QDialog):
         self._look_theme = _shown_theme(current)
         self._look_accent = appearance.get("accentColor")
         self._style_popup(self.theme)
+        self.style_pick = QComboBox()
+        self.style_pick.addItem(tr(72), "classic")
+        self.style_pick.addItem(tr(73), "modern")
+        picked_style = appearance.get("style") or "classic"
+        self.style_pick.setCurrentIndex(1 if picked_style == "modern" else 0)
+        self._style_popup(self.style_pick)
         self.color, color_row = self._color_row(appearance.get("chatColor"), "#F4F1EA", tr(25))
         self.accent, accent_row = self._color_row(appearance.get("accentColor"), "#9A3A52", tr(26))
         self.accent2, accent2_row = self._color_row(appearance.get("accentColor2"), "#1F6A8A", tr(27))
@@ -1763,6 +1818,7 @@ class SettingsDialog(QDialog):
         self._style_popup(self.sub_font)
         self.sub_color, sub_row = self._color_row(appearance.get("subColor"), "#FFFFFF", tr(56))
         theme_form.addRow(tr(22), self.theme)
+        theme_form.addRow(tr(71), self.style_pick)
         theme_form.addRow(tr(25), color_row)
         theme_form.addRow(tr(26), accent_row)
         theme_form.addRow(tr(27), accent2_row)
@@ -1920,6 +1976,7 @@ class SettingsDialog(QDialog):
         about_layout.addWidget(thanks, 0, Qt.AlignmentFlag.AlignLeft)
         self.tabs.addTab(about, tr(39))
         self._dev_page = None
+        self._dev_gap = None
         if bool(appearance.get("devTab")):
             self._insert_dev_tab()
         window = self.parent()
@@ -1971,9 +2028,16 @@ class SettingsDialog(QDialog):
             self._insert_dev_tab()
             self.tabs.setCurrentWidget(self._dev_page)
         else:
-            self.tabs.removeTab(self.tabs.indexOf(self._dev_page))
-            self._dev_page = None
+            dev = self.tabs.indexOf(self._dev_page)
+            gap = self.tabs.indexOf(self._dev_gap)
+            self._tabbar.spacer = -1
             self.tabs.setCurrentWidget(self._about_page)
+            if dev >= 0:
+                self.tabs.removeTab(dev)
+            if gap >= 0:
+                self.tabs.removeTab(self.tabs.indexOf(self._dev_gap))
+            self._dev_page = None
+            self._dev_gap = None
 
     def _store_dev_tab(self, enabled):
         window = self.parent()
@@ -1986,27 +2050,46 @@ class SettingsDialog(QDialog):
         if self._dev_page is not None:
             return
         self._dev_page = self._build_dev_page()
-        self.tabs.insertTab(self.tabs.indexOf(self._about_page), self._dev_page, "dev")
+        self._dev_gap = QWidget()
+        self.tabs.addTab(self._dev_gap, "")
+        gap = self.tabs.indexOf(self._dev_gap)
+        self.tabs.setTabEnabled(gap, False)
+        self.tabs.addTab(self._dev_page, "dev")
+        self._tabbar.spacer = gap
+        self._tabbar.updateGeometry()
 
     def _dev_defaults(self):
         family = QFont().family() or "sans-serif"
         dark = _palette("dark")["fg"]
         light = _palette("light")["fg"]
         white = "#FFFFFF"
+        dark_pal = _palette("dark")
+        light_pal = _palette("light")
+        face = {}
+        for key in ("bg", "field", "border", "button", "button_fg"):
+            face[key] = {"dark": dark_pal[key], "light": light_pal[key]}
+        face["ready"] = {"dark": "#3EAD62", "light": "#3EAD62"}
+        face["away"] = {"dark": "#C4453C", "light": "#C4453C"}
         return {
             "ui": {"size": 16, "bold": False, "family": family, "dark": dark, "light": light},
             "osd": {"size": 18, "bold": False, "family": family, "dark": dark, "light": light},
             "sub": {"size": 55, "bold": False, "family": "sans-serif", "dark": white, "light": white},
             "titles": {"size": 14, "bold": True, "family": family, "dark": dark, "light": light},
+            "face": face,
             "panel": PANEL_WIDTH,
             "bar": BAR_HEIGHT,
+            "bar_alpha": 100,
+            "panel_alpha": 100,
+            "osd_alpha": 91,
         }
 
     def _dev_seed(self):
         window = self.parent()
         current = getattr(window, "_dev", None) if window is not None else None
         if current:
-            return current
+            merged = self._dev_defaults()
+            merged.update(current)
+            return merged
         base = self._dev_defaults()
         if window is None:
             return base
@@ -2036,6 +2119,18 @@ class SettingsDialog(QDialog):
             ("titles", "Panel titles"),
         ):
             form.addRow(title, self._dev_font_row(key, seed[key]))
+        self._face_rows = {}
+        face = seed.get("face") or self._dev_defaults()["face"]
+        for key, title in (
+            ("bg", "Background"),
+            ("field", "Field"),
+            ("border", "Border"),
+            ("button", "Button"),
+            ("button_fg", "Button text"),
+            ("ready", "Ready"),
+            ("away", "Not ready"),
+        ):
+            form.addRow(title, self._face_row(key, face[key]))
         self._dev_panel = QuietSpin()
         self._dev_panel.setRange(240, 900)
         self._dev_panel.setValue(int(seed["panel"]))
@@ -2046,6 +2141,12 @@ class SettingsDialog(QDialog):
         self._dev_bar.valueChanged.connect(lambda _value: self._push_dev())
         form.addRow("Panel width", self._dev_panel)
         form.addRow("Bar height", self._dev_bar)
+        self._bar_alpha = self._alpha_spin(seed.get("bar_alpha", 100))
+        self._panel_alpha = self._alpha_spin(seed.get("panel_alpha", 100))
+        self._osd_alpha = self._alpha_spin(seed.get("osd_alpha", 91))
+        form.addRow("Bar opacity", self._bar_alpha)
+        form.addRow("Side opacity", self._panel_alpha)
+        form.addRow("OSD opacity", self._osd_alpha)
         reset = QPushButton(tr(70))
         export = QPushButton(tr(69))
         reset.clicked.connect(self._reset_dev)
@@ -2094,6 +2195,28 @@ class SettingsDialog(QDialog):
         }
         return host
 
+    def _face_row(self, key, seed):
+        host = QWidget()
+        row = QHBoxLayout(host)
+        row.setContentsMargins(0, 0, 0, 0)
+        dark = self._dev_swatch(seed.get("dark") or "#000000", "dark")
+        light = self._dev_swatch(seed.get("light") or "#FFFFFF", "light")
+        row.addWidget(QLabel("dark"))
+        row.addWidget(dark)
+        row.addWidget(QLabel("light"))
+        row.addWidget(light)
+        row.addStretch(1)
+        self._face_rows[key] = {"dark": dark, "light": light}
+        return host
+
+    def _alpha_spin(self, value):
+        spin = QuietSpin()
+        spin.setRange(0, 100)
+        spin.setSuffix("%")
+        spin.setValue(int(value))
+        spin.valueChanged.connect(lambda _value: self._push_dev())
+        return spin
+
     def _dev_swatch(self, color, title):
         button = RoundSwatch()
         button.set_color(hex_color(color, "#FFFFFF"))
@@ -2107,7 +2230,7 @@ class SettingsDialog(QDialog):
             self._push_dev()
 
     def _fill_dev(self, seed):
-        widgets = [self._dev_panel, self._dev_bar]
+        widgets = [self._dev_panel, self._dev_bar, self._bar_alpha, self._panel_alpha, self._osd_alpha]
         for row in self._dev_rows.values():
             widgets.extend((row["size"], row["bold"], row["family"]))
         for widget in widgets:
@@ -2119,8 +2242,16 @@ class SettingsDialog(QDialog):
             row["family"].setCurrentFont(QFont(str(item["family"])))
             row["dark"].set_color(hex_color(item.get("dark") or item.get("color"), "#F3EFE6"))
             row["light"].set_color(hex_color(item.get("light") or item.get("color"), "#1A1A1A"))
+        face = seed.get("face") or {}
+        for key, row in self._face_rows.items():
+            item = face.get(key) or {}
+            row["dark"].set_color(hex_color(item.get("dark"), "#000000"))
+            row["light"].set_color(hex_color(item.get("light"), "#FFFFFF"))
         self._dev_panel.setValue(int(seed["panel"]))
         self._dev_bar.setValue(int(seed["bar"]))
+        self._bar_alpha.setValue(int(seed.get("bar_alpha", 100)))
+        self._panel_alpha.setValue(int(seed.get("panel_alpha", 100)))
+        self._osd_alpha.setValue(int(seed.get("osd_alpha", 91)))
         for widget in widgets:
             widget.blockSignals(False)
 
@@ -2129,12 +2260,24 @@ class SettingsDialog(QDialog):
         self._push_dev()
 
     def _dev_spec(self):
-        spec = {"panel": self._dev_panel.value(), "bar": self._dev_bar.value()}
+        spec = {
+            "panel": self._dev_panel.value(),
+            "bar": self._dev_bar.value(),
+            "bar_alpha": self._bar_alpha.value(),
+            "panel_alpha": self._panel_alpha.value(),
+            "osd_alpha": self._osd_alpha.value(),
+            "face": {},
+        }
         for key, row in self._dev_rows.items():
             spec[key] = {
                 "size": row["size"].value(),
                 "bold": row["bold"].isChecked(),
                 "family": row["family"].currentFont().family(),
+                "dark": row["dark"]._color.name().upper(),
+                "light": row["light"]._color.name().upper(),
+            }
+        for key, row in self._face_rows.items():
+            spec["face"][key] = {
                 "dark": row["dark"]._color.name().upper(),
                 "light": row["light"]._color.name().upper(),
             }
@@ -2156,8 +2299,14 @@ class SettingsDialog(QDialog):
             lines.append("{}.family={}".format(key, row["family"]))
             lines.append("{}.color.dark={}".format(key, row["dark"]))
             lines.append("{}.color.light={}".format(key, row["light"]))
+        for key, row in spec["face"].items():
+            lines.append("face.{}.dark={}".format(key, row["dark"]))
+            lines.append("face.{}.light={}".format(key, row["light"]))
         lines.append("panel.width={}".format(spec["panel"]))
         lines.append("bar.height={}".format(spec["bar"]))
+        lines.append("bar.alpha={}".format(spec["bar_alpha"]))
+        lines.append("panel.alpha={}".format(spec["panel_alpha"]))
+        lines.append("osd.alpha={}".format(spec["osd_alpha"]))
         path, _chosen = QFileDialog.getSaveFileName(self, tr(69), "yucha-dev.txt", "Text (*.txt)")
         if not path:
             return
@@ -2266,6 +2415,7 @@ class SettingsDialog(QDialog):
             "volumeOverlay": self.overlay.currentData() or "horizontal",
             "language": self.language.currentData() or "English",
             "checkUpdates": self.check_updates.isChecked(),
+            "style": self.style_pick.currentData() or "classic",
         }
         self.connection = {
             "host": self.host.text(),
@@ -2486,16 +2636,18 @@ class MainWindow(QMainWindow):
         self._overlay(self.chat_line)
         self.chat_line.hide()
         chat_row = QHBoxLayout(self.chat_line)
-        chat_row.setContentsMargins(10, 6, 10, 6)
+        chat_row.setContentsMargins(10, 0, 2, 0)
+        chat_row.setSpacing(0)
         self.bar_message = QLineEdit()
         self._mark(self.bar_message, 4, "placeholder")
         self.bar_message.returnPressed.connect(self._send_bar_chat)
         self.bar_message.textChanged.connect(self._arm_chat_timer)
         self.bar_send = IconButton("send")
         self.bar_send.setFixedSize(32, 32)
+        self.bar_send.setObjectName("baricon")
         self.bar_send.clicked.connect(self._send_bar_chat)
         chat_row.addWidget(self.bar_message, 1)
-        chat_row.addWidget(self.bar_send)
+        chat_row.addWidget(self.bar_send, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         self.volume_box = QWidget(column)
         self.volume_box.setObjectName("volume")
@@ -2705,21 +2857,23 @@ class MainWindow(QMainWindow):
         width = self.stage.width()
         height = self.stage.height()
         inset = self._bar_height()
-        self.bar.setGeometry(0, max(0, height - inset), width, inset)
+        gap = FLOAT_GAP if self._is_modern() else 0
+        lift = POP_GAP if gap else 0
+        self.bar.setGeometry(gap, max(0, height - inset - gap), max(1, width - gap * 2), inset)
         panel_width = self._panel_span(width) if self._panel_open else 0
-        panel_height = max(0, height - inset)
+        panel_height = max(0, height - inset - gap - lift - gap)
         if self._panel_open:
-            self.panel.setGeometry(max(0, width - panel_width), 0, panel_width, panel_height)
+            self.panel.setGeometry(max(0, width - panel_width - gap), gap, panel_width, panel_height)
             self.panel.show()
         else:
             self.panel.hide()
-        free = max(0, width - panel_width)
+        free = max(0, width - panel_width - gap)
         box_w = max(1, int(round(free * 0.2)))
         box_h = 44
         if self._chat_open:
             self.chat_line.setGeometry(
                 max(0, (free - box_w) // 2),
-                max(0, height - inset - 16 - box_h),
+                max(0, height - inset - gap - 16 - box_h),
                 box_w,
                 box_h,
             )
@@ -2730,7 +2884,7 @@ class MainWindow(QMainWindow):
         box_width, box_height = 280, 40
         self.volume_box.setGeometry(
             max(0, (width - box_width) // 2),
-            max(0, height - inset - 90),
+            max(0, height - inset - gap - 90),
             min(box_width, width),
             box_height,
         )
@@ -2932,6 +3086,9 @@ class MainWindow(QMainWindow):
         self._fill_tracks()
         self._place_overlays()
 
+    def _is_modern(self):
+        return self.app.store.data["appearance"].get("style") == "modern"
+
     def _bar_height(self):
         return getattr(self, "_bar_h", BAR_HEIGHT)
 
@@ -2950,7 +3107,7 @@ class MainWindow(QMainWindow):
         appearance = self.app.store.data["appearance"]
         theme = _shown_theme(appearance.get("theme"))
         accent = appearance.get("accentColor")
-        self.setStyleSheet(_stylesheet(theme, accent))
+        self.setStyleSheet(_stylesheet(theme, accent, self._face_paint(theme)) + self._chrome_css(theme))
         dev = self._dev or {}
         ui = dev.get("ui") or {}
         size = int(ui.get("size") or appearance.get("uiFontSize") or 16)
@@ -2995,7 +3152,56 @@ class MainWindow(QMainWindow):
         self._paint_chat()
         self._paint_users()
         self._style_titles()
+        self._apply_skin()
         self._apply_subtitles()
+        self._place_overlays()
+
+    def _face_paint(self, theme):
+        face = (self._dev or {}).get("face") or {}
+        paint = {}
+        for key in ("bg", "field", "border", "button", "button_fg"):
+            ink = _dev_ink(face.get(key), theme)
+            if ink:
+                paint[key] = ink
+        return paint
+
+    def _chrome_css(self, theme):
+        pal = _palette(theme, self.app.store.data["appearance"].get("accentColor"))
+        pal.update(self._face_paint(theme))
+        dev = self._dev or {}
+        modern = self._is_modern()
+        radius = 12 if modern else 0
+        if modern:
+            bar_border = "border: none;"
+            panel_border = "border: none;"
+        else:
+            bar_border = "border-top: 1px solid {};".format(pal["border"])
+            panel_border = "border-left: 1px solid {};".format(pal["border"])
+        return (
+            "QWidget#bar {{ background: {bar}; border-radius: {radius}px; {bar_border} }}"
+            "QWidget#panel {{ background: {panel}; border-radius: {radius}px; {panel_border} }}"
+        ).format(
+            bar=_rgba(pal["bg"], dev.get("bar_alpha", 100)),
+            panel=_rgba(pal["bg"], dev.get("panel_alpha", 100)),
+            radius=radius,
+            bar_border=bar_border,
+            panel_border=panel_border,
+        )
+
+    def _apply_skin(self):
+        theme = _shown_theme(self.app.store.data["appearance"].get("theme"))
+        face = (self._dev or {}).get("face") or {}
+        ready = _dev_ink(face.get("ready"), theme) or "#3EAD62"
+        away = _dev_ink(face.get("away"), theme) or "#C4453C"
+        if hasattr(self, "ready"):
+            self.ready._ready_on = QColor(ready)
+            self.ready._ready_off = QColor(away)
+            self.ready.update()
+        if hasattr(self, "board"):
+            self.board.ready_on = ready
+            self.board.ready_off = away
+            percent = int((self._dev or {}).get("osd_alpha", 91))
+            self.board.plate_alpha = max(0, min(255, int(round(percent / 100.0 * 255))))
 
     def _style_titles(self):
         spec = (self._dev or {}).get("titles") or {}
@@ -3880,7 +4086,7 @@ class MainWindow(QMainWindow):
         else:
             self.board.force = None
         point = max(1, min(96, point))
-        self.board.bar_h = self._bar_height()
+        self.board.bar_h = self._bar_height() + (FLOAT_GAP if self._is_modern() else 0)
         page = _palette(theme, appearance.get("accentColor"))
         ink = _dev_ink(osd, theme) if osd else ""
         if ink:
