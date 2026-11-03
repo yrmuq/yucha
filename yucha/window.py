@@ -722,15 +722,12 @@ def _paint_mark(painter, kind, band, color):
 
 
 class NoticeBoard(QWidget):
-    """Toasts and the room notes drawn by Qt, so the slide is not tied to a video frame."""
+    """Room notes drawn into the video frame. The timer redraws that frame while a toast moves."""
 
     def __init__(self, parent):
         super().__init__(parent)
         self.setObjectName("notices")
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        self.setAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop, True)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setAutoFillBackground(False)
+        self.hide()
         self.font_px = 18
         self.page = _palette("dark")
         self.me = ""
@@ -739,6 +736,7 @@ class NoticeBoard(QWidget):
         self.notices = []
         self.ready = []
         self.toasts = []
+        self.repaint_frame = None
         self._timer = QTimer(self)
         self._timer.setInterval(16)
         self._timer.timeout.connect(self._tick)
@@ -768,10 +766,10 @@ class NoticeBoard(QWidget):
                 self._timer.start()
         elif self._timer.isActive():
             self._timer.stop()
-        self.update()
+        if self.repaint_frame is not None:
+            self.repaint_frame()
 
-    def paintEvent(self, event):
-        painter = QPainter(self)
+    def paint_on(self, painter, width, height):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
         font = QFont(self.font())
@@ -781,7 +779,7 @@ class NoticeBoard(QWidget):
         row_h = metrics.height()
         xh = max(4, metrics.xHeight())
         pad = 8
-        width = max(1, self.width())
+        width = max(1, width)
         now = time.monotonic()
         y = 16
         left_w = 0
@@ -814,7 +812,7 @@ class NoticeBoard(QWidget):
                 painter.drawEllipse(QRectF(16 + pad + name_w + 10, cy, dot, dot))
             left_w = max(left_w, 16 + box_w)
         room = max(120, width - left_w - 32)
-        floor = max(24, self.height() - BAR_HEIGHT - 8)
+        floor = max(24, height - BAR_HEIGHT - 8)
         y = 16
         for item in self.toasts:
             lines = _toast_lines(item["spans"], metrics, room)
@@ -848,7 +846,6 @@ class NoticeBoard(QWidget):
                     cursor += metrics.horizontalAdvance(piece["v"])
                 text_y += row_h
             y += box_h + 6
-        painter.end()
 
     def _box(self, painter, x, y, w, h):
         painter.setPen(Qt.PenStyle.NoPen)
@@ -2119,6 +2116,8 @@ class MainWindow(QMainWindow):
         self.video.arrowPressed.connect(self._on_arrow)
         self.video.filesDropped.connect(self._add_dropped)
         self.video.enterPressed.connect(self._enter_chat)
+        self.board.repaint_frame = self.video.redraw
+        self.video.notes = self.board.paint_on
         col.addWidget(self.video, 1)
 
         self.bar = QWidget(column)
@@ -2406,8 +2405,6 @@ class MainWindow(QMainWindow):
             min(box_width, width),
             box_height,
         )
-        self.board.setGeometry(0, 0, width, height)
-        self.board.raise_()
         self.bar.raise_()
         self.panel.raise_()
         if self._chat_open:
