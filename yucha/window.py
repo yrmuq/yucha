@@ -60,7 +60,7 @@ from yucha import __version__, fetch_newer_stable
 from yucha.configstore import font_name, hex_color, move_entry, wheel_rgb
 from yucha.engine import Picture
 from yucha.i18n import languages, tr, trf
-from yucha.player_ui import room_file_notes
+from yucha.player_ui import replace_seek_toast, room_file_notes
 from yucha.system import Notifier, SleepInhibit, join_line, people_joined
 
 HIDE_AFTER = 3.0
@@ -3401,7 +3401,9 @@ class MainWindow(QMainWindow):
         else:
             self._append_chat_line(spans)
         if not _startup_line(text):
-            self._osd.append({"born": time.monotonic(), "spans": spans, "leave": None})
+            now = time.monotonic()
+            if not replace_seek_toast(self._osd, spans, now, SLIDE):
+                self._osd.append({"born": now, "fresh": now, "spans": spans, "leave": None})
             self._refresh_osd()
         me = str(self.app.store.data["connection"].get("name") or "")
         if user and user != me:
@@ -3488,7 +3490,8 @@ class MainWindow(QMainWindow):
         for item in self._osd:
             if not isinstance(item, dict):
                 item = {"born": item[0], "spans": item[1], "leave": item[2] if len(item) > 2 else None}
-            if item.get("leave") is None and now - item["born"] >= CHAT_LIFE:
+            stamp = item.get("fresh", item["born"])
+            if item.get("leave") is None and now - stamp >= CHAT_LIFE:
                 item["leave"] = now
             if item.get("leave") is not None and now - item["leave"] >= SLIDE:
                 continue

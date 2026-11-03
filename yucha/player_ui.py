@@ -57,6 +57,32 @@ def _file_duration(value):
     return round(duration, 3)
 
 
+def _is_seek(spans):
+    return any(span.get("k") == "mark" and span.get("v") == "jump" for span in spans or [])
+
+
+def replace_seek_toast(items, spans, now, slide):
+    """Update the newest visible seek toast instead of stacking another one.
+
+    Returns True when the existing toast was reused. Its hide timer starts over
+    and it does not slide in again.
+    """
+    if not _is_seek(spans):
+        return False
+    latest = None
+    for item in items:
+        leave = item.get("leave")
+        if leave is not None and now - leave >= slide:
+            continue
+        latest = item
+    if latest is None or not _is_seek(latest.get("spans")):
+        return False
+    latest["spans"] = spans
+    latest["fresh"] = now
+    latest["leave"] = None
+    return True
+
+
 class PlayerUI(object):
     """Methods Syncplay's UiManager expects. Unknown calls are ignored."""
 

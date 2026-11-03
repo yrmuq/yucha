@@ -13,7 +13,7 @@ sys.path.insert(0, str(ROOT / "third_party" / "syncplay"))
 from yucha import newer_stable
 from yucha.configstore import font_name, hex_color, move_entry, wheel_rgb
 from yucha.i18n import system_language
-from yucha.player_ui import room_file_notes
+from yucha.player_ui import replace_seek_toast, room_file_notes
 
 
 class Color(unittest.TestCase):
@@ -89,6 +89,22 @@ class Color(unittest.TestCase):
         self.assertEqual(newer_stable("0.3.1", releases), "0.3.2")
         self.assertIsNone(newer_stable("0.3.2", releases))
         self.assertIsNone(newer_stable("0.4.0", releases))
+
+    def test_repeated_seeks_reuse_the_visible_toast(self):
+        first = [{"k": "mark", "v": "jump"}, {"k": "text", "v": " 0:10"}]
+        second = [{"k": "mark", "v": "jump"}, {"k": "text", "v": " 0:40"}]
+        pause = [{"k": "mark", "v": "pause"}, {"k": "text", "v": " pause"}]
+        items = [{"born": 1, "fresh": 1, "spans": first, "leave": None}]
+        self.assertTrue(replace_seek_toast(items, second, 3, 0.2))
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["spans"], second)
+        self.assertEqual(items[0]["fresh"], 3)
+        self.assertEqual(items[0]["born"], 1)
+        self.assertIsNone(items[0]["leave"])
+        items.append({"born": 4, "fresh": 4, "spans": pause, "leave": None})
+        self.assertFalse(replace_seek_toast(items, second, 5, 0.2))
+        gone = [{"born": 1, "fresh": 1, "spans": first, "leave": 2}]
+        self.assertFalse(replace_seek_toast(gone, second, 3, 0.2))
 
 
 if __name__ == "__main__":
