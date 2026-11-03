@@ -343,6 +343,10 @@ def _stylesheet(theme, accent=None, paint=None):
         border: 1px solid {border};
         background: {bg};
     }}
+    QWidget#settingshost, QWidget#settingspage, QScrollArea#settingscroll, QScrollArea#settingscroll > QWidget {{
+        background: {bg};
+        border: none;
+    }}
     QTabBar::tab {{
         background: {field};
         color: {fg};
@@ -2040,10 +2044,13 @@ class SettingsDialog(QDialog):
         page.setMinimumWidth(max(1, self._page_w - gutter))
         page.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
         page.setMinimumHeight(max(page.sizeHint().height(), 1))
+        if not page.objectName():
+            page.setObjectName("settingspage")
         host = QWidget()
+        host.setObjectName("settingshost")
         host.setFixedSize(self._page_w, self._page_h)
-        host.setAutoFillBackground(False)
         area = QScrollArea(host)
+        area.setObjectName("settingscroll")
         area.setGeometry(0, 0, self._page_w - gutter, self._page_h)
         area.setWidgetResizable(True)
         area.setFrameShape(QFrame.Shape.NoFrame)
@@ -2052,6 +2059,7 @@ class SettingsDialog(QDialog):
         area.setWidget(page)
         area.setAutoFillBackground(False)
         area.viewport().setAutoFillBackground(False)
+        page.setAutoFillBackground(False)
         bar = EdgeScroll(Qt.Orientation.Vertical, host)
         bar.attach(area.verticalScrollBar())
         area.viewport().installEventFilter(self)
