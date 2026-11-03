@@ -1,9 +1,11 @@
 # Copyright (C) 2026 yrmuq
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+import os
 import unittest
 
-from yucha.configstore import font_name, hex_color, wheel_rgb
+from yucha.configstore import font_name, hex_color, move_entry, wheel_rgb
+from yucha.i18n import system_language
 
 
 class Color(unittest.TestCase):
@@ -21,6 +23,31 @@ class Color(unittest.TestCase):
         self.assertEqual(wheel_rgb(0, 0, 100), (255, 255, 255))
         self.assertEqual(wheel_rgb(100, 0, 100), (255, 0, 0))
         self.assertIsNone(wheel_rgb(101, 0, 100))
+
+    def test_move_entry_inserts_before_the_destination(self):
+        items = ["a", "b", "c"]
+        move_entry(items, 0, 3)
+        self.assertEqual(items, ["b", "c", "a"])
+        move_entry(items, 2, 0)
+        self.assertEqual(items, ["a", "b", "c"])
+
+    def test_system_language_uses_russian_or_english(self):
+        previous_all = os.environ.get("LC_ALL")
+        previous = os.environ.get("LANG")
+        try:
+            os.environ["LC_ALL"] = "ru_RU.UTF-8"
+            self.assertEqual(system_language(), "Russian")
+            os.environ["LC_ALL"] = "fr_FR.UTF-8"
+            self.assertEqual(system_language(), "English")
+        finally:
+            if previous_all is None:
+                os.environ.pop("LC_ALL", None)
+            else:
+                os.environ["LC_ALL"] = previous_all
+            if previous is None:
+                os.environ.pop("LANG", None)
+            else:
+                os.environ["LANG"] = previous
 
 
 if __name__ == "__main__":

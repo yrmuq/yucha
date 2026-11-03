@@ -43,6 +43,7 @@
 | `Double Click` | Toggle Fullscreen. |
 | `Left` / `Right` | Seek backward / forward (`5s`). |
 | `Up` / `Down` / `Mouse Wheel` | Adjust volume (`10%` steps via keys, up to `130%` max). |
+| `Enter` | Open the message field. Enter again sends the text and closes the field. |
 | `M` | Toggle Mute. |
 | `Left Click` (Playlist) | Play selected file from `0:00`. |
 | `Right Click` (Playlist) | Remove file from playlist. |

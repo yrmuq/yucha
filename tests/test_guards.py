@@ -33,7 +33,27 @@ class Guards(unittest.TestCase):
             self.assertEqual(original.strip(), shown.strip())
             self.assertNotIn(number.strip(), seen)
             seen.add(number.strip())
-        self.assertEqual(len(seen), 56)
+        self.assertEqual(len(seen), 57)
+
+    def test_russian_keeps_the_same_ids(self):
+        def rows(name):
+            found = {}
+            for line in (i18n.FOLDER / name).read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line or line.startswith(";") or line.startswith("#") or line.startswith("["):
+                    continue
+                number, rest = line.split("=", 1)
+                original, shown = rest.rsplit("=", 1)
+                found[number.strip()] = (original, shown)
+            return found
+
+        english = rows("English.ini")
+        russian = rows("Russian.ini")
+        self.assertEqual(set(english), set(russian))
+        for number, (original, shown) in english.items():
+            self.assertEqual(original, russian[number][0])
+            self.assertEqual(original.count("{}"), russian[number][1].count("{}"))
+            self.assertEqual(original.count("{}"), shown.count("{}"))
         previous = i18n.FOLDER
         try:
             with tempfile.TemporaryDirectory() as tmp:

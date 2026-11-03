@@ -19,6 +19,7 @@ from PySide6.QtGui import (
     QFontDatabase,
     QFontInfo,
     QFontMetrics,
+    QGuiApplication,
     QImage,
     QPainter,
     QPainterPath,
@@ -51,7 +52,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from yucha.configstore import font_name, hex_color, wheel_rgb
+from yucha.configstore import font_name, hex_color, move_entry, wheel_rgb
 from yucha.i18n import languages, tr, trf
 from yucha.system import Notifier, SleepInhibit, join_line, people_joined
 
@@ -60,6 +61,10 @@ CHAT_LIFE = 5.0
 READY_LIFE = 2.0
 VOLUME_LIFE = 2.0
 PANEL_WIDTH = 380
+PANEL_MIN = 240
+PANEL_MAX = 900
+EDGE_PX = 12
+GRIP_PX = 8
 BAR_HEIGHT = 72
 POP_GAP = 8
 CHAT_EXTRA = 52
@@ -76,6 +81,37 @@ def _volume_limit(value):
         number = 100
     number = max(100, min(VOLUME_MAX, number))
     return 100 + ((number - 100) // 5) * 5
+
+
+def _system_dark():
+    hints = QGuiApplication.styleHints()
+    scheme = getattr(hints, "colorScheme", None)
+    kinds = getattr(Qt, "ColorScheme", None)
+    if scheme is not None and kinds is not None:
+        current = scheme()
+        if current == kinds.Dark:
+            return True
+        if current == kinds.Light:
+            return False
+    window = QApplication.palette().color(QPalette.ColorRole.Window)
+    ink = QApplication.palette().color(QPalette.ColorRole.WindowText)
+    return window.lightness() < ink.lightness()
+
+
+def _shown_theme(theme):
+    if theme == "light":
+        return "light"
+    if theme == "auto":
+        return "dark" if _system_dark() else "light"
+    return "dark"
+
+
+def bounded_panel(value):
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = PANEL_WIDTH
+    return max(PANEL_MIN, min(PANEL_MAX, number))
 
 
 def _palette(theme, accent=None):
@@ -160,7 +196,16 @@ def _stylesheet(theme, accent=None):
         font-weight: 700;
         background: transparent;
     }}
-    QWidget#bar, QWidget#chatline {{ border-top: 1px solid {border}; }}
+    QWidget#bar {{ border-top: 1px solid {border}; }}
+    QWidget#chatline {{
+        background: {field};
+        border: 1px solid {border};
+        border-radius: 8px;
+    }}
+    QWidget#chatline QLineEdit {{
+        background: transparent;
+        border: none;
+    }}
     QWidget#panel {{ border-left: 1px solid {border}; }}
     QWidget#banner {{
         background: {field};
@@ -606,16 +651,28 @@ def _top_round(rect, radius):
 
 
 class FileList(QListWidget):
-    """The episode list. A left click plays a row. A right click removes it."""
+    """The episode list. A left click plays a row. A drag reorders it. A right click removes it."""
 
     removed = Signal(str)
     chosen = Signal(str)
+    moved = Signal(str, int)
 
     def __init__(self):
         super().__init__()
         self.setSelectionMode(QListWidget.SelectionMode.NoSelection)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setItemDelegate(FileDelegate(self))
+        self._press_item = None
+        self._press_pos = None
+        self._dragging = False
+        self._drop_row = -1
+        self._line = QWidget(self.viewport())
+        self._line.setFixedHeight(2)
+        self._line.hide()
+        self.set_mark("#F4F1EA")
+
+    def set_mark(self, color):
+        self._line.setStyleSheet("background: {}; border: none;".format(color))
 
     def mousePressEvent(self, event):
         item = self.itemAt(event.position().toPoint())
@@ -625,10 +682,63 @@ class FileList(QListWidget):
             event.accept()
             return
         if item is not None and event.button() == Qt.MouseButton.LeftButton and path:
-            self.chosen.emit(path)
+            self._press_item = item
+            self._press_pos = event.position()
+            self._dragging = False
             event.accept()
             return
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._press_item is None or not (event.buttons() & Qt.MouseButton.LeftButton):
+            super().mouseMoveEvent(event)
+            return
+        moved = (event.position() - self._press_pos).manhattanLength()
+        if not self._dragging and moved < 8:
+            return
+        self._dragging = True
+        self._drop_row = self._row_at(event.position().y())
+        self._show_line()
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        item = self._press_item
+        dragging = self._dragging
+        dest = self._drop_row
+        self._press_item = None
+        self._dragging = False
+        self._drop_row = -1
+        self._line.hide()
+        if item is None:
+            super().mouseReleaseEvent(event)
+            return
+        path = item.data(Qt.ItemDataRole.UserRole) or ""
+        if dragging:
+            self.moved.emit(path, dest)
+        elif path and event.button() == Qt.MouseButton.LeftButton:
+            self.chosen.emit(path)
+        event.accept()
+
+    def _row_at(self, y):
+        count = self.count()
+        for index in range(count):
+            rect = self.visualItemRect(self.item(index))
+            if y < rect.center().y():
+                return index
+        return count
+
+    def _show_line(self):
+        count = self.count()
+        if count <= 0 or self._drop_row < 0:
+            self._line.hide()
+            return
+        if self._drop_row >= count:
+            y = self.visualItemRect(self.item(count - 1)).bottom()
+        else:
+            y = self.visualItemRect(self.item(self._drop_row)).top()
+        self._line.setGeometry(6, max(0, int(y) - 1), max(1, self.viewport().width() - 12), 2)
+        self._line.show()
+        self._line.raise_()
 
 
 class ColumnLines(QWidget):
@@ -1205,11 +1315,14 @@ class SettingsDialog(QDialog):
         theme_page = QWidget()
         theme_form = QFormLayout(theme_page)
         self.theme = QComboBox()
+        self.theme.addItem(tr(57), "auto")
         self.theme.addItem(tr(23), "dark")
         self.theme.addItem(tr(24), "light")
-        current = appearance.get("theme") or "dark"
-        self.theme.setCurrentIndex(0 if current != "light" else 1)
-        self._look_theme = current if current == "light" else "dark"
+        current = appearance.get("theme") or "auto"
+        if current not in ("auto", "dark", "light"):
+            current = "dark"
+        self.theme.setCurrentIndex(max(0, self.theme.findData(current)))
+        self._look_theme = _shown_theme(current)
         self._look_accent = appearance.get("accentColor")
         self._style_popup(self.theme)
         self.color, color_row = self._color_row(appearance.get("chatColor"), "#F4F1EA", tr(25))
@@ -1564,6 +1677,7 @@ class MainWindow(QMainWindow):
         self.video.volumeChanged.connect(self._show_volume)
         self.video.arrowPressed.connect(self._on_arrow)
         self.video.filesDropped.connect(self._add_dropped)
+        self.video.enterPressed.connect(self._enter_chat)
         col.addWidget(self.video, 1)
 
         self.bar = QWidget(column)
@@ -1610,6 +1724,7 @@ class MainWindow(QMainWindow):
         self.bar_message = QLineEdit()
         self._mark(self.bar_message, 4, "placeholder")
         self.bar_message.returnPressed.connect(self._send_bar_chat)
+        self.bar_message.textChanged.connect(self._arm_chat_timer)
         self.bar_send = IconButton("send")
         self.bar_send.clicked.connect(self._send_bar_chat)
         chat_row.addWidget(self.bar_message, 1)
@@ -1728,6 +1843,7 @@ class MainWindow(QMainWindow):
         self.files.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.files.removed.connect(self._remove_file)
         self.files.chosen.connect(lambda path: self._play_path(path, start=True))
+        self.files.moved.connect(self._reorder_file)
         side.addWidget(self.files)
 
         self.status = QLabel("")
@@ -1751,10 +1867,23 @@ class MainWindow(QMainWindow):
         self.file_scroll.attach(self.files.verticalScrollBar())
         self.chat_scroll.attach(self.chat.verticalScrollBar())
         self.room_users.wheeled.connect(self.user_scroll.bump)
+        self._panel_width = bounded_panel(self.app.store.data["appearance"].get("panelWidth"))
+        self._grip = None
+        self._chat_timer = QTimer(self)
+        self._chat_timer.setSingleShot(True)
+        self._chat_timer.timeout.connect(self._close_chat_if_empty)
         self.files.viewport().installEventFilter(self)
         self.chat.viewport().installEventFilter(self)
         self.stage.installEventFilter(self)
+        self.video.installEventFilter(self)
+        self.bar.installEventFilter(self)
+        self.panel.installEventFilter(self)
+        self.panel.setMouseTracking(True)
         QApplication.instance().installEventFilter(self)
+        hints = QGuiApplication.styleHints()
+        changed = getattr(hints, "colorSchemeChanged", None)
+        if changed is not None:
+            changed.connect(self._on_system_theme)
         self._place_overlays()
 
     def _overlay(self, widget):
@@ -1763,13 +1892,27 @@ class MainWindow(QMainWindow):
         widget.setAutoFillBackground(True)
 
     def eventFilter(self, watched, event):
-        if event.type() == QEvent.Type.KeyPress and self._player_key(event):
+        kind = event.type()
+        if kind == QEvent.Type.KeyPress and self._player_key(event):
             return True
-        if event.type() == QEvent.Type.MouseButtonPress and self._close_popups(watched):
+        if kind == QEvent.Type.MouseButtonPress and self._press_edge(event):
+            return True
+        if kind == QEvent.Type.MouseButtonPress and self._press_grip(watched, event):
             return False
-        if watched is self.stage and event.type() == QEvent.Type.Resize:
+        if self._grip is not None and kind == QEvent.Type.MouseMove:
+            self._drag_grip(event)
+            return True
+        if self._grip is not None and kind == QEvent.Type.MouseButtonRelease:
+            self._grip = None
+            self._save_panel_width()
+            return True
+        if kind == QEvent.Type.MouseMove and watched is self.panel:
+            self._grip_cursor(event)
+        if kind == QEvent.Type.MouseButtonPress and self._close_popups(watched):
+            return False
+        if watched is self.stage and kind == QEvent.Type.Resize:
             self._place_overlays()
-        elif event.type() == QEvent.Type.Wheel:
+        elif kind == QEvent.Type.Wheel:
             if hasattr(self, "files") and watched is self.files.viewport():
                 self.file_scroll.bump()
             elif hasattr(self, "chat") and watched is self.chat.viewport():
@@ -1787,19 +1930,22 @@ class MainWindow(QMainWindow):
         height = self.stage.height()
         inset = BAR_HEIGHT
         self.bar.setGeometry(0, max(0, height - inset), width, inset)
-        panel_width = min(PANEL_WIDTH, width) if self._panel_open else 0
+        panel_width = self._panel_span(width) if self._panel_open else 0
         panel_height = max(0, height - inset)
         if self._panel_open:
             self.panel.setGeometry(max(0, width - panel_width), 0, panel_width, panel_height)
             self.panel.show()
         else:
             self.panel.hide()
+        free = max(0, width - panel_width)
+        box_w = max(1, int(round(free * 0.2)))
+        box_h = 44
         if self._chat_open:
             self.chat_line.setGeometry(
-                0,
-                max(0, height - inset - CHAT_EXTRA),
-                max(0, width - panel_width),
-                CHAT_EXTRA,
+                max(0, (free - box_w) // 2),
+                max(0, height - inset - 16 - box_h),
+                box_w,
+                box_h,
             )
             self.chat_line.show()
         else:
@@ -2039,7 +2185,7 @@ class MainWindow(QMainWindow):
 
     def apply_theme(self):
         appearance = self.app.store.data["appearance"]
-        theme = appearance.get("theme") or "dark"
+        theme = _shown_theme(appearance.get("theme"))
         accent = appearance.get("accentColor")
         self.setStyleSheet(_stylesheet(theme, accent))
         size = int(appearance.get("uiFontSize") or 16)
@@ -2106,6 +2252,55 @@ class MainWindow(QMainWindow):
             self._last_move = time.monotonic()
         self._place_overlays()
 
+    def _panel_span(self, width):
+        room = max(PANEL_MIN, width - 80)
+        return max(PANEL_MIN, min(self._panel_width, PANEL_MAX, room))
+
+    def _press_edge(self, event):
+        if not self.isFullScreen() or self._panel_open:
+            return False
+        if event.button() != Qt.MouseButton.LeftButton:
+            return False
+        screen = self.screen()
+        if screen is None:
+            return False
+        if event.globalPosition().x() < screen.geometry().right() - (EDGE_PX - 1):
+            return False
+        self.set_panel(True)
+        return True
+
+    def _press_grip(self, watched, event):
+        if watched is not self.panel or not self._panel_open:
+            return False
+        if event.button() != Qt.MouseButton.LeftButton:
+            return False
+        local = self.panel.mapFromGlobal(event.globalPosition().toPoint())
+        if local.x() > GRIP_PX or local.y() < 0 or local.y() > self.panel.height():
+            return False
+        self._grip = (event.globalPosition().x(), self._panel_width)
+        return True
+
+    def _drag_grip(self, event):
+        start_x, start_w = self._grip
+        delta = start_x - event.globalPosition().x()
+        self._panel_width = bounded_panel(start_w + delta)
+        self._place_overlays()
+
+    def _save_panel_width(self):
+        self.app.store.data["appearance"]["panelWidth"] = bounded_panel(self._panel_width)
+        self.app.store.save()
+
+    def _grip_cursor(self, event):
+        local = self.panel.mapFromGlobal(event.globalPosition().toPoint())
+        if 0 <= local.x() <= GRIP_PX:
+            self.panel.setCursor(Qt.CursorShape.SizeHorCursor)
+        else:
+            self.panel.unsetCursor()
+
+    def _on_system_theme(self, *_args):
+        if self.app.store.data["appearance"].get("theme") == "auto":
+            self.apply_theme()
+
     def _toggle_room(self):
         self.set_panel(not self._panel_open)
 
@@ -2119,14 +2314,43 @@ class MainWindow(QMainWindow):
         self._place_overlays()
 
     def _toggle_chat_field(self):
-        self._chat_open = not self._chat_open
-        self.chat_btn.setChecked(self._chat_open)
         if self._chat_open:
-            self._set_bar(True)
-            self.bar_message.setFocus()
-        else:
-            self._last_move = time.monotonic()
+            self._close_chat_field()
+            return
+        self._open_chat_field()
+
+    def _enter_chat(self):
+        if not self._chat_open:
+            self._open_chat_field()
+            return
+        self.bar_message.setFocus()
+
+    def _open_chat_field(self):
+        self._chat_open = True
+        self.chat_btn.setChecked(True)
+        self._set_bar(True)
         self._place_overlays()
+        self.bar_message.setFocus()
+        self._arm_chat_timer()
+
+    def _close_chat_field(self):
+        self._chat_open = False
+        self.chat_btn.setChecked(False)
+        self._chat_timer.stop()
+        self._last_move = time.monotonic()
+        self._place_overlays()
+
+    def _close_chat_if_empty(self):
+        if self._chat_open and not self.bar_message.text().strip():
+            self._close_chat_field()
+
+    def _arm_chat_timer(self, *_args):
+        if not self._chat_open:
+            return
+        if self.bar_message.text().strip():
+            self._chat_timer.stop()
+            return
+        self._chat_timer.start(5000)
 
     def _lock_volume_digits(self):
         if not hasattr(self, "volume_text"):
@@ -2228,6 +2452,10 @@ class MainWindow(QMainWindow):
         if key == int(Qt.Key.Key_M):
             if not event.isAutoRepeat():
                 self._toggle_mute()
+            return True
+        if key in (int(Qt.Key.Key_Return), int(Qt.Key.Key_Enter)):
+            if not event.isAutoRepeat():
+                self._enter_chat()
             return True
         return self._on_arrow(key)
 
@@ -2374,6 +2602,13 @@ class MainWindow(QMainWindow):
         nxt = min(max(index, 0), len(self._playlist) - 1)
         self._play_path(self._playlist[nxt]["path"], start=True)
 
+    def _reorder_file(self, path, dest):
+        index = next((i for i, item in enumerate(self._playlist) if item["path"] == path), -1)
+        if index < 0:
+            return
+        move_entry(self._playlist, index, dest)
+        self._refresh_files()
+
     def _advance(self):
         if len(self._playlist) <= 1:
             return
@@ -2387,7 +2622,7 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "files"):
             return
         appearance = self.app.store.data["appearance"]
-        pal = _palette(appearance.get("theme"), appearance.get("accentColor"))
+        pal = _palette(_shown_theme(appearance.get("theme")), appearance.get("accentColor"))
         self.files.clear()
         for index, item in enumerate(self._playlist, start=1):
             row = QListWidgetItem("{}. {}".format(index, item["name"]))
@@ -2396,6 +2631,7 @@ class MainWindow(QMainWindow):
                 row.setBackground(QColor(pal["accent"]))
                 row.setForeground(QColor(pal["on_fg"]))
             self.files.addItem(row)
+        self.files.set_mark(pal["accent"])
         row_h = max(24, QFontMetrics(self.files.font()).height() + 12)
         rows = max(2, self.files.count())
         self.files.setFixedHeight(rows * row_h + 2 * self.files.frameWidth())
@@ -2492,6 +2728,7 @@ class MainWindow(QMainWindow):
         self._chat_held = False
         self.app.on_command({"c": "chat", "text": text})
         self.bar_message.clear()
+        self._close_chat_field()
 
     def _reconnect(self):
         conn = self.app.store.data["connection"]
@@ -2601,7 +2838,7 @@ class MainWindow(QMainWindow):
     def _refresh_banner(self):
         if not hasattr(self, "banner_text"):
             return
-        pal = _palette(self.app.store.data["appearance"].get("theme"))
+        pal = _palette(_shown_theme(self.app.store.data["appearance"].get("theme")))
         if not self._configured():
             text, color = tr(5), "#D6B23A"
         elif self._connected:
@@ -2677,7 +2914,7 @@ class MainWindow(QMainWindow):
 
     def _nick_colors(self):
         appearance = self.app.store.data["appearance"]
-        theme = appearance.get("theme") or "dark"
+        theme = _shown_theme(appearance.get("theme"))
         mine = _palette(theme, appearance.get("accentColor"))["accent"]
         other = str(appearance.get("accentColor2") or "#1F6A8A")
         if len(other) != 7 or not other.startswith("#"):
@@ -2690,7 +2927,7 @@ class MainWindow(QMainWindow):
             return
         me, mine, other = self._nick_colors()
         appearance = self.app.store.data["appearance"]
-        border = _palette(appearance.get("theme"), appearance.get("accentColor"))["border"]
+        border = _palette(_shown_theme(appearance.get("theme")), appearance.get("accentColor"))["border"]
         self.room_users.set_people(self._users, me, mine, other, border)
         me = str(self.app.store.data["connection"].get("name") or "")
         mine = next((person for person in self._users if person["name"] == me), None)
@@ -2704,7 +2941,7 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "chat"):
             return
         me, mine, other = self._nick_colors()
-        bad = _palette(self.app.store.data["appearance"].get("theme"))["bad"]
+        bad = _palette(_shown_theme(self.app.store.data["appearance"].get("theme")))["bad"]
         self.chat.clear()
         for spans in self._chat_lines:
             self.chat.append(_spans_html(spans, me, mine, other, bad))
@@ -2713,7 +2950,7 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "chat"):
             return
         me, mine, other = self._nick_colors()
-        bad = _palette(self.app.store.data["appearance"].get("theme"))["bad"]
+        bad = _palette(_shown_theme(self.app.store.data["appearance"].get("theme")))["bad"]
         self.chat.append(_spans_html(spans, me, mine, other, bad))
 
     def _add_chat(self, user, text):
@@ -2814,7 +3051,7 @@ class MainWindow(QMainWindow):
         now = time.monotonic()
         self._osd = [item for item in self._osd if now - item[0] < CHAT_LIFE]
         appearance = self.app.store.data["appearance"]
-        theme = appearance.get("theme") or "dark"
+        theme = _shown_theme(appearance.get("theme"))
         point = int(appearance.get("chatFontSize") or 18)
         measure = QFont(self.font())
         measure.setPointSize(max(10, min(48, point)))

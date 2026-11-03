@@ -65,6 +65,7 @@ class Picture(QOpenGLWidget):
     volumeChanged = Signal(int)
     arrowPressed = Signal(int)
     filesDropped = Signal(list)
+    enterPressed = Signal()
 
     def __init__(self, runtime, parent=None):
         super().__init__(parent)
@@ -184,6 +185,10 @@ class Picture(QOpenGLWidget):
         key = event.key()
         if key == Qt.Key.Key_Space and not event.isAutoRepeat():
             self._pause()
+            event.accept()
+            return
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and not event.isAutoRepeat():
+            self.enterPressed.emit()
             event.accept()
             return
         if key in (Qt.Key.Key_Left, Qt.Key.Key_Right, Qt.Key.Key_Up, Qt.Key.Key_Down):

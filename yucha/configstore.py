@@ -7,6 +7,8 @@ import math
 import os
 from pathlib import Path
 
+from yucha.i18n import system_language
+
 
 def config_dir():
     base = os.environ.get("XDG_CONFIG_HOME")
@@ -63,6 +65,17 @@ def wheel_rgb(dx, dy, radius):
     return _hsv_rgb(hue, dist / radius, 1.0)
 
 
+def move_entry(items, source, dest):
+    """Move one list entry. `dest` is the slot before the move."""
+    if source < 0 or source >= len(items):
+        return
+    item = items.pop(source)
+    if dest > source:
+        dest -= 1
+    dest = max(0, min(len(items), dest))
+    items.insert(dest, item)
+
+
 def _hsv_rgb(hue, sat, val):
     column = val * sat
     sector = (hue / 60.0) % 6.0
@@ -108,7 +121,7 @@ DEFAULTS = {
         "room": "",
     },
     "appearance": {
-        "theme": "dark",
+        "theme": "auto",
         "chatColor": "#F4F1EA",
         "accentColor": "#9A3A52",
         "accentColor2": "#1F6A8A",
@@ -123,6 +136,7 @@ DEFAULTS = {
         "subFont": "sans-serif",
         "subFontSize": 55,
         "subColor": "#FFFFFF",
+        "panelWidth": 380,
     },
 }
 
@@ -130,8 +144,11 @@ DEFAULTS = {
 class ConfigStore(object):
     def __init__(self):
         self.path = config_dir() / "config.json"
+        fresh = not self.path.is_file()
         self.data = json.loads(json.dumps(DEFAULTS))
         self.load()
+        if fresh:
+            self.data["appearance"]["language"] = system_language()
 
     def load(self):
         if not self.path.is_file():
@@ -149,6 +166,9 @@ class ConfigStore(object):
         look["subFontSize"] = bounded_int(look.get("subFontSize"), 55, 8, 120)
         look["subColor"] = hex_color(look.get("subColor"), "#FFFFFF")
         look["subFont"] = font_name(look.get("subFont"))
+        look["panelWidth"] = bounded_int(look.get("panelWidth"), 380, 240, 900)
+        if look.get("theme") not in ("auto", "dark", "light"):
+            look["theme"] = "dark"
 
     def save(self):
         payload = json.dumps(self.data, indent=2, ensure_ascii=False) + "\n"

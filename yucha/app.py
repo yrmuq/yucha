@@ -97,7 +97,7 @@ class App(object):
         elif kind == "appearance":
             appearance = self.store.data["appearance"]
             theme = command.get("theme")
-            if theme in ("dark", "light"):
+            if theme in ("dark", "light", "auto"):
                 appearance["theme"] = theme
             color = hex_color(command.get("chatColor"), appearance.get("chatColor") or "#F4F1EA")
             appearance["chatColor"] = color
