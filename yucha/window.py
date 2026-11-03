@@ -21,10 +21,12 @@ from PySide6.QtGui import (
     QFontMetrics,
     QGuiApplication,
     QImage,
+    QKeySequence,
     QPainter,
     QPainterPath,
     QPalette,
     QPen,
+    QShortcut,
 )
 from PySide6.QtWidgets import (
     QApplication,
@@ -74,6 +76,7 @@ SEEK_STEPS = 100000
 CHAT_BOX = 300
 VOLUME_MAX = 130
 CHAT_CAP = 300
+SLIDE = 0.2
 
 
 def _volume_limit(value):
@@ -499,6 +502,15 @@ def _n(value):
 _TIME = r"\d+:\d+(?::\d+)?"
 
 
+def _slide_x(now, born, leave, target, edge):
+    """0 is off the right edge. 1 is the resting place."""
+    if leave is None:
+        done = min(1.0, max(0.0, (now - born) / SLIDE))
+    else:
+        done = 1.0 - min(1.0, max(0.0, (now - leave) / SLIDE))
+    return int(round(edge + (target - edge) * done))
+
+
 def _hidden_line(text):
     low = str(text).lower()
     return "persistent rooms" in low or "not a known media directory" in low
@@ -517,34 +529,39 @@ def _status_spans(text):
     rules = (
         (r"^(.+?) paused at (" + _TIME + r")$", lambda m: (
             ("nick", m.group(1)),
-            ("text", " || " + m.group(2)),
+            ("mark", "||"),
+            ("text", " " + tr(59) + " " + m.group(2)),
         )),
         (r"^(.+?) unpaused$", lambda m: (
             ("nick", m.group(1)),
-            ("text", " ▶"),
+            ("mark", " ▶"),
         )),
         (r"^(.+?) jumped from (" + _TIME + r") to (" + _TIME + r")$", lambda m: (
             ("nick", m.group(1)),
-            ("text", " " + m.group(2) + " → " + m.group(3)),
+            ("text", " " + m.group(2)),
+            ("mark", " → "),
+            ("text", m.group(3)),
         )),
         (r"^Rewinded due to time difference with (.+)$", lambda m: (
-            ("text", "◀◀ "),
+            ("mark", "◀◀ "),
             ("nick", m.group(1)),
         )),
         (r"^Fast-forwarded due to time difference with (.+)$", lambda m: (
-            ("text", "▶▶ "),
+            ("mark", "▶▶ "),
             ("nick", m.group(1)),
         )),
         (r"^Slowing down due to time difference with (.+)$", lambda m: (
-            ("text", "↓ "),
+            ("mark", "↓ "),
             ("nick", m.group(1)),
         )),
         (r"^Reverting speed back to normal$", lambda m: (
-            ("text", "1×"),
+            ("mark", "1× "),
+            ("text", tr(60)),
         )),
         (r"^(.+?) is playing '(.+?)' \([^)]*\)(?: in room: '.*')?$", lambda m: (
             ("nick", m.group(1)),
-            ("text", " ▶ " + m.group(2)),
+            ("mark", " ▶ "),
+            ("text", m.group(2)),
         )),
     )
     for pattern, build in rules:
@@ -1044,6 +1061,13 @@ class SeekBar(QSlider):
         self.setValue(value)
 
 
+class QuietSpin(QSpinBox):
+    """A number field. The wheel does not change it."""
+
+    def wheelEvent(self, event):
+        event.ignore()
+
+
 class IconButton(QPushButton):
     def __init__(self, kind):
         super().__init__()
@@ -1068,6 +1092,27 @@ class IconButton(QPushButton):
         self.update()
 
     def paintEvent(self, event):
+        if self.kind == "send":
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(self._accent)
+            radius = min(self.width(), self.height()) / 2 - 1
+            painter.drawEllipse(QPointF(self.width() / 2, self.height() / 2), radius, radius)
+            color = QColor(self._ink_on)
+            painter.setPen(QPen(color, 1.6))
+            painter.setBrush(color)
+            cx = self.width() / 2
+            cy = self.height() / 2
+            path = QPainterPath()
+            path.moveTo(cx - 7, cy + 4)
+            path.lineTo(cx + 7, cy - 6)
+            path.lineTo(cx + 1, cy + 6)
+            path.lineTo(cx - 1, cy + 1)
+            path.closeSubpath()
+            painter.drawPath(path)
+            painter.end()
+            return
         super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -1124,14 +1169,7 @@ class IconButton(QPushButton):
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawLine(QPointF(cx + 3, cy - 7), QPointF(cx + 3, cy + 7))
         elif kind == "send":
-            painter.setBrush(color)
-            path = QPainterPath()
-            path.moveTo(cx - 7, cy + 4)
-            path.lineTo(cx + 7, cy - 6)
-            path.lineTo(cx + 1, cy + 6)
-            path.lineTo(cx - 1, cy + 1)
-            path.closeSubpath()
-            painter.drawPath(path)
+            return
         elif kind == "gear":
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(color)
@@ -1330,13 +1368,13 @@ class SettingsDialog(QDialog):
         self.color, color_row = self._color_row(appearance.get("chatColor"), "#F4F1EA", tr(25))
         self.accent, accent_row = self._color_row(appearance.get("accentColor"), "#9A3A52", tr(26))
         self.accent2, accent2_row = self._color_row(appearance.get("accentColor2"), "#1F6A8A", tr(27))
-        self.chat_size = QSpinBox()
+        self.chat_size = QuietSpin()
         self.chat_size.setRange(12, 48)
         self.chat_size.setValue(int(appearance.get("chatFontSize") or 18))
-        self.ui_size = QSpinBox()
+        self.ui_size = QuietSpin()
         self.ui_size.setRange(1, 32)
         self.ui_size.setValue(int(appearance.get("uiFontSize") or 16))
-        self.sub_size = QSpinBox()
+        self.sub_size = QuietSpin()
         self.sub_size.setRange(8, 120)
         self.sub_size.setValue(int(appearance.get("subFontSize") or 55))
         self.sub_font = QComboBox()
@@ -1637,6 +1675,9 @@ class MainWindow(QMainWindow):
         self._room_names = set()
         self._room_was_ready = False
         self._volume_flash = False
+        self._ready_people = []
+        self._ready_born = None
+        self._ready_leave = None
         self._tracks_lock = None
         self._muted = False
         self._chat_held = False
@@ -1728,6 +1769,7 @@ class MainWindow(QMainWindow):
         self.bar_message.returnPressed.connect(self._send_bar_chat)
         self.bar_message.textChanged.connect(self._arm_chat_timer)
         self.bar_send = IconButton("send")
+        self.bar_send.setFixedSize(32, 32)
         self.bar_send.clicked.connect(self._send_bar_chat)
         chat_row.addWidget(self.bar_message, 1)
         chat_row.addWidget(self.bar_send)
@@ -1886,6 +1928,15 @@ class MainWindow(QMainWindow):
         changed = getattr(hints, "colorSchemeChanged", None)
         if changed is not None:
             changed.connect(self._on_system_theme)
+        self._osd_timer = QTimer(self)
+        self._osd_timer.setInterval(16)
+        self._osd_timer.timeout.connect(self._refresh_osd)
+        self._chat_keys = []
+        for key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            shortcut = QShortcut(QKeySequence(key), self)
+            shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+            shortcut.activated.connect(self._enter_chat)
+            self._chat_keys.append(shortcut)
         self._place_overlays()
 
     def _overlay(self, widget):
@@ -1961,8 +2012,9 @@ class MainWindow(QMainWindow):
             box_height,
         )
         self.bar.raise_()
-        self.chat_line.raise_()
         self.panel.raise_()
+        if self._chat_open:
+            self.chat_line.raise_()
         self.volume_box.raise_()
         self._place_pops()
         if self._volume_open or self._volume_flash:
@@ -2237,7 +2289,7 @@ class MainWindow(QMainWindow):
         return max(PANEL_MIN, min(self._panel_width, PANEL_MAX, room))
 
     def _press_edge(self, event):
-        if not self.isFullScreen() or self._panel_open:
+        if not self.isFullScreen():
             return False
         if event.button() != Qt.MouseButton.LeftButton:
             return False
@@ -2246,7 +2298,7 @@ class MainWindow(QMainWindow):
             return False
         if event.globalPosition().x() < screen.geometry().right() - (EDGE_PX - 1):
             return False
-        self.set_panel(True)
+        self.set_panel(not self._panel_open)
         return True
 
     def _press_grip(self, watched, event):
@@ -2300,10 +2352,14 @@ class MainWindow(QMainWindow):
         self._open_chat_field()
 
     def _enter_chat(self):
-        if not self._chat_open:
+        if not (self._chat_open and self.chat_line.isVisible()):
             self._open_chat_field()
             return
-        self.bar_message.setFocus()
+        if not self.bar_message.hasFocus():
+            self.chat_line.raise_()
+            self.bar_message.setFocus()
+            return
+        self._send_bar_chat()
 
     def _open_chat_field(self):
         self._chat_open = True
@@ -2697,6 +2753,7 @@ class MainWindow(QMainWindow):
     def _send_bar_chat(self):
         text = self.bar_message.text().strip()
         if not text:
+            self._close_chat_field()
             return
         client = getattr(self.app, "client", None)
         running = client is not None and getattr(client, "_running", False)
@@ -2950,7 +3007,7 @@ class MainWindow(QMainWindow):
         else:
             self._append_chat_line(spans)
         if not _startup_line(text):
-            self._osd.append((time.monotonic(), spans))
+            self._osd.append((time.monotonic(), spans, None))
         me = str(self.app.store.data["connection"].get("name") or "")
         if user and user != me:
             self._notify_background(user, text)
@@ -3028,7 +3085,16 @@ class MainWindow(QMainWindow):
         if not self.ctl:
             return
         now = time.monotonic()
-        self._osd = [item for item in self._osd if now - item[0] < CHAT_LIFE]
+        kept = []
+        for item in self._osd:
+            born, spans = item[0], item[1]
+            leave = item[2] if len(item) > 2 else None
+            if leave is None and now - born >= CHAT_LIFE:
+                leave = now
+            if leave is not None and now - leave >= SLIDE:
+                continue
+            kept.append((born, spans, leave))
+        self._osd = kept
         appearance = self.app.store.data["appearance"]
         theme = _shown_theme(appearance.get("theme"))
         point = int(appearance.get("chatFontSize") or 18)
@@ -3054,6 +3120,17 @@ class MainWindow(QMainWindow):
             if ready and now >= self._ready_until.get(name, 0):
                 continue
             people.append(person)
+        if people:
+            if self._ready_leave is not None or self._ready_born is None:
+                self._ready_born = now
+                self._ready_leave = None
+            self._ready_people = people
+        elif self._ready_people and self._ready_leave is None:
+            self._ready_leave = now
+        if self._ready_leave is not None and now - self._ready_leave >= SLIDE:
+            self._ready_people = []
+            self._ready_born = None
+            self._ready_leave = None
         lines = []
         row_h = metrics.height()
         y = 16
@@ -3077,34 +3154,35 @@ class MainWindow(QMainWindow):
                     16 + pad, int(16 + notice_h / 2), size, color, body
                 )
             )
-        if people:
-            widest = max(metrics.horizontalAdvance(person["name"]) for person in people)
+        if self._ready_people:
+            widest = max(metrics.horizontalAdvance(person["name"]) for person in self._ready_people)
             circle_w = max(metrics.height() + 8, 28)
             name_w = widest + 16
             ready_w = min(max(96, width - 16), name_w + circle_w + pad * 2)
             inner = ready_w - pad * 2
             name_col = max(24, inner - circle_w)
-            ready_h = pad * 2 + len(people) * row_h
+            ready_h = pad * 2 + len(self._ready_people) * row_h
             ready_x = max(8, width - 8 - ready_w)
+            draw_x = _slide_x(now, self._ready_born or now, self._ready_leave, ready_x, width)
             lines.append(
                 "{{\\an7\\pos({},{})\\bord0\\shad0\\1c&H{}&\\p1}}{}".format(
-                    ready_x, y, _bgr(page["bg"]), _round_box(ready_w, ready_h, 8)
+                    draw_x, y, _bgr(page["bg"]), _round_box(ready_w, ready_h, 8)
                 )
             )
             text_y = y + pad
-            for person in people:
+            for person in self._ready_people:
                 dot = "00FF00" if person["ready"] else "0000FF"
                 ink = accent if person["name"] == me else accent2
                 shown = metrics.elidedText(person["name"], Qt.TextElideMode.ElideRight, max(8, name_col - 4))
                 mid_y = int(text_y + row_h / 2)
                 lines.append(
                     "{{\\an5\\pos({},{})\\bord0\\shad0\\fs{}\\1c&H{}&}}{}".format(
-                        int(ready_x + pad + name_col / 2), mid_y, size, ink, _ass_escape(shown)
+                        int(draw_x + pad + name_col / 2), mid_y, size, ink, _ass_escape(shown)
                     )
                 )
                 lines.append(
                     "{{\\an5\\pos({},{})\\bord0\\shad0\\fs{}\\1c&H{}&}}●".format(
-                        int(ready_x + pad + name_col + (inner - name_col) / 2), mid_y, size, dot
+                        int(draw_x + pad + name_col + (inner - name_col) / 2), mid_y, size, dot
                     )
                 )
                 text_y += row_h
@@ -3113,14 +3191,16 @@ class MainWindow(QMainWindow):
         box_w = min(CHAT_BOX, max(160, width - 24))
         x = max(8, width - 8 - box_w)
         inner = max(40, box_w - pad * 2)
-        for _born, spans in self._osd:
+        mark = max(8, int(round(size * 0.7)))
+        for born, spans, leave in self._osd:
             wrapped = _wrap_spans(spans, metrics, inner)
             block_h = pad * 2 + max(1, len(wrapped)) * row_h
             if y + block_h > floor:
                 break
+            draw_x = _slide_x(now, born, leave, x, width)
             lines.append(
                 "{{\\an7\\pos({},{})\\bord0\\shad0\\1c&H{}&\\p1}}{}".format(
-                    x, y, _bgr(page["bg"]), _round_box(box_w, block_h, 8)
+                    draw_x, y, _bgr(page["bg"]), _round_box(box_w, block_h, 8)
                 )
             )
             body = []
@@ -3131,14 +3211,17 @@ class MainWindow(QMainWindow):
                         ink = accent if span["v"] == me else accent2
                     else:
                         ink = color
-                    bits.append("{{\\1c&H{}&}}{}".format(ink, _ass_escape(span["v"])))
+                    # A symbol glyph is taller than the letters at the same size.
+                    span_size = mark if span["k"] == "mark" else size
+                    bits.append("{{\\fs{}\\1c&H{}&}}{}".format(span_size, ink, _ass_escape(span["v"])))
                 body.append("".join(bits))
             lines.append(
                 "{{\\an4\\pos({},{})\\p0\\bord0\\shad0\\q2\\fs{}\\1c&H{}&}}{}".format(
-                    x + pad, int(y + block_h / 2), size, color, "\\N".join(body)
+                    draw_x + pad, int(y + block_h / 2), size, color, "\\N".join(body)
                 )
             )
             y += block_h + 6
+        self._keep_osd_moving(now)
         data = "\n".join(lines)
         if data == getattr(self, "_osd_sent", None):
             return
@@ -3155,6 +3238,23 @@ class MainWindow(QMainWindow):
             )
         except Exception:
             pass
+
+    def _keep_osd_moving(self, now):
+        timer = getattr(self, "_osd_timer", None)
+        if timer is None:
+            return
+        moving = False
+        if self._ready_born is not None and (
+            self._ready_leave is not None or now - self._ready_born < SLIDE
+        ):
+            moving = True
+        for born, _spans, leave in self._osd:
+            if leave is not None or now - born < SLIDE:
+                moving = True
+        if moving and not timer.isActive():
+            timer.start()
+        elif not moving and timer.isActive():
+            timer.stop()
 
     def accept_files(self, paths, token=""):
         self._add_dropped(list(paths))
