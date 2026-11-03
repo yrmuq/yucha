@@ -202,9 +202,14 @@ def _stylesheet(theme, accent=None, paint=None):
         border: none;
         padding: 8px 14px;
     }}
-    QDialog QLineEdit, QDialog QTextEdit, QDialog QSpinBox, QDialog QComboBox, QDialog QFontComboBox, QDialog QPushButton {{
+    QDialog QLineEdit, QDialog QTextEdit, QDialog QSpinBox, QDialog QComboBox, QDialog QFontComboBox {{
         background: {field};
         color: {fg};
+    }}
+    QDialog QPushButton {{
+        background: {field};
+        color: {fg};
+        border: 1px solid {border};
     }}
     QPushButton#swatch, QPushButton#swatch:hover, QPushButton#swatch:pressed {{
         background: transparent;
@@ -1802,7 +1807,7 @@ class SettingsDialog(QDialog):
         self.style_pick = QComboBox()
         self.style_pick.addItem(tr(72), "classic")
         self.style_pick.addItem(tr(73), "modern")
-        picked_style = appearance.get("style") or "classic"
+        picked_style = appearance.get("style") or "modern"
         self.style_pick.setCurrentIndex(1 if picked_style == "modern" else 0)
         self._style_popup(self.style_pick)
         self.color, color_row = self._color_row(appearance.get("chatColor"), "#F4F1EA", tr(25))
@@ -2492,7 +2497,7 @@ class SettingsDialog(QDialog):
             "volumeOverlay": self.overlay.currentData() or "horizontal",
             "language": self.language.currentData() or "English",
             "checkUpdates": self.check_updates.isChecked(),
-            "style": self.style_pick.currentData() or "classic",
+            "style": self.style_pick.currentData() or "modern",
         }
         self.connection = {
             "host": self.host.text(),
