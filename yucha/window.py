@@ -202,6 +202,15 @@ def _stylesheet(theme, accent=None, paint=None):
         border: none;
         padding: 8px 14px;
     }}
+    QDialog QLineEdit, QDialog QTextEdit, QDialog QSpinBox, QDialog QComboBox, QDialog QFontComboBox, QDialog QPushButton {{
+        background: {field};
+        color: {fg};
+    }}
+    QPushButton#swatch, QPushButton#swatch:hover, QPushButton#swatch:pressed {{
+        background: transparent;
+        border: none;
+        padding: 0;
+    }}
     QPushButton#step {{
         padding: 4px 12px;
         min-width: 28px;
@@ -1677,6 +1686,7 @@ class RoundSwatch(QPushButton):
         self.setFixedSize(28, 28)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setObjectName("swatch")
 
     def set_color(self, value):
         self._color = QColor(value)
@@ -2026,37 +2036,41 @@ class SettingsDialog(QDialog):
         root.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
 
     def _scroll_page(self, page):
-        page.setMinimumWidth(self._page_w)
+        gutter = 12
+        page.setMinimumWidth(max(1, self._page_w - gutter))
         page.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
         page.setMinimumHeight(max(page.sizeHint().height(), 1))
-        area = QScrollArea()
+        host = QWidget()
+        host.setFixedSize(self._page_w, self._page_h)
+        host.setAutoFillBackground(False)
+        area = QScrollArea(host)
+        area.setGeometry(0, 0, self._page_w - gutter, self._page_h)
         area.setWidgetResizable(True)
         area.setFrameShape(QFrame.Shape.NoFrame)
         area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         area.setWidget(page)
-        area.setFixedSize(self._page_w, self._page_h)
         area.setAutoFillBackground(False)
         area.viewport().setAutoFillBackground(False)
-        area.viewport().setStyleSheet("background: transparent;")
-        bar = EdgeScroll(Qt.Orientation.Vertical, area)
+        bar = EdgeScroll(Qt.Orientation.Vertical, host)
         bar.attach(area.verticalScrollBar())
         area.viewport().installEventFilter(self)
-        area.installEventFilter(self)
-        self._scrolls.append((area, bar))
-        return area
+        host.installEventFilter(self)
+        self._scrolls.append((host, area, bar))
+        self._place_settings_bar(host, area, bar)
+        return host
 
-    def _place_settings_bar(self, area, bar):
-        bar.setGeometry(max(0, area.width() - 5), 8, 3, max(12, area.height() - 16))
+    def _place_settings_bar(self, host, area, bar):
+        bar.setGeometry(area.width() + 1, 8, 3, max(12, area.height() - 16))
         if bar.maximum() <= bar.minimum():
             bar.hide()
 
     def eventFilter(self, watched, event):
         kind = event.type()
         if kind == QEvent.Type.Wheel or kind == QEvent.Type.Resize:
-            for area, bar in self._scrolls:
-                if kind == QEvent.Type.Resize and watched is area:
-                    self._place_settings_bar(area, bar)
+            for host, area, bar in self._scrolls:
+                if kind == QEvent.Type.Resize and watched is host:
+                    self._place_settings_bar(host, area, bar)
                 elif kind == QEvent.Type.Wheel and watched is area.viewport():
                     bar.bump()
         if watched is getattr(self, "_logo", None) and kind == QEvent.Type.MouseButtonPress:
