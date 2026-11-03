@@ -4,6 +4,7 @@
 the picture into the video area."""
 
 import html
+import math
 import os
 import re
 import time
@@ -15,8 +16,10 @@ from PySide6.QtGui import (
     QColor,
     QCursor,
     QFont,
+    QFontDatabase,
     QFontInfo,
     QFontMetrics,
+    QImage,
     QPainter,
     QPainterPath,
     QPalette,
@@ -48,7 +51,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from yucha.engine import Picture
+from yucha.configstore import font_name, hex_color, wheel_rgb
 from yucha.i18n import languages, tr, trf
 from yucha.system import Notifier, SleepInhibit, join_line, people_joined
 
@@ -1058,6 +1061,101 @@ class IconButton(QPushButton):
         painter.end()
 
 
+class ColorDisc(QWidget):
+    """A hue circle. The middle is white. A click chooses the color under the pointer."""
+
+    def __init__(self, color):
+        super().__init__()
+        self.setFixedSize(220, 220)
+        self._radius = 100
+        self._image = None
+        self._chosen = QColor(hex_color(color, "#FFFFFF"))
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def color(self):
+        return self._chosen
+
+    def _bitmap(self):
+        if self._image is not None:
+            return self._image
+        size = self.width()
+        image = QImage(size, size, QImage.Format.Format_ARGB32_Premultiplied)
+        image.fill(Qt.GlobalColor.transparent)
+        center = size / 2
+        for y in range(size):
+            for x in range(size):
+                rgb = wheel_rgb(x - center, y - center, self._radius)
+                if rgb is None:
+                    continue
+                image.setPixelColor(x, y, QColor(*rgb))
+        self._image = image
+        return image
+
+    def _at(self, point):
+        center = self.width() / 2
+        dx = point.x() - center
+        dy = point.y() - center
+        rgb = wheel_rgb(dx, dy, self._radius)
+        if rgb is None:
+            dist = math.hypot(dx, dy) or 1
+            scale = self._radius / dist
+            rgb = wheel_rgb(dx * scale, dy * scale, self._radius)
+        if rgb is None:
+            return
+        self._chosen = QColor(*rgb)
+        self.update()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._at(event.position())
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.MouseButton.LeftButton:
+            self._at(event.position())
+            event.accept()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.drawImage(0, 0, self._bitmap())
+        center = self.width() / 2
+        hue, sat, _value, _alpha = self._chosen.getHsvF()
+        if hue < 0:
+            hue = 0
+        angle = math.radians(hue * 360)
+        dist = max(0.0, min(1.0, sat)) * self._radius
+        mark_x = center + dist * math.cos(angle)
+        mark_y = center + dist * math.sin(angle)
+        painter.setPen(QPen(QColor("#16140F"), 2))
+        painter.setBrush(self._chosen)
+        painter.drawEllipse(QPointF(mark_x, mark_y), 6, 6)
+        painter.end()
+
+
+class ColorPick(QDialog):
+    def __init__(self, color, title, parent):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setModal(True)
+        self.picked = None
+        root = QVBoxLayout(self)
+        self.disc = ColorDisc(color)
+        root.addWidget(self.disc, 0, Qt.AlignmentFlag.AlignHCenter)
+        buttons = QHBoxLayout()
+        ok = QPushButton(tr(43))
+        cancel = QPushButton(tr(44))
+        ok.clicked.connect(self._accept)
+        cancel.clicked.connect(self.reject)
+        buttons.addWidget(ok)
+        buttons.addWidget(cancel)
+        root.addLayout(buttons)
+
+    def _accept(self):
+        self.picked = self.disc.color().name().upper()
+        self.accept()
+
+
 class BoxCheck(QCheckBox):
     """A square with a visible fill, sitting on its own."""
 
@@ -1114,21 +1212,40 @@ class SettingsDialog(QDialog):
         self._look_theme = current if current == "light" else "dark"
         self._look_accent = appearance.get("accentColor")
         self._style_popup(self.theme)
-        self.color = QLineEdit(str(appearance.get("chatColor") or "#F4F1EA"))
-        self.accent = QLineEdit(str(appearance.get("accentColor") or "#9A3A52"))
-        self.accent2 = QLineEdit(str(appearance.get("accentColor2") or "#1F6A8A"))
+        self.color, color_row = self._color_row(appearance.get("chatColor"), "#F4F1EA", tr(25))
+        self.accent, accent_row = self._color_row(appearance.get("accentColor"), "#9A3A52", tr(26))
+        self.accent2, accent2_row = self._color_row(appearance.get("accentColor2"), "#1F6A8A", tr(27))
         self.chat_size = QSpinBox()
         self.chat_size.setRange(12, 48)
         self.chat_size.setValue(int(appearance.get("chatFontSize") or 18))
         self.ui_size = QSpinBox()
         self.ui_size.setRange(1, 32)
         self.ui_size.setValue(int(appearance.get("uiFontSize") or 16))
+        self.sub_size = QSpinBox()
+        self.sub_size.setRange(8, 120)
+        self.sub_size.setValue(int(appearance.get("subFontSize") or 55))
+        self.sub_font = QComboBox()
+        chosen_font = font_name(appearance.get("subFont"))
+        families = ["sans-serif"]
+        for name in QFontDatabase.families():
+            if name and name not in families:
+                families.append(name)
+        if chosen_font not in families:
+            families.insert(0, chosen_font)
+        for name in families:
+            self.sub_font.addItem(name, name)
+        self.sub_font.setCurrentIndex(max(0, self.sub_font.findData(chosen_font)))
+        self._style_popup(self.sub_font)
+        self.sub_color, sub_row = self._color_row(appearance.get("subColor"), "#FFFFFF", tr(56))
         theme_form.addRow(tr(22), self.theme)
-        theme_form.addRow(tr(25), self.color)
-        theme_form.addRow(tr(26), self.accent)
-        theme_form.addRow(tr(27), self.accent2)
+        theme_form.addRow(tr(25), color_row)
+        theme_form.addRow(tr(26), accent_row)
+        theme_form.addRow(tr(27), accent2_row)
         theme_form.addRow(tr(28), self.chat_size)
         theme_form.addRow(tr(29), self.ui_size)
+        theme_form.addRow(tr(54), self.sub_size)
+        theme_form.addRow(tr(55), self.sub_font)
+        theme_form.addRow(tr(56), sub_row)
 
         room = QWidget()
         room_box = QVBoxLayout(room)
@@ -1277,15 +1394,9 @@ class SettingsDialog(QDialog):
             self.port_error.show()
             return
         self.port_error.hide()
-        color = self.color.text().strip()
-        if len(color) != 7 or not color.startswith("#"):
-            color = "#F4F1EA"
-        accent = self.accent.text().strip()
-        if len(accent) != 7 or not accent.startswith("#"):
-            accent = "#9A3A52"
-        accent2 = self.accent2.text().strip()
-        if len(accent2) != 7 or not accent2.startswith("#"):
-            accent2 = "#1F6A8A"
+        color = hex_color(self.color.text(), "#F4F1EA")
+        accent = hex_color(self.accent.text(), "#9A3A52")
+        accent2 = hex_color(self.accent2.text(), "#1F6A8A")
         self.appearance = {
             "theme": self.theme.currentData(),
             "chatColor": color,
@@ -1293,6 +1404,9 @@ class SettingsDialog(QDialog):
             "accentColor2": accent2,
             "chatFontSize": self.chat_size.value(),
             "uiFontSize": self.ui_size.value(),
+            "subFont": font_name(self.sub_font.currentData()),
+            "subFontSize": self.sub_size.value(),
+            "subColor": hex_color(self.sub_color.text(), "#FFFFFF"),
             "autoplayNext": self.autoplay.isChecked(),
             "fastforwardOnDesync": self.fastforward.isChecked(),
             "slowOnDesync": self.slowdown.isChecked(),
@@ -1308,6 +1422,36 @@ class SettingsDialog(QDialog):
             "room": self.room_name.text(),
         }
         self.accept()
+
+    def _color_row(self, value, default, title):
+        edit = QLineEdit(hex_color(value, default))
+        button = QPushButton()
+        button.setObjectName("swatch")
+        button.setFixedSize(28, 28)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+        def paint():
+            shown = hex_color(edit.text(), default)
+            button.setStyleSheet(
+                "background: {}; border: 1px solid #5C584F; padding: 0;".format(shown)
+            )
+
+        paint()
+        edit.textChanged.connect(lambda _text: paint())
+        button.clicked.connect(lambda: self._pick_color(edit, default, title))
+        host = QWidget()
+        row = QHBoxLayout(host)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+        row.addWidget(edit, 1)
+        row.addWidget(button)
+        return edit, host
+
+    def _pick_color(self, edit, default, title):
+        dialog = ColorPick(hex_color(edit.text(), default), title, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.picked:
+            edit.setText(dialog.picked)
 
     def _check_row(self, form, text, box):
         host = QWidget()
@@ -1932,11 +2076,24 @@ class MainWindow(QMainWindow):
         self._refresh_files()
         self._paint_chat()
         self._paint_users()
+        self._apply_subtitles()
 
     def set_player(self, player):
         listener = getattr(player, "_listener", None) if player is not None else None
         self.ctl = getattr(listener, "mpvpipe", None)
         self._apply_volume_max()
+        self._apply_subtitles()
+
+    def _apply_subtitles(self):
+        if self.ctl is None:
+            return
+        look = self.app.store.data["appearance"]
+        # ASS subtitles keep their own style unless this override is force.
+        self._set("sub-font", font_name(look.get("subFont")))
+        self._set("sub-font-size", int(look.get("subFontSize") or 55))
+        color = hex_color(look.get("subColor"), "#FFFFFF")
+        self._set("sub-color", "#FF" + color[1:])
+        self._set("sub-ass-override", "force")
 
     def set_panel(self, open_, animate=True):
         was_open = self._panel_open

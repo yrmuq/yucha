@@ -33,7 +33,7 @@ class Guards(unittest.TestCase):
             self.assertEqual(original.strip(), shown.strip())
             self.assertNotIn(number.strip(), seen)
             seen.add(number.strip())
-        self.assertEqual(len(seen), 53)
+        self.assertEqual(len(seen), 56)
         previous = i18n.FOLDER
         try:
             with tempfile.TemporaryDirectory() as tmp:

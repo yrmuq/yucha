@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT / "third_party" / "syncplay"))
 from twisted.internet import reactor
 
 from yucha.bridge import Bridge
-from yucha.configstore import ConfigStore, port_number, runtime_dir
+from yucha.configstore import ConfigStore, bounded_int, font_name, hex_color, port_number, runtime_dir
 from yucha.i18n import languages, tr, use
 from yucha.player_ui import PlayerUI
 from yucha.session import launch_player, make_client, submit_login
@@ -99,15 +99,12 @@ class App(object):
             theme = command.get("theme")
             if theme in ("dark", "light"):
                 appearance["theme"] = theme
-            color = str(command.get("chatColor") or "")
-            if len(color) == 7 and color.startswith("#"):
-                appearance["chatColor"] = color
-            accent = str(command.get("accentColor") or "")
-            if len(accent) == 7 and accent.startswith("#"):
-                appearance["accentColor"] = accent
-            second = str(command.get("accentColor2") or "")
-            if len(second) == 7 and second.startswith("#"):
-                appearance["accentColor2"] = second
+            color = hex_color(command.get("chatColor"), appearance.get("chatColor") or "#F4F1EA")
+            appearance["chatColor"] = color
+            accent = hex_color(command.get("accentColor"), appearance.get("accentColor") or "#9A3A52")
+            appearance["accentColor"] = accent
+            second = hex_color(command.get("accentColor2"), appearance.get("accentColor2") or "#1F6A8A")
+            appearance["accentColor2"] = second
             try:
                 size = int(command.get("chatFontSize"))
             except (TypeError, ValueError):
@@ -134,6 +131,9 @@ class App(object):
             if language not in languages():
                 language = "English"
             appearance["language"] = language
+            appearance["subFont"] = font_name(command.get("subFont", appearance.get("subFont")))
+            appearance["subFontSize"] = bounded_int(command.get("subFontSize"), 55, 8, 120)
+            appearance["subColor"] = hex_color(command.get("subColor"), "#FFFFFF")
             use(language)
             self.client._config["pauseOnLeave"] = True
             self.client._config["fastforwardOnDesync"] = appearance["fastforwardOnDesync"]

@@ -13,7 +13,7 @@ Read only the row the task needs. Do not read `third_party/` or `packaging/appim
 - `yucha/configstore.py` — saved host, room, and settings.
 - `yucha/i18n.py` — reads `languages/*.ini`. A line is `id = English original = text shown`.
 - `languages/` — one ini file per language. `English.ini` is the only file. The id is a number.
-- `tests/test_guards.py`, `tests/test_system.py`, `tests/test_release.py` — the only tests.
+- `tests/test_guards.py`, `tests/test_system.py`, `tests/test_release.py`, `tests/test_color.py` — the only tests.
 
 ## Packaging
 - `packaging/appimage/build.sh` — builds the image, copies Ubuntu `libmpv`, writes the `mpv --version` stub.
