@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, Qt, Signal
-from PySide6.QtGui import QOpenGLFunctions
+from PySide6.QtGui import QOpenGLFunctions, QPainter
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QSizePolicy
 
@@ -65,6 +65,7 @@ class Picture(QOpenGLWidget):
     volumeChanged = Signal(int)
     arrowPressed = Signal(int)
     filesDropped = Signal(list)
+    enterPressed = Signal()
 
     def __init__(self, runtime, parent=None):
         super().__init__(parent)
@@ -76,6 +77,8 @@ class Picture(QOpenGLWidget):
         self.setAcceptDrops(True)
         self.error = None
         self.ctx = None
+        self.notes = None
+        self._present = False
         self.mpv = None
         self._mpv_mod = None
         self.ipc_path = Path(runtime) / "mpv.sock"
@@ -147,7 +150,32 @@ class Picture(QOpenGLWidget):
             return
         self.ctx.update_cb = self.update
 
+    def update(self, *args):
+        # Only mpv's own callback asks to count this paint as a presented frame.
+        self._present = True
+        super().update(*args)
+
+    def redraw(self):
+        QOpenGLWidget.update(self)
+
     def paintGL(self):
+        # The notices are painted into this same framebuffer. A separate widget
+        # above the video only moved on the video's own frames while it played.
+        present = self._present
+        self._present = False
+        painter = QPainter(self)
+        try:
+            painter.beginNativePainting()
+            try:
+                self._draw_video(present)
+            finally:
+                painter.endNativePainting()
+            if self.notes is not None:
+                self.notes(painter, max(1, self.width()), max(1, self.height()))
+        finally:
+            painter.end()
+
+    def _draw_video(self, present):
         gl = QOpenGLFunctions()
         gl.initializeOpenGLFunctions()
         gl.glClearColor(0.0, 0.0, 0.0, 1.0)
@@ -167,7 +195,8 @@ class Picture(QOpenGLWidget):
                     "internal_format": 0,
                 },
             )
-            self.ctx.report_swap()
+            if present:
+                self.ctx.report_swap()
         except Exception as exc:
             self.error = trf(48, exc)
             self.ctx = None
@@ -184,6 +213,10 @@ class Picture(QOpenGLWidget):
         key = event.key()
         if key == Qt.Key.Key_Space and not event.isAutoRepeat():
             self._pause()
+            event.accept()
+            return
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and not event.isAutoRepeat():
+            self.enterPressed.emit()
             event.accept()
             return
         if key in (Qt.Key.Key_Left, Qt.Key.Key_Right, Qt.Key.Key_Up, Qt.Key.Key_Down):

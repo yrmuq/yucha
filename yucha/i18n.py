@@ -2,12 +2,26 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Labels from languages/*.ini. A line is `id = English original = text shown`."""
 
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 FOLDER = ROOT / "languages"
 _phrases = {}
 _name = "English"
+
+
+_codes = {"en": "English", "ru": "Russian"}
+
+
+def system_language():
+    """The language file for this machine. An unknown language stays English."""
+    raw = os.environ.get("LC_ALL") or os.environ.get("LC_MESSAGES") or os.environ.get("LANG") or ""
+    code = raw.split(".")[0].split("_")[0].lower()
+    name = _codes.get(code, "English")
+    if name not in languages():
+        return "English"
+    return name
 
 
 def languages():
