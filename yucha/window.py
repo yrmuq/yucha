@@ -367,34 +367,34 @@ def _stylesheet(theme, accent=None, paint=None):
         border: 1px solid {border};
         border-radius: 8px;
     }}
-    QWidget#panel QScrollBar#edgescroll:vertical {{
+    QScrollBar#edgescroll:vertical {{
         background: transparent;
         width: 3px;
         margin: 0px;
     }}
-    QWidget#panel QScrollBar#edgescroll:horizontal {{
+    QScrollBar#edgescroll:horizontal {{
         background: transparent;
         height: 3px;
         margin: 0px;
     }}
-    QWidget#panel QScrollBar#edgescroll::handle:vertical {{
+    QScrollBar#edgescroll::handle:vertical {{
         background: {muted};
         min-height: 18px;
         border-radius: 1px;
     }}
-    QWidget#panel QScrollBar#edgescroll::handle:horizontal {{
+    QScrollBar#edgescroll::handle:horizontal {{
         background: {muted};
         min-width: 18px;
         border-radius: 1px;
     }}
-    QWidget#panel QScrollBar#edgescroll::add-line:vertical, QWidget#panel QScrollBar#edgescroll::sub-line:vertical,
-    QWidget#panel QScrollBar#edgescroll::add-line:horizontal, QWidget#panel QScrollBar#edgescroll::sub-line:horizontal {{
+    QScrollBar#edgescroll::add-line:vertical, QScrollBar#edgescroll::sub-line:vertical,
+    QScrollBar#edgescroll::add-line:horizontal, QScrollBar#edgescroll::sub-line:horizontal {{
         height: 0px;
         width: 0px;
         background: none;
     }}
-    QWidget#panel QScrollBar#edgescroll::add-page:vertical, QWidget#panel QScrollBar#edgescroll::sub-page:vertical,
-    QWidget#panel QScrollBar#edgescroll::add-page:horizontal, QWidget#panel QScrollBar#edgescroll::sub-page:horizontal {{
+    QScrollBar#edgescroll::add-page:vertical, QScrollBar#edgescroll::sub-page:vertical,
+    QScrollBar#edgescroll::add-page:horizontal, QScrollBar#edgescroll::sub-page:horizontal {{
         background: none;
     }}
     QScrollArea#userfiles {{
@@ -1692,7 +1692,7 @@ class RoundSwatch(QPushButton):
 
 
 class EdgeTabBar(QTabBar):
-    """One tab sits on the right. The disabled tab before it is the empty gap."""
+    """The empty tab before dev is only a gap, so dev sits just to the right of About."""
 
     def __init__(self):
         super().__init__()
@@ -1701,20 +1701,14 @@ class EdgeTabBar(QTabBar):
 
     def tabSizeHint(self, index):
         hint = super().tabSizeHint(index)
-        if index != self.spacer or self.spacer < 0:
-            return hint
-        used = 0
-        for other in range(self.count()):
-            if other == self.spacer:
-                continue
-            used += super().tabSizeHint(other).width()
-        hint.setWidth(max(0, self.width() - used))
+        if index == self.spacer and self.spacer >= 0:
+            hint.setWidth(36)
         return hint
 
     def minimumTabSizeHint(self, index):
         hint = super().minimumTabSizeHint(index)
-        if index == self.spacer:
-            hint.setWidth(0)
+        if index == self.spacer and self.spacer >= 0:
+            hint.setWidth(36)
         return hint
 
 
@@ -1766,7 +1760,10 @@ class SettingsDialog(QDialog):
         self.connection = None
         self.wants_connect = False
         self._checking = False
+        self._open_page = page
         self.release_text.connect(self._show_release)
+        self._scrolls = []
+        self._page_h = 0
         root = QVBoxLayout(self)
         self.tabs = QTabWidget()
         self._tabbar = EdgeTabBar()
@@ -1774,6 +1771,7 @@ class SettingsDialog(QDialog):
         root.addWidget(self.tabs)
 
         theme_page = QWidget()
+        self._theme_page = theme_page
         theme_form = QFormLayout(theme_page)
         theme_form.setContentsMargins(12, 12, 12, 12)
         self.theme = QComboBox()
@@ -1995,20 +1993,66 @@ class SettingsDialog(QDialog):
         root.addLayout(buttons)
 
         wide = 0
-        tall = 0
         for index in range(self.tabs.count()):
-            hint = self.tabs.widget(index).sizeHint()
+            page = self.tabs.widget(index)
+            if page is self._dev_gap or page is self._dev_page:
+                continue
+            hint = page.sizeHint()
             wide = max(wide, hint.width())
-            tall = max(tall, hint.height())
-        wide = min(720, max(420, wide if 0 < wide < 2000 else 520))
-        tall = min(760, max(320, tall if 0 < tall < 2000 else 480))
-        for index in range(self.tabs.count()):
-            self.tabs.widget(index).setMinimumSize(wide, tall)
-        self.tabs.setCurrentIndex(page if 0 <= page < self.tabs.count() else 0)
+        self._page_h = max(320, self._theme_page.sizeHint().height())
+        self._page_w = min(640, max(420, wide if 0 < wide < 2000 else 520))
+        index = self.tabs.count() - 1
+        while index >= 0:
+            page = self.tabs.widget(index)
+            if page is self._dev_gap or isinstance(page, QScrollArea):
+                index -= 1
+                continue
+            title = self.tabs.tabText(index)
+            enabled = self.tabs.isTabEnabled(index)
+            area = self._scroll_page(page)
+            self.tabs.removeTab(index)
+            self.tabs.insertTab(index, area, title)
+            self.tabs.setTabEnabled(index, enabled)
+            if page is self._about_page:
+                self._about_page = area
+            if page is self._dev_page:
+                self._dev_page = area
+            index -= 1
+        self.tabs.setCurrentIndex(self._open_page if 0 <= self._open_page < self.tabs.count() else 0)
         root.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
 
+    def _scroll_page(self, page):
+        page.setMinimumWidth(self._page_w)
+        page.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        page.setMinimumHeight(max(page.sizeHint().height(), 1))
+        area = QScrollArea()
+        area.setWidgetResizable(True)
+        area.setFrameShape(QFrame.Shape.NoFrame)
+        area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        area.setWidget(page)
+        area.setFixedSize(self._page_w, self._page_h)
+        bar = EdgeScroll(Qt.Orientation.Vertical, area)
+        bar.attach(area.verticalScrollBar())
+        area.viewport().installEventFilter(self)
+        area.installEventFilter(self)
+        self._scrolls.append((area, bar))
+        return area
+
+    def _place_settings_bar(self, area, bar):
+        bar.setGeometry(max(0, area.width() - 5), 8, 3, max(12, area.height() - 16))
+        if bar.maximum() <= bar.minimum():
+            bar.hide()
+
     def eventFilter(self, watched, event):
-        if watched is getattr(self, "_logo", None) and event.type() == QEvent.Type.MouseButtonPress:
+        kind = event.type()
+        if kind == QEvent.Type.Wheel or kind == QEvent.Type.Resize:
+            for area, bar in self._scrolls:
+                if kind == QEvent.Type.Resize and watched is area:
+                    self._place_settings_bar(area, bar)
+                elif kind == QEvent.Type.Wheel and watched is area.viewport():
+                    bar.bump()
+        if watched is getattr(self, "_logo", None) and kind == QEvent.Type.MouseButtonPress:
             if event.button() == Qt.MouseButton.LeftButton:
                 self._logo_pressed()
                 return True
@@ -2050,13 +2094,16 @@ class SettingsDialog(QDialog):
     def _insert_dev_tab(self):
         if self._dev_page is not None:
             return
-        self._dev_page = self._build_dev_page()
+        page = self._build_dev_page()
         self._dev_gap = QWidget()
         self.tabs.addTab(self._dev_gap, "")
         gap = self.tabs.indexOf(self._dev_gap)
         self.tabs.setTabEnabled(gap, False)
-        self.tabs.addTab(self._dev_page, "dev")
         self._tabbar.spacer = gap
+        if self._page_h:
+            page = self._scroll_page(page)
+        self._dev_page = page
+        self.tabs.addTab(self._dev_page, "dev")
         self._tabbar.updateGeometry()
 
     def _dev_defaults(self):
