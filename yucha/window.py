@@ -109,6 +109,13 @@ def _system_dark():
     return window.lightness() < ink.lightness()
 
 
+def _dev_ink(row, theme):
+    if not isinstance(row, dict):
+        return ""
+    picked = row.get("light" if theme == "light" else "dark") or row.get("color") or ""
+    return str(picked)
+
+
 def _shown_theme(theme):
     if theme == "light":
         return "light"
@@ -1663,6 +1670,43 @@ class RoundSwatch(QPushButton):
         painter.end()
 
 
+class StarPassword(QLineEdit):
+    """The field always shows five stars, so the length stays hidden."""
+
+    def __init__(self, text=""):
+        super().__init__()
+        self._secret = str(text or "")
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
+        self.setAcceptDrops(False)
+        self._show()
+
+    def text(self):
+        return self._secret
+
+    def _show(self):
+        super().setText("*****" if self._secret else "")
+        self.setCursorPosition(len(super().text()))
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.returnPressed.emit()
+            return
+        if event.matches(QKeySequence.StandardKey.Paste):
+            pasted = QApplication.clipboard().text().replace("\n", "").replace("\r", "")
+            self._secret += pasted
+        elif event.matches(QKeySequence.StandardKey.Copy) or event.matches(QKeySequence.StandardKey.Cut):
+            return
+        elif event.key() in (Qt.Key.Key_Backspace, Qt.Key.Key_Delete):
+            self._secret = self._secret[:-1]
+        elif event.text() and event.text().isprintable() and not event.modifiers() & (
+            Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier
+        ):
+            self._secret += event.text()
+        else:
+            return
+        self._show()
+
+
 class SettingsDialog(QDialog):
     release_text = Signal(str)
 
@@ -1681,6 +1725,7 @@ class SettingsDialog(QDialog):
 
         theme_page = QWidget()
         theme_form = QFormLayout(theme_page)
+        theme_form.setContentsMargins(12, 12, 12, 12)
         self.theme = QComboBox()
         self.theme.addItem(tr(57), "auto")
         self.theme.addItem(tr(23), "dark")
@@ -1729,11 +1774,7 @@ class SettingsDialog(QDialog):
 
         room = QWidget()
         room_box = QVBoxLayout(room)
-        edge = theme_form.contentsMargins()
-        if edge.left() == 0 and edge.top() == 0 and edge.right() == 0 and edge.bottom() == 0:
-            from PySide6.QtCore import QMargins
-            edge = QMargins(11, 11, 11, 11)
-        room_box.setContentsMargins(edge)
+        room_box.setContentsMargins(12, 12, 12, 12)
         room_form = QFormLayout()
         room_form.setContentsMargins(0, 0, 0, 0)
         room_form.setHorizontalSpacing(theme_form.horizontalSpacing())
@@ -1741,8 +1782,7 @@ class SettingsDialog(QDialog):
         self.host = QLineEdit(str(connection.get("host") or "syncplay.pl"))
         self.port = QLineEdit(str(connection.get("port") or 8999))
         self.name = QLineEdit(str(connection.get("name") or ""))
-        self.password = QLineEdit(str(connection.get("password") or ""))
-        self.password.setEchoMode(QLineEdit.EchoMode.Password)
+        self.password = StarPassword(str(connection.get("password") or ""))
         self.room_name = QLineEdit(str(connection.get("room") or ""))
         for number, field in (
             (17, self.host),
@@ -1767,6 +1807,7 @@ class SettingsDialog(QDialog):
 
         other = QWidget()
         other_form = QFormLayout(other)
+        other_form.setContentsMargins(12, 12, 12, 12)
         other_form.setVerticalSpacing(12)
         self.language = QComboBox()
         for name in languages():
@@ -1777,18 +1818,14 @@ class SettingsDialog(QDialog):
             index = max(0, self.language.findData("English"))
         self.language.setCurrentIndex(index)
         self._style_popup(self.language)
-        field_w = max(180, self.language.sizeHint().width())
         row_h = self.language.sizeHint().height()
-        self.language.setFixedSize(field_w, row_h)
         self.overlay = QComboBox()
         self.overlay.addItem(tr(36), "horizontal")
         self.overlay.addItem(tr(37), "vertical")
         overlay = appearance.get("volumeOverlay") or "horizontal"
         self.overlay.setCurrentIndex(1 if overlay == "vertical" else 0)
         self._style_popup(self.overlay)
-        self.overlay.setFixedSize(field_w, row_h)
         stepper = QWidget()
-        stepper.setFixedSize(field_w, row_h)
         stepper_row = QHBoxLayout(stepper)
         stepper_row.setContentsMargins(0, 0, 0, 0)
         stepper_row.setSpacing(0)
@@ -1819,17 +1856,21 @@ class SettingsDialog(QDialog):
         look = _palette(self._look_theme, self._look_accent)
         for box in (self.autoplay, self.fastforward, self.slowdown, self.check_updates):
             box.set_colors(look["field"], look["border"], look["on_fg"], look["accent"])
-        self._check_row(other_form, tr(31), self.autoplay, field_w, row_h)
-        self._check_row(other_form, tr(32), self.fastforward, field_w, row_h)
-        self._check_row(other_form, tr(33), self.slowdown, field_w, row_h)
-        self._check_row(other_form, tr(67), self.check_updates, field_w, row_h)
+        self._check_row(other_form, tr(31), self.autoplay, row_h)
+        self._check_row(other_form, tr(32), self.fastforward, row_h)
+        self._check_row(other_form, tr(33), self.slowdown, row_h)
+        self._check_row(other_form, tr(67), self.check_updates, row_h)
         self.check_updates.toggled.connect(lambda _checked: self._sync_update_row())
         self.tabs.addTab(other, tr(30))
 
         about = QWidget()
         self._about_page = about
         about_layout = QVBoxLayout(about)
+        about_layout.setContentsMargins(12, 12, 12, 12)
+        logo_line = QHBoxLayout()
+        logo_line.setContentsMargins(0, 0, 0, 0)
         logo = QLabel()
+        logo.setFixedSize(96, 96)
         logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
         logo.setCursor(Qt.CursorShape.PointingHandCursor)
         icon = Path(__file__).resolve().parent / "icon.png"
@@ -1839,17 +1880,18 @@ class SettingsDialog(QDialog):
         self._logo = logo
         self._logo_n = 0
         self._logo_at = 0.0
+        logo_line.addStretch(1)
+        logo_line.addWidget(logo)
+        logo_line.addStretch(1)
         name = QLabel("yucha")
         name.setObjectName("heading")
         name.setAlignment(Qt.AlignmentFlag.AlignCenter)
         repo = QLabel('github: <a href="https://github.com/yrmuq/yucha">yucha</a>')
-        repo.setAlignment(Qt.AlignmentFlag.AlignCenter)
         repo.setTextFormat(Qt.TextFormat.RichText)
         repo.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
         repo.setOpenExternalLinks(True)
         from yucha import __version__
         version = QLabel(trf(42, __version__))
-        version.setAlignment(Qt.AlignmentFlag.AlignCenter)
         heart = appearance.get("accentColor") or "#9A3A52"
         thanks = QLabel(
             '{} <span style="color: {};">♥</span> '
@@ -1859,22 +1901,21 @@ class SettingsDialog(QDialog):
         thanks.setTextFormat(Qt.TextFormat.RichText)
         thanks.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
         thanks.setOpenExternalLinks(True)
-        about_layout.addWidget(logo)
+        about_layout.addLayout(logo_line)
         about_layout.addWidget(name)
         about_layout.addWidget(repo)
         about_layout.addWidget(version)
         self.update_button = QPushButton(tr(62))
         self.update_button.clicked.connect(self._check_release)
         self.update_note = QLabel("")
-        self.update_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.update_note.setWordWrap(True)
         self.download_button = QPushButton(tr(68))
         self.download_button.clicked.connect(self._open_release)
         self.download_button.hide()
         self._download_version = ""
-        about_layout.addWidget(self.update_button, 0, Qt.AlignmentFlag.AlignHCenter)
+        about_layout.addWidget(self.update_button, 0, Qt.AlignmentFlag.AlignLeft)
         about_layout.addWidget(self.update_note)
-        about_layout.addWidget(self.download_button, 0, Qt.AlignmentFlag.AlignHCenter)
+        about_layout.addWidget(self.download_button, 0, Qt.AlignmentFlag.AlignLeft)
         about_layout.addStretch(1)
         about_layout.addWidget(thanks, 0, Qt.AlignmentFlag.AlignLeft)
         self.tabs.addTab(about, tr(39))
@@ -1947,34 +1988,45 @@ class SettingsDialog(QDialog):
         self._dev_page = self._build_dev_page()
         self.tabs.insertTab(self.tabs.indexOf(self._about_page), self._dev_page, "dev")
 
+    def _dev_defaults(self):
+        family = QFont().family() or "sans-serif"
+        dark = _palette("dark")["fg"]
+        light = _palette("light")["fg"]
+        white = "#FFFFFF"
+        return {
+            "ui": {"size": 16, "bold": False, "family": family, "dark": dark, "light": light},
+            "osd": {"size": 18, "bold": False, "family": family, "dark": dark, "light": light},
+            "sub": {"size": 55, "bold": False, "family": "sans-serif", "dark": white, "light": white},
+            "titles": {"size": 14, "bold": True, "family": family, "dark": dark, "light": light},
+            "panel": PANEL_WIDTH,
+            "bar": BAR_HEIGHT,
+        }
+
     def _dev_seed(self):
         window = self.parent()
         current = getattr(window, "_dev", None) if window is not None else None
         if current:
             return current
-        look = {}
-        if window is not None:
-            look = window.app.store.data["appearance"]
-        family = QFont().family() or "sans-serif"
-        fg = "#F4F1EA"
-        return {
-            "ui": {"size": int(look.get("uiFontSize") or 16), "bold": False, "family": family, "color": fg},
-            "osd": {"size": int(look.get("chatFontSize") or 18), "bold": False, "family": family, "color": fg},
-            "sub": {
-                "size": int(look.get("subFontSize") or 55),
-                "bold": False,
-                "family": font_name(look.get("subFont")),
-                "color": hex_color(look.get("subColor"), "#FFFFFF"),
-            },
-            "titles": {"size": 14, "bold": True, "family": family, "color": fg},
-            "panel": int(getattr(window, "_panel_width", 380) or 380),
-            "bar": int(getattr(window, "_bar_h", BAR_HEIGHT) or BAR_HEIGHT),
-        }
+        base = self._dev_defaults()
+        if window is None:
+            return base
+        look = window.app.store.data["appearance"]
+        base["ui"]["size"] = int(look.get("uiFontSize") or 16)
+        base["osd"]["size"] = int(look.get("chatFontSize") or 18)
+        base["sub"]["size"] = int(look.get("subFontSize") or 55)
+        base["sub"]["family"] = font_name(look.get("subFont"))
+        sub = hex_color(look.get("subColor"), "#FFFFFF")
+        base["sub"]["dark"] = sub
+        base["sub"]["light"] = sub
+        base["panel"] = int(getattr(window, "_panel_width", PANEL_WIDTH) or PANEL_WIDTH)
+        base["bar"] = int(getattr(window, "_bar_h", BAR_HEIGHT) or BAR_HEIGHT)
+        return base
 
     def _build_dev_page(self):
         seed = self._dev_seed()
         page = QWidget()
         form = QFormLayout(page)
+        form.setContentsMargins(12, 12, 12, 12)
         form.setVerticalSpacing(12)
         self._dev_rows = {}
         for key, title in (
@@ -1994,9 +2046,17 @@ class SettingsDialog(QDialog):
         self._dev_bar.valueChanged.connect(lambda _value: self._push_dev())
         form.addRow("Panel width", self._dev_panel)
         form.addRow("Bar height", self._dev_bar)
+        reset = QPushButton(tr(70))
         export = QPushButton(tr(69))
+        reset.clicked.connect(self._reset_dev)
         export.clicked.connect(self._export_dev)
-        form.addRow("", export)
+        actions = QWidget()
+        action_row = QHBoxLayout(actions)
+        action_row.setContentsMargins(0, 0, 0, 0)
+        action_row.addWidget(reset)
+        action_row.addWidget(export)
+        action_row.addStretch(1)
+        form.addRow("", actions)
         return page
 
     def _dev_font_row(self, key, seed):
@@ -2011,20 +2071,62 @@ class SettingsDialog(QDialog):
         family = QFontComboBox()
         family.setCurrentFont(QFont(str(seed["family"])))
         family.setMaximumWidth(180)
-        color = QLineEdit(hex_color(seed["color"], "#F4F1EA"))
-        color.setMaximumWidth(90)
+        dark = self._dev_swatch(seed.get("dark") or seed.get("color") or "#F3EFE6", "dark")
+        light = self._dev_swatch(seed.get("light") or seed.get("color") or "#1A1A1A", "light")
         look = _palette(self._look_theme, self._look_accent)
         bold.set_colors(look["field"], look["border"], look["on_fg"], look["accent"])
         size.valueChanged.connect(lambda _value: self._push_dev())
         bold.toggled.connect(lambda _value: self._push_dev())
         family.currentFontChanged.connect(lambda _value: self._push_dev())
-        color.textEdited.connect(lambda _value: self._push_dev())
         row.addWidget(size)
         row.addWidget(bold)
         row.addWidget(family, 1)
-        row.addWidget(color)
-        self._dev_rows[key] = {"size": size, "bold": bold, "family": family, "color": color}
+        row.addWidget(QLabel("dark"))
+        row.addWidget(dark)
+        row.addWidget(QLabel("light"))
+        row.addWidget(light)
+        self._dev_rows[key] = {
+            "size": size,
+            "bold": bold,
+            "family": family,
+            "dark": dark,
+            "light": light,
+        }
         return host
+
+    def _dev_swatch(self, color, title):
+        button = RoundSwatch()
+        button.set_color(hex_color(color, "#FFFFFF"))
+        button.clicked.connect(lambda: self._pick_dev(button, title))
+        return button
+
+    def _pick_dev(self, button, title):
+        dialog = ColorPick(button._color.name(), title, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.picked:
+            button.set_color(dialog.picked)
+            self._push_dev()
+
+    def _fill_dev(self, seed):
+        widgets = [self._dev_panel, self._dev_bar]
+        for row in self._dev_rows.values():
+            widgets.extend((row["size"], row["bold"], row["family"]))
+        for widget in widgets:
+            widget.blockSignals(True)
+        for key, row in self._dev_rows.items():
+            item = seed[key]
+            row["size"].setValue(int(item["size"]))
+            row["bold"].setChecked(bool(item["bold"]))
+            row["family"].setCurrentFont(QFont(str(item["family"])))
+            row["dark"].set_color(hex_color(item.get("dark") or item.get("color"), "#F3EFE6"))
+            row["light"].set_color(hex_color(item.get("light") or item.get("color"), "#1A1A1A"))
+        self._dev_panel.setValue(int(seed["panel"]))
+        self._dev_bar.setValue(int(seed["bar"]))
+        for widget in widgets:
+            widget.blockSignals(False)
+
+    def _reset_dev(self):
+        self._fill_dev(self._dev_defaults())
+        self._push_dev()
 
     def _dev_spec(self):
         spec = {"panel": self._dev_panel.value(), "bar": self._dev_bar.value()}
@@ -2033,7 +2135,8 @@ class SettingsDialog(QDialog):
                 "size": row["size"].value(),
                 "bold": row["bold"].isChecked(),
                 "family": row["family"].currentFont().family(),
-                "color": hex_color(row["color"].text(), "#F4F1EA"),
+                "dark": row["dark"]._color.name().upper(),
+                "light": row["light"]._color.name().upper(),
             }
         return spec
 
@@ -2051,7 +2154,8 @@ class SettingsDialog(QDialog):
             lines.append("{}.size={}".format(key, row["size"]))
             lines.append("{}.bold={}".format(key, "yes" if row["bold"] else "no"))
             lines.append("{}.family={}".format(key, row["family"]))
-            lines.append("{}.color={}".format(key, row["color"]))
+            lines.append("{}.color.dark={}".format(key, row["dark"]))
+            lines.append("{}.color.light={}".format(key, row["light"]))
         lines.append("panel.width={}".format(spec["panel"]))
         lines.append("bar.height={}".format(spec["bar"]))
         path, _chosen = QFileDialog.getSaveFileName(self, tr(69), "yucha-dev.txt", "Text (*.txt)")
@@ -2195,9 +2299,9 @@ class SettingsDialog(QDialog):
         if dialog.exec() == QDialog.DialogCode.Accepted and dialog.picked:
             edit.setText(dialog.picked)
 
-    def _check_row(self, form, text, box, width, height):
+    def _check_row(self, form, text, box, height):
         host = QWidget()
-        host.setFixedSize(width, height)
+        host.setMinimumHeight(height)
         row = QHBoxLayout(host)
         row.setContentsMargins(0, 0, 0, 0)
         row.addStretch(1)
@@ -2880,8 +2984,9 @@ class MainWindow(QMainWindow):
             """.format(size=text_css)
         )
         ui = (self._dev or {}).get("ui") or {}
-        if ui.get("color"):
-            self.setStyleSheet(self.styleSheet() + " QLabel {{ color: {}; }}".format(ui["color"]))
+        ink = _dev_ink(ui, theme)
+        if ink:
+            self.setStyleSheet(self.styleSheet() + " QLabel {{ color: {}; }}".format(ink))
         pal = _palette(theme, appearance.get("accentColor"))
         for button in (self.play, self.ready, self.chat_btn, self.room, self.gear, self.bar_send, self.volume_btn, self.tracks_btn, self.mute_h, self.mute_v):
             button.set_ink(pal["button_fg"], pal["on_fg"], pal["accent"])
@@ -2894,14 +2999,16 @@ class MainWindow(QMainWindow):
 
     def _style_titles(self):
         spec = (self._dev or {}).get("titles") or {}
+        theme = _shown_theme(self.app.store.data["appearance"].get("theme"))
+        ink = _dev_ink(spec, theme)
         css = "background: transparent; font-size: {}pt; font-weight: {};".format(
             int(spec.get("size") or 14),
             700 if spec.get("bold", True) else 400,
         )
         if spec.get("family"):
             css += ' font-family: "{}";'.format(spec["family"])
-        if spec.get("color"):
-            css += " color: {};".format(spec["color"])
+        if ink:
+            css += " color: {};".format(ink)
         for label in (self.users_title, self.playlist_title, self.chat_title):
             label.setStyleSheet(css)
 
@@ -2915,11 +3022,12 @@ class MainWindow(QMainWindow):
         if self.ctl is None:
             return
         look = self.app.store.data["appearance"]
+        theme = _shown_theme(look.get("theme"))
         dev = (self._dev or {}).get("sub")
         if dev:
             family = font_name(dev.get("family"))
             size = int(dev.get("size") or 55)
-            color = hex_color(dev.get("color"), "#FFFFFF")
+            color = hex_color(_dev_ink(dev, theme), "#FFFFFF")
             bold = "yes" if dev.get("bold") else "no"
         else:
             family = font_name(look.get("subFont"))
@@ -3774,6 +3882,10 @@ class MainWindow(QMainWindow):
         point = max(1, min(96, point))
         self.board.bar_h = self._bar_height()
         page = _palette(theme, appearance.get("accentColor"))
+        ink = _dev_ink(osd, theme) if osd else ""
+        if ink:
+            page = dict(page)
+            page["fg"] = ink
         other = str(appearance.get("accentColor2") or "#1F6A8A")
         if len(other) != 7 or not other.startswith("#"):
             other = "#1F6A8A"
@@ -3788,9 +3900,6 @@ class MainWindow(QMainWindow):
         if differ:
             notices.append(tr(11))
         notices.extend(trf(58, name) for name in missing)
-        if osd and osd.get("color"):
-            page = dict(page)
-            page["fg"] = osd["color"]
         self.board.show_state(point, page, me, page["accent"], other, notices, people, self._osd)
 
     def accept_files(self, paths, token=""):
