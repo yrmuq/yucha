@@ -6,13 +6,25 @@ the picture into the video area."""
 import html
 import math
 import os
-import random
 import re
 import threading
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import (
+    QAbstractAnimation,
+    QEasingCurve,
+    QEvent,
+    QPoint,
+    QPointF,
+    QPropertyAnimation,
+    QRect,
+    QRectF,
+    Qt,
+    QTimer,
+    QUrl,
+    Signal,
+)
 from PySide6.QtGui import (
     QBrush,
     QColor,
@@ -123,23 +135,6 @@ def _rgba(text, percent):
     color = QColor(text)
     alpha = max(0, min(255, int(round(float(percent) / 100.0 * 255))))
     return "rgba({}, {}, {}, {})".format(color.red(), color.green(), color.blue(), alpha)
-
-
-def _frost_url():
-    folder = Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache")) / "yucha"
-    folder.mkdir(parents=True, exist_ok=True)
-    path = folder / "frost.png"
-    if not path.is_file():
-        image = QImage(32, 32, QImage.Format.Format_ARGB32)
-        image.fill(Qt.GlobalColor.transparent)
-        pick = random.Random(11)
-        for _ in range(140):
-            light = pick.random() < 0.55
-            alpha = pick.randint(40, 78)
-            color = QColor(255, 255, 255, alpha) if light else QColor(0, 0, 0, alpha)
-            image.setPixelColor(pick.randrange(32), pick.randrange(32), color)
-        image.save(str(path), "PNG")
-    return path.as_posix()
 
 
 def _shown_theme(theme):
@@ -3020,11 +3015,20 @@ class MainWindow(QMainWindow):
         except (TypeError, ValueError):
             cut = 25
         side = max(gap, int(round(width * cut / 100.0)))
-        self.bar.setGeometry(side, max(0, height - inset - gap), max(1, width - side * 2), inset)
-        panel_width = self._panel_span(width) if self._panel_open else 0
+        bar_rect = QRect(side, max(0, height - inset - gap), max(1, width - side * 2), inset)
+        if self._sliding(self.bar):
+            if self._bar_open:
+                self.bar._slide.setEndValue(bar_rect)
+        elif self._bar_open:
+            self.bar.setGeometry(bar_rect)
+        panel_width = self._panel_span(width) if self._panel_open or self._sliding(self.panel) else 0
         panel_height = max(0, height - inset - gap - lift - gap)
-        if self._panel_open:
-            self.panel.setGeometry(max(0, width - panel_width - gap), gap, panel_width, panel_height)
+        panel_rect = QRect(max(0, width - panel_width - gap), gap, panel_width, panel_height)
+        if self._sliding(self.panel):
+            if self._panel_open:
+                self.panel._slide.setEndValue(panel_rect)
+        elif self._panel_open:
+            self.panel.setGeometry(panel_rect)
             self.panel.show()
         else:
             self.panel.hide()
@@ -3334,21 +3338,17 @@ class MainWindow(QMainWindow):
         radius = 12 if modern else 0
         bar_alpha = dev.get("bar_alpha", 90)
         panel_alpha = dev.get("panel_alpha", 90)
-        frost = _frost_url()
         bar = _rgba(pal["bg"], bar_alpha)
         panel = _rgba(pal["bg"], panel_alpha)
         return (
             "QWidget#bar {{"
-            " background-color: {bar}; background-image: url({frost}); background-repeat: repeat;"
-            " border: none; border-radius: {radius}px; }}"
+            " background-color: {bar}; border: none; border-radius: {radius}px; }}"
             "QWidget#panel {{"
-            " background-color: {panel}; background-image: url({frost}); background-repeat: repeat;"
-            " border: none; border-radius: {radius}px; }}"
+            " background-color: {panel}; border: none; border-radius: {radius}px; }}"
             "QWidget#chatline, QWidget#volume, QWidget#volumepop, QWidget#trackpop {{"
-            " background-color: {bar}; background-image: url({frost}); background-repeat: repeat;"
-            " border: none; }}"
+            " background-color: {bar}; border: none; }}"
             "QWidget#bar QLabel {{ background: transparent; }}"
-        ).format(bar=bar, panel=panel, radius=radius, frost=frost)
+        ).format(bar=bar, panel=panel, radius=radius)
 
     def _apply_bar_buttons(self):
         flags = (self._dev or {}).get("bar_buttons") or {}
@@ -3431,15 +3431,99 @@ class MainWindow(QMainWindow):
         self._set("sub-ass-override", "force")
 
     def set_panel(self, open_, animate=True):
+        open_ = bool(open_)
         was_open = self._panel_open
-        self._panel_open = bool(open_)
-        self.room.setChecked(self._panel_open)
-        if self._panel_open:
-            self._bar_open = True
-            self.bar.show()
-        elif was_open:
+        if was_open == open_:
+            if open_ and not self._bar_open:
+                self._set_bar(True)
+            else:
+                self._place_overlays()
+            return
+        self._panel_open = open_
+        self.room.setChecked(open_)
+        if was_open and not open_:
             self._last_move = time.monotonic()
-        self._place_overlays()
+        self._slide_panel(animate)
+        if open_ and not self._bar_open:
+            self._set_bar(True)
+        else:
+            self._place_overlays()
+
+    def _sliding(self, widget):
+        anim = getattr(widget, "_slide", None)
+        return anim is not None and anim.state() == QAbstractAnimation.State.Running
+
+    def _slide(self, widget, start, end, hide):
+        previous = getattr(widget, "_slide", None)
+        if previous is not None:
+            previous.stop()
+            previous.deleteLater()
+        widget.setGeometry(start)
+        widget.show()
+        widget.raise_()
+        anim = QPropertyAnimation(widget, b"geometry", widget)
+        anim.setDuration(240)
+        anim.setEasingCurve(QEasingCurve.Type.InCubic if hide else QEasingCurve.Type.OutCubic)
+        anim.setStartValue(start)
+        anim.setEndValue(end)
+
+        def finished():
+            widget._slide = None
+            if hide:
+                widget.hide()
+            else:
+                widget.setGeometry(end)
+
+        anim.finished.connect(finished)
+        widget._slide = anim
+        anim.start()
+
+    def _bar_rect(self):
+        width = self.stage.width()
+        height = self.stage.height()
+        inset = self._bar_height()
+        gap = FLOAT_GAP if self._is_modern() else 0
+        cut = (self._dev or {}).get("bar_inset", 25)
+        try:
+            cut = max(0, min(40, int(cut)))
+        except (TypeError, ValueError):
+            cut = 25
+        side = max(gap, int(round(width * cut / 100.0)))
+        return QRect(side, max(0, height - inset - gap), max(1, width - side * 2), inset)
+
+    def _panel_rect(self):
+        width = self.stage.width()
+        height = self.stage.height()
+        inset = self._bar_height()
+        gap = FLOAT_GAP if self._is_modern() else 0
+        lift = POP_GAP if gap else 0
+        panel_width = self._panel_span(width)
+        panel_height = max(0, height - inset - gap - lift - gap)
+        return QRect(max(0, width - panel_width - gap), gap, panel_width, panel_height)
+
+    def _slide_panel(self, animate):
+        end = self._panel_rect()
+        off = QRect(self.stage.width(), end.y(), end.width(), end.height())
+        if not animate:
+            self.panel.setGeometry(end if self._panel_open else off)
+            self.panel.setVisible(self._panel_open)
+            return
+        if self._panel_open:
+            self._slide(self.panel, off, end, False)
+        else:
+            self._slide(self.panel, self.panel.geometry(), off, True)
+
+    def _slide_bar(self, animate):
+        end = self._bar_rect()
+        off = QRect(end.x(), self.stage.height(), end.width(), end.height())
+        if not animate:
+            self.bar.setGeometry(end if self._bar_open else off)
+            self.bar.setVisible(self._bar_open)
+            return
+        if self._bar_open:
+            self._slide(self.bar, off, end, False)
+        else:
+            self._slide(self.bar, self.bar.geometry(), off, True)
 
     def _panel_span(self, width):
         room = max(PANEL_MIN, width - 80)
@@ -3499,7 +3583,7 @@ class MainWindow(QMainWindow):
         if open_ == self._bar_open:
             return
         self._bar_open = open_
-        self.bar.setVisible(open_)
+        self._slide_bar(True)
         self._place_overlays()
 
     def _toggle_chat_field(self):
@@ -3640,7 +3724,11 @@ class MainWindow(QMainWindow):
         key = int(event.key())
         if key == int(Qt.Key.Key_Space):
             if not event.isAutoRepeat():
-                self._toggle_pause()
+                playing = bool(self._current_path) and not self._paused
+                if self._connected and playing and not self.ready.isChecked():
+                    self._toggle_ready()
+                else:
+                    self._toggle_pause()
             return True
         if key == int(Qt.Key.Key_M):
             if not event.isAutoRepeat():
