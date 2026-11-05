@@ -23,6 +23,7 @@ from PySide6.QtGui import (
     QGuiApplication,
     QImage,
     QKeySequence,
+    QOpenGLFunctions,
     QPainter,
     QPainterPath,
     QPalette,
@@ -30,6 +31,7 @@ from PySide6.QtGui import (
     QPixmap,
     QShortcut,
 )
+from PySide6.QtOpenGL import QOpenGLTexture, QOpenGLTextureBlitter
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -115,6 +117,15 @@ def _dev_ink(row, theme):
         return ""
     picked = row.get("light" if theme == "light" else "dark") or row.get("color") or ""
     return str(picked)
+
+
+def _css_family(name):
+    if not name:
+        return ""
+    safe = str(name).replace("\\", "").replace('"', "")
+    if not safe:
+        return ""
+    return ' font-family: "{}";'.format(safe)
 
 
 def _rgba(text, percent):
@@ -2668,7 +2679,10 @@ class MainWindow(QMainWindow):
         self._bar_h = BAR_HEIGHT
         self._dev = None
         self._slides = []
+        self._dead_tex = []
+        self._blitter = None
         self._slide_timer = QTimer(self)
+        self._slide_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._slide_timer.setInterval(16)
         self._slide_timer.timeout.connect(self._tick_slides)
         self._awake = SleepInhibit()
@@ -2735,6 +2749,7 @@ class MainWindow(QMainWindow):
         self.video.filesDropped.connect(self._add_dropped)
         self.video.enterPressed.connect(self._enter_chat)
         self.board.repaint_frame = self.video.redraw
+        self.board._timer.setTimerType(Qt.TimerType.PreciseTimer)
         self.video.notes = self.board.paint_on
         self.video.chrome = self._paint_slides
         col.addWidget(self.video, 1)
@@ -3278,6 +3293,7 @@ class MainWindow(QMainWindow):
         font.setBold(bool(ui.get("bold")))
         font.setPointSize(max(1, min(96, size)))
         QApplication.instance().setFont(font)
+        self.setFont(font)
         alfa_spec = dev.get("alfa") or {}
         alfa = max(1, min(96, int(alfa_spec.get("size") or 16)))
         block = QFont(font)
@@ -3300,17 +3316,24 @@ class MainWindow(QMainWindow):
         self._lock_volume_digits()
         titles = dev.get("titles") or {}
         beta = max(1, min(96, int(titles.get("size") or 11)))
-        alfa_family = ' font-family: "{}";'.format(alfa_spec["family"]) if alfa_spec.get("family") else ""
-        beta_family = ' font-family: "{}";'.format(titles["family"]) if titles.get("family") else ""
+        alfa_family = _css_family(alfa_spec.get("family"))
+        beta_family = _css_family(titles.get("family"))
+        ui_family = _css_family(ui.get("family"))
         alfa_weight = 700 if alfa_spec.get("bold") else 400
         beta_weight = 700 if titles.get("bold", True) else 400
+        ui_weight = 700 if ui.get("bold") else 400
         alfa_ink = _dev_ink(alfa_spec, theme)
         beta_ink = _dev_ink(titles, theme)
         alfa_color = " color: {};".format(alfa_ink) if alfa_ink else ""
         beta_color = " color: {};".format(beta_ink) if beta_ink else ""
+        ui_size = max(1, min(96, size))
         self.setStyleSheet(
             self.styleSheet()
             + """
+            QMainWindow, QDialog, QWidget {{
+                font-size: {ui_size}pt;
+                font-weight: {ui_weight};{ui_family}
+            }}
             QTextEdit#roomchat, QListWidget#playlist, QListWidget#playlist::item,
             QWidget#usersbox QLabel {{
                 font-size: {size};
@@ -3325,6 +3348,9 @@ class MainWindow(QMainWindow):
                 font-weight: {beta_weight};{beta_family}{beta_color}
             }}
             """.format(
+                ui_size=ui_size,
+                ui_weight=ui_weight,
+                ui_family=ui_family,
                 size=text_css,
                 alfa=alfa,
                 beta=beta,
@@ -3340,6 +3366,8 @@ class MainWindow(QMainWindow):
         ink = _dev_ink(ui, theme)
         if ink:
             self.setStyleSheet(self.styleSheet() + " QLabel {{ color: {}; }}".format(ink))
+        QApplication.instance().setFont(font)
+        self.setFont(font)
         pal = _palette(theme, appearance.get("accentColor"))
         for button in (self.play, self.ready, self.chat_btn, self.room, self.gear, self.bar_send, self.volume_btn, self.tracks_btn, self.mute_h, self.mute_v):
             button.set_ink(pal["button_fg"], pal["on_fg"], pal["accent"])
@@ -3500,14 +3528,36 @@ class MainWindow(QMainWindow):
         shot = widget.grab()
         widget.hide()
         widget.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, False)
-        return shot
+        image = shot.toImage()
+        if image.isNull():
+            return QImage()
+        if image.format() != QImage.Format.Format_RGBA8888:
+            image = image.convertToFormat(QImage.Format.Format_RGBA8888)
+        image.setDevicePixelRatio(shot.devicePixelRatio() or 1)
+        return image
+
+    def _forget_slide(self, widget):
+        kept = []
+        for item in self._slides:
+            if item["widget"] is widget:
+                self._retire_slide(item)
+            else:
+                kept.append(item)
+        self._slides = kept
+
+    def _retire_slide(self, item):
+        tex = item.get("tex")
+        if tex is not None:
+            self._dead_tex.append(tex)
+            item["tex"] = None
 
     def _slide(self, widget, start, end, hide):
-        self._slides = [item for item in self._slides if item["widget"] is not widget]
-        shot = self._grab_widget(widget, end if widget is not None else start)
+        self._forget_slide(widget)
+        image = self._grab_widget(widget, end if widget is not None else start)
         self._slides.append({
             "widget": widget,
-            "shot": shot,
+            "image": image,
+            "tex": None,
             "start": QPoint(start.x(), start.y()),
             "end": QPoint(end.x(), end.y()),
             "place": QRect(end),
@@ -3534,6 +3584,7 @@ class MainWindow(QMainWindow):
             self.video.redraw()
 
     def _land_slide(self, item):
+        self._retire_slide(item)
         widget = item["widget"]
         if item["hide"]:
             widget.hide()
@@ -3542,14 +3593,96 @@ class MainWindow(QMainWindow):
             widget.show()
             widget.raise_()
 
+    def _flush_dead_textures(self):
+        if not self._dead_tex:
+            return
+        for tex in self._dead_tex:
+            try:
+                tex.destroy()
+            except Exception:
+                pass
+        self._dead_tex = []
+
+    def _slide_texture(self, item):
+        tex = item.get("tex")
+        if tex is not None:
+            return tex
+        image = item.get("image")
+        if image is None or image.isNull():
+            return None
+        tex = QOpenGLTexture(image, QOpenGLTexture.MipMapGeneration.DontGenerateMipMaps)
+        tex.setMinificationFilter(QOpenGLTexture.Filter.Linear)
+        tex.setMagnificationFilter(QOpenGLTexture.Filter.Linear)
+        tex.setWrapMode(QOpenGLTexture.WrapMode.ClampToEdge)
+        item["tex"] = tex
+        return tex
+
     def _paint_slides(self, painter, width, height):
+        self._flush_dead_textures()
+        if not self._slides:
+            return
+        if self._blit_slides(painter, width, height):
+            return
         now = time.monotonic()
         for item in self._slides:
-            done = min(1.0, max(0.0, (now - item["born"]) / SLIDE))
-            done = _ease(done)
+            image = item.get("image")
+            if image is None or image.isNull():
+                continue
+            done = _ease(min(1.0, max(0.0, (now - item["born"]) / SLIDE)))
             x = item["start"].x() + (item["end"].x() - item["start"].x()) * done
             y = item["start"].y() + (item["end"].y() - item["start"].y()) * done
-            painter.drawPixmap(int(round(x)), int(round(y)), item["shot"])
+            ratio = image.devicePixelRatio() or 1
+            painter.drawImage(QRectF(x, y, image.width() / ratio, image.height() / ratio), image)
+
+    def _blit_slides(self, painter, width, height):
+        painter.beginNativePainting()
+        try:
+            return self._blit_slides_gl(width, height)
+        except Exception:
+            return False
+        finally:
+            painter.endNativePainting()
+
+    def _blit_slides_gl(self, width, height):
+        video = self.video
+        ctx = video.context()
+        if ctx is None:
+            return False
+        gl = QOpenGLFunctions()
+        gl.initializeOpenGLFunctions()
+        if self._blitter is None:
+            blitter = QOpenGLTextureBlitter()
+            if not blitter.create():
+                return False
+            self._blitter = blitter
+        dpr = video.devicePixelRatioF() or 1.0
+        view_w = max(1, int(round(width * dpr)))
+        view_h = max(1, int(round(height * dpr)))
+        gl.glBindFramebuffer(0x8D40, int(video.defaultFramebufferObject() or 0))
+        gl.glViewport(0, 0, view_w, view_h)
+        gl.glDisable(0x0B71)
+        origin = QOpenGLTextureBlitter.Origin.OriginBottomLeft
+        if ctx.isOpenGLES():
+            origin = QOpenGLTextureBlitter.Origin.OriginTopLeft
+        now = time.monotonic()
+        self._blitter.bind()
+        try:
+            gl.glEnable(0x0BE2)
+            gl.glBlendFunc(0x0302, 0x0303)
+            view = QRect(0, 0, view_w, view_h)
+            for item in self._slides:
+                tex = self._slide_texture(item)
+                if tex is None:
+                    continue
+                done = _ease(min(1.0, max(0.0, (now - item["born"]) / SLIDE)))
+                x = item["start"].x() + (item["end"].x() - item["start"].x()) * done
+                y = item["start"].y() + (item["end"].y() - item["start"].y()) * done
+                target = QRectF(x * dpr, y * dpr, tex.width(), tex.height())
+                transform = QOpenGLTextureBlitter.targetTransform(target, view)
+                self._blitter.blit(int(tex.textureId()), transform, origin)
+        finally:
+            self._blitter.release()
+        return True
 
     def _bar_rect(self):
         width = self.stage.width()
