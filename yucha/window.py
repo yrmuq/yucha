@@ -124,6 +124,15 @@ def _rgba(text, percent):
     return "rgba({}, {}, {}, {})".format(color.red(), color.green(), color.blue(), alpha)
 
 
+def _glass(text, percent):
+    """A tinted fill with a light top edge, so the panel reads as frosted glass."""
+    fill = _rgba(text, percent)
+    return (
+        "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+        "stop:0 rgba(255, 255, 255, 78), stop:0.16 {fill}, stop:1 {fill})"
+    ).format(fill=fill)
+
+
 def _shown_theme(theme):
     if theme == "light":
         return "light"
@@ -2160,9 +2169,18 @@ class SettingsDialog(QDialog):
             "face": face,
             "panel": PANEL_WIDTH,
             "bar": BAR_HEIGHT,
-            "bar_alpha": 100,
-            "panel_alpha": 100,
-            "osd_alpha": 91,
+            "bar_alpha": 90,
+            "panel_alpha": 90,
+            "osd_alpha": 90,
+            "bar_inset": 25,
+            "bar_buttons": {
+                "play": True,
+                "ready": True,
+                "volume": True,
+                "tracks": True,
+                "chat": True,
+                "room": True,
+            },
         }
 
     def _dev_seed(self):
@@ -2223,12 +2241,41 @@ class SettingsDialog(QDialog):
         self._dev_bar.valueChanged.connect(lambda _value: self._push_dev())
         form.addRow("Panel width", self._dev_panel)
         form.addRow("Bar height", self._dev_bar)
-        self._bar_alpha = self._alpha_spin(seed.get("bar_alpha", 100))
-        self._panel_alpha = self._alpha_spin(seed.get("panel_alpha", 100))
-        self._osd_alpha = self._alpha_spin(seed.get("osd_alpha", 91))
+        self._bar_inset = QuietSpin()
+        self._bar_inset.setRange(0, 40)
+        self._bar_inset.setSuffix("%")
+        self._bar_inset.setValue(int(seed.get("bar_inset", 25)))
+        self._bar_inset.valueChanged.connect(lambda _value: self._push_dev())
+        form.addRow("Bar side", self._bar_inset)
+        self._bar_alpha = self._alpha_spin(seed.get("bar_alpha", 90))
+        self._panel_alpha = self._alpha_spin(seed.get("panel_alpha", 90))
+        self._osd_alpha = self._alpha_spin(seed.get("osd_alpha", 90))
         form.addRow("Bar opacity", self._bar_alpha)
         form.addRow("Side opacity", self._panel_alpha)
         form.addRow("OSD opacity", self._osd_alpha)
+        self._bar_buttons = {}
+        buttons = QWidget()
+        button_row = QHBoxLayout(buttons)
+        button_row.setContentsMargins(0, 0, 0, 0)
+        flags = seed.get("bar_buttons") or {}
+        look = _palette(self._look_theme, self._look_accent)
+        for key, title in (
+            ("play", "Play"),
+            ("ready", "Ready"),
+            ("volume", "Sound"),
+            ("tracks", "Subs"),
+            ("chat", "Chat"),
+            ("room", "Room"),
+        ):
+            box = BoxCheck()
+            box.setChecked(bool(flags.get(key, True)))
+            box.set_colors(look["field"], look["border"], look["on_fg"], look["accent"])
+            box.toggled.connect(lambda _value: self._push_dev())
+            self._bar_buttons[key] = box
+            button_row.addWidget(box)
+            button_row.addWidget(QLabel(title))
+        button_row.addStretch(1)
+        form.addRow("Bar buttons", buttons)
         reset = QPushButton(tr(70))
         export = QPushButton(tr(69))
         reset.clicked.connect(self._reset_dev)
@@ -2312,7 +2359,15 @@ class SettingsDialog(QDialog):
             self._push_dev()
 
     def _fill_dev(self, seed):
-        widgets = [self._dev_panel, self._dev_bar, self._bar_alpha, self._panel_alpha, self._osd_alpha]
+        widgets = [
+            self._dev_panel,
+            self._dev_bar,
+            self._bar_inset,
+            self._bar_alpha,
+            self._panel_alpha,
+            self._osd_alpha,
+        ]
+        widgets.extend(self._bar_buttons.values())
         for row in self._dev_rows.values():
             widgets.extend((row["size"], row["bold"], row["family"]))
         for widget in widgets:
@@ -2331,9 +2386,13 @@ class SettingsDialog(QDialog):
             row["light"].set_color(hex_color(item.get("light"), "#FFFFFF"))
         self._dev_panel.setValue(int(seed["panel"]))
         self._dev_bar.setValue(int(seed["bar"]))
-        self._bar_alpha.setValue(int(seed.get("bar_alpha", 100)))
-        self._panel_alpha.setValue(int(seed.get("panel_alpha", 100)))
-        self._osd_alpha.setValue(int(seed.get("osd_alpha", 91)))
+        self._bar_inset.setValue(int(seed.get("bar_inset", 25)))
+        self._bar_alpha.setValue(int(seed.get("bar_alpha", 90)))
+        self._panel_alpha.setValue(int(seed.get("panel_alpha", 90)))
+        self._osd_alpha.setValue(int(seed.get("osd_alpha", 90)))
+        flags = seed.get("bar_buttons") or {}
+        for key, box in self._bar_buttons.items():
+            box.setChecked(bool(flags.get(key, True)))
         for widget in widgets:
             widget.blockSignals(False)
 
@@ -2348,6 +2407,8 @@ class SettingsDialog(QDialog):
             "bar_alpha": self._bar_alpha.value(),
             "panel_alpha": self._panel_alpha.value(),
             "osd_alpha": self._osd_alpha.value(),
+            "bar_inset": self._bar_inset.value(),
+            "bar_buttons": {key: box.isChecked() for key, box in self._bar_buttons.items()},
             "face": {},
         }
         for key, row in self._dev_rows.items():
@@ -2389,6 +2450,9 @@ class SettingsDialog(QDialog):
         lines.append("bar.alpha={}".format(spec["bar_alpha"]))
         lines.append("panel.alpha={}".format(spec["panel_alpha"]))
         lines.append("osd.alpha={}".format(spec["osd_alpha"]))
+        lines.append("bar.inset={}".format(spec["bar_inset"]))
+        for key, shown in spec["bar_buttons"].items():
+            lines.append("bar.button.{}={}".format(key, "yes" if shown else "no"))
         path, _chosen = QFileDialog.getSaveFileName(self, tr(69), "yucha-dev.txt", "Text (*.txt)")
         if not path:
             return
@@ -2941,7 +3005,13 @@ class MainWindow(QMainWindow):
         inset = self._bar_height()
         gap = FLOAT_GAP if self._is_modern() else 0
         lift = POP_GAP if gap else 0
-        self.bar.setGeometry(gap, max(0, height - inset - gap), max(1, width - gap * 2), inset)
+        cut = (self._dev or {}).get("bar_inset", 25)
+        try:
+            cut = max(0, min(40, int(cut)))
+        except (TypeError, ValueError):
+            cut = 25
+        side = max(gap, int(round(width * cut / 100.0)))
+        self.bar.setGeometry(side, max(0, height - inset - gap), max(1, width - side * 2), inset)
         panel_width = self._panel_span(width) if self._panel_open else 0
         panel_height = max(0, height - inset - gap - lift - gap)
         if self._panel_open:
@@ -3236,6 +3306,7 @@ class MainWindow(QMainWindow):
         self._style_titles()
         self._apply_skin()
         self._apply_subtitles()
+        self._apply_bar_buttons()
         self._place_overlays()
 
     def _face_paint(self, theme):
@@ -3253,22 +3324,40 @@ class MainWindow(QMainWindow):
         dev = self._dev or {}
         modern = self._is_modern()
         radius = 12 if modern else 0
-        if modern:
-            bar_border = "border: none;"
-            panel_border = "border: none;"
-        else:
-            bar_border = "border-top: 1px solid {};".format(pal["border"])
-            panel_border = "border-left: 1px solid {};".format(pal["border"])
+        bar_alpha = dev.get("bar_alpha", 90)
+        panel_alpha = dev.get("panel_alpha", 90)
+        glass = "border: 1px solid rgba(255, 255, 255, 88);"
+        bar = _glass(pal["bg"], bar_alpha)
+        panel = _glass(pal["bg"], panel_alpha)
         return (
-            "QWidget#bar {{ background: {bar}; border-radius: {radius}px; {bar_border} }}"
-            "QWidget#panel {{ background: {panel}; border-radius: {radius}px; {panel_border} }}"
-        ).format(
-            bar=_rgba(pal["bg"], dev.get("bar_alpha", 100)),
-            panel=_rgba(pal["bg"], dev.get("panel_alpha", 100)),
-            radius=radius,
-            bar_border=bar_border,
-            panel_border=panel_border,
-        )
+            "QWidget#bar {{ background: {bar}; border-radius: {radius}px; {glass} }}"
+            "QWidget#panel {{ background: {panel}; border-radius: {radius}px; {glass} }}"
+            "QWidget#chatline, QWidget#volume, QWidget#volumepop, QWidget#trackpop {{"
+            " background: {bar}; {glass} }}"
+            "QWidget#bar QLabel {{ background: transparent; }}"
+        ).format(bar=bar, panel=panel, radius=radius, glass=glass)
+
+    def _apply_bar_buttons(self):
+        flags = (self._dev or {}).get("bar_buttons") or {}
+        mapping = {
+            "play": self.play,
+            "ready": self.ready,
+            "volume": self.volume_btn,
+            "tracks": self.tracks_btn,
+            "chat": self.chat_btn,
+            "room": self.room,
+        }
+        for key, widget in mapping.items():
+            widget.setVisible(bool(flags.get(key, True)))
+        if not self.volume_btn.isVisible():
+            self._volume_open = False
+            self.volume_pop.hide()
+        if not self.tracks_btn.isVisible():
+            self._tracks_open = False
+            self.tracks_pop.hide()
+        if not self.chat_btn.isVisible():
+            self._chat_open = False
+            self.chat_line.hide()
 
     def _apply_skin(self):
         theme = _shown_theme(self.app.store.data["appearance"].get("theme"))
@@ -3282,7 +3371,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "board"):
             self.board.ready_on = ready
             self.board.ready_off = away
-            percent = int((self._dev or {}).get("osd_alpha", 91))
+            percent = int((self._dev or {}).get("osd_alpha", 90))
             self.board.plate_alpha = max(0, min(255, int(round(percent / 100.0 * 255))))
 
     def _style_titles(self):
