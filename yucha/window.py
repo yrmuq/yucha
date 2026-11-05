@@ -6,6 +6,7 @@ the picture into the video area."""
 import html
 import math
 import os
+import random
 import re
 import threading
 import time
@@ -124,13 +125,21 @@ def _rgba(text, percent):
     return "rgba({}, {}, {}, {})".format(color.red(), color.green(), color.blue(), alpha)
 
 
-def _glass(text, percent):
-    """A tinted fill with a light top edge, so the panel reads as frosted glass."""
-    fill = _rgba(text, percent)
-    return (
-        "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
-        "stop:0 rgba(255, 255, 255, 78), stop:0.16 {fill}, stop:1 {fill})"
-    ).format(fill=fill)
+def _frost_url():
+    folder = Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache")) / "yucha"
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / "frost.png"
+    if not path.is_file():
+        image = QImage(32, 32, QImage.Format.Format_ARGB32)
+        image.fill(Qt.GlobalColor.transparent)
+        pick = random.Random(11)
+        for _ in range(140):
+            light = pick.random() < 0.55
+            alpha = pick.randint(40, 78)
+            color = QColor(255, 255, 255, alpha) if light else QColor(0, 0, 0, alpha)
+            image.setPixelColor(pick.randrange(32), pick.randrange(32), color)
+        image.save(str(path), "PNG")
+    return path.as_posix()
 
 
 def _shown_theme(theme):
@@ -2222,8 +2231,8 @@ class SettingsDialog(QDialog):
         self._face_rows = {}
         face = seed.get("face") or self._dev_defaults()["face"]
         for key, title in (
-            ("bg", "Background"),
-            ("field", "Field"),
+            ("bg", "alfa color"),
+            ("field", "beta color"),
             ("border", "Border"),
             ("button", "Button"),
             ("button_fg", "Button text"),
@@ -3019,12 +3028,11 @@ class MainWindow(QMainWindow):
             self.panel.show()
         else:
             self.panel.hide()
-        free = max(0, width - panel_width - gap)
-        box_w = max(1, int(round(free * 0.2)))
+        box_w = max(1, int(round(width * 0.2)))
         box_h = 44
         if self._chat_open:
             self.chat_line.setGeometry(
-                max(0, (free - box_w) // 2),
+                max(0, (width - box_w) // 2),
                 max(0, height - inset - gap - 16 - box_h),
                 box_w,
                 box_h,
@@ -3326,16 +3334,21 @@ class MainWindow(QMainWindow):
         radius = 12 if modern else 0
         bar_alpha = dev.get("bar_alpha", 90)
         panel_alpha = dev.get("panel_alpha", 90)
-        glass = "border: 1px solid rgba(255, 255, 255, 88);"
-        bar = _glass(pal["bg"], bar_alpha)
-        panel = _glass(pal["bg"], panel_alpha)
+        frost = _frost_url()
+        bar = _rgba(pal["bg"], bar_alpha)
+        panel = _rgba(pal["bg"], panel_alpha)
         return (
-            "QWidget#bar {{ background: {bar}; border-radius: {radius}px; {glass} }}"
-            "QWidget#panel {{ background: {panel}; border-radius: {radius}px; {glass} }}"
+            "QWidget#bar {{"
+            " background-color: {bar}; background-image: url({frost}); background-repeat: repeat;"
+            " border: none; border-radius: {radius}px; }}"
+            "QWidget#panel {{"
+            " background-color: {panel}; background-image: url({frost}); background-repeat: repeat;"
+            " border: none; border-radius: {radius}px; }}"
             "QWidget#chatline, QWidget#volume, QWidget#volumepop, QWidget#trackpop {{"
-            " background: {bar}; {glass} }}"
+            " background-color: {bar}; background-image: url({frost}); background-repeat: repeat;"
+            " border: none; }}"
             "QWidget#bar QLabel {{ background: transparent; }}"
-        ).format(bar=bar, panel=panel, radius=radius, glass=glass)
+        ).format(bar=bar, panel=panel, radius=radius, frost=frost)
 
     def _apply_bar_buttons(self):
         flags = (self._dev or {}).get("bar_buttons") or {}
