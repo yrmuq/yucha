@@ -2217,10 +2217,10 @@ class SettingsDialog(QDialog):
         form.setVerticalSpacing(12)
         self._dev_rows = {}
         for key, title in (
-            ("ui", "Interface"),
+            ("ui", "alfa text size"),
             ("osd", "OSD"),
             ("sub", "Subtitles"),
-            ("titles", "Panel titles"),
+            ("titles", "beta text size"),
         ):
             form.addRow(title, self._dev_font_row(key, seed[key]))
         self._face_rows = {}
@@ -3294,7 +3294,22 @@ class MainWindow(QMainWindow):
         self.room_users._text_css = text_css
         self.files.setFont(shared)
         self.room_users.setFont(shared)
+        alfa = max(1, min(96, int(ui.get("size") or appearance.get("uiFontSize") or 16)))
+        titles = dev.get("titles") or {}
+        beta = max(1, min(96, int(titles.get("size") or 11)))
+        plain = QFont(shared)
+        plain.setBold(False)
+        plain.setPointSize(alfa)
+        if hasattr(self, "volume_text"):
+            self.volume_text.setFont(plain)
+        if hasattr(self, "volume_readout"):
+            self.volume_readout.setFont(plain)
         self._lock_volume_digits()
+        alfa_family = ' font-family: "{}";'.format(ui["family"]) if ui.get("family") else ""
+        beta_family = ' font-family: "{}";'.format(titles["family"]) if titles.get("family") else ""
+        beta_weight = 700 if titles.get("bold", True) else 400
+        beta_ink = _dev_ink(titles, theme)
+        beta_color = " color: {};".format(beta_ink) if beta_ink else ""
         self.setStyleSheet(
             self.styleSheet()
             + """
@@ -3302,7 +3317,23 @@ class MainWindow(QMainWindow):
             QWidget#usersbox QLabel {{
                 font-size: {size};
             }}
-            """.format(size=text_css)
+            QWidget#volume QLabel, QWidget#volumepop QLabel, QPushButton#trackrow {{
+                font-size: {alfa}pt;
+                font-weight: 400;{alfa_family}
+            }}
+            QWidget#trackpop QLabel#heading {{
+                font-size: {beta}pt;
+                font-weight: {beta_weight};{beta_family}{beta_color}
+            }}
+            """.format(
+                size=text_css,
+                alfa=alfa,
+                beta=beta,
+                alfa_family=alfa_family,
+                beta_family=beta_family,
+                beta_weight=beta_weight,
+                beta_color=beta_color,
+            )
         )
         ui = (self._dev or {}).get("ui") or {}
         ink = _dev_ink(ui, theme)
