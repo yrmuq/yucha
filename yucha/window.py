@@ -11,20 +11,7 @@ import threading
 import time
 from pathlib import Path
 
-from PySide6.QtCore import (
-    QAbstractAnimation,
-    QEasingCurve,
-    QEvent,
-    QPoint,
-    QPointF,
-    QPropertyAnimation,
-    QRect,
-    QRectF,
-    Qt,
-    QTimer,
-    QUrl,
-    Signal,
-)
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QBrush,
     QColor,
@@ -32,7 +19,6 @@ from PySide6.QtGui import (
     QDesktopServices,
     QFont,
     QFontDatabase,
-    QFontInfo,
     QFontMetrics,
     QGuiApplication,
     QImage,
@@ -2167,6 +2153,7 @@ class SettingsDialog(QDialog):
         face["away"] = {"dark": "#C4453C", "light": "#C4453C"}
         return {
             "ui": {"size": 16, "bold": False, "family": family, "dark": dark, "light": light},
+            "alfa": {"size": 16, "bold": False, "family": family, "dark": dark, "light": light},
             "osd": {"size": 18, "bold": False, "family": family, "dark": dark, "light": light},
             "sub": {"size": 55, "bold": False, "family": "sans-serif", "dark": white, "light": white},
             "titles": {"size": 11, "bold": True, "family": family, "dark": dark, "light": light},
@@ -2217,7 +2204,8 @@ class SettingsDialog(QDialog):
         form.setVerticalSpacing(12)
         self._dev_rows = {}
         for key, title in (
-            ("ui", "alfa text size"),
+            ("ui", "Interface"),
+            ("alfa", "alfa text size"),
             ("osd", "OSD"),
             ("sub", "Subtitles"),
             ("titles", "beta text size"),
@@ -2439,7 +2427,7 @@ class SettingsDialog(QDialog):
     def _export_dev(self):
         spec = self._dev_spec()
         lines = []
-        for key in ("ui", "osd", "sub", "titles"):
+        for key in ("ui", "alfa", "osd", "sub", "titles"):
             row = spec[key]
             lines.append("{}.size={}".format(key, row["size"]))
             lines.append("{}.bold={}".format(key, "yes" if row["bold"] else "no"))
@@ -2679,6 +2667,10 @@ class MainWindow(QMainWindow):
         self._known_names = None
         self._bar_h = BAR_HEIGHT
         self._dev = None
+        self._slides = []
+        self._slide_timer = QTimer(self)
+        self._slide_timer.setInterval(16)
+        self._slide_timer.timeout.connect(self._tick_slides)
         self._awake = SleepInhibit()
         icon = Path(__file__).resolve().parent / "icon.png"
         self._notes = Notifier(str(icon) if icon.is_file() else "")
@@ -2744,6 +2736,7 @@ class MainWindow(QMainWindow):
         self.video.enterPressed.connect(self._enter_chat)
         self.board.repaint_frame = self.video.redraw
         self.video.notes = self.board.paint_on
+        self.video.chrome = self._paint_slides
         col.addWidget(self.video, 1)
 
         self.bar = QWidget(column)
@@ -3016,17 +3009,21 @@ class MainWindow(QMainWindow):
             cut = 25
         side = max(gap, int(round(width * cut / 100.0)))
         bar_rect = QRect(side, max(0, height - inset - gap), max(1, width - side * 2), inset)
-        if self._sliding(self.bar):
+        moving = self._slide_item(self.bar)
+        if moving is not None:
             if self._bar_open:
-                self.bar._slide.setEndValue(bar_rect)
+                moving["end"] = QPoint(bar_rect.x(), bar_rect.y())
+                moving["place"] = bar_rect
         elif self._bar_open:
             self.bar.setGeometry(bar_rect)
         panel_width = self._panel_span(width) if self._panel_open or self._sliding(self.panel) else 0
         panel_height = max(0, height - inset - gap - lift - gap)
         panel_rect = QRect(max(0, width - panel_width - gap), gap, panel_width, panel_height)
-        if self._sliding(self.panel):
+        moving = self._slide_item(self.panel)
+        if moving is not None:
             if self._panel_open:
-                self.panel._slide.setEndValue(panel_rect)
+                moving["end"] = QPoint(panel_rect.x(), panel_rect.y())
+                moving["place"] = panel_rect
         elif self._panel_open:
             self.panel.setGeometry(panel_rect)
             self.panel.show()
@@ -3281,34 +3278,35 @@ class MainWindow(QMainWindow):
         font.setBold(bool(ui.get("bold")))
         font.setPointSize(max(1, min(96, size)))
         QApplication.instance().setFont(font)
-        info = QFontInfo(self.chat.document().defaultFont())
-        point = info.pointSize()
-        if point < 1:
-            point = font.pointSize()
-        shared = QFont(font)
-        shared.setFamily(info.family() or font.family())
-        shared.setPointSize(point)
-        self.chat.setFont(shared)
-        self.chat.document().setDefaultFont(shared)
-        text_css = "{}pt".format(point)
+        alfa_spec = dev.get("alfa") or {}
+        alfa = max(1, min(96, int(alfa_spec.get("size") or 16)))
+        block = QFont(font)
+        if alfa_spec.get("family"):
+            block.setFamily(alfa_spec["family"])
+        block.setBold(bool(alfa_spec.get("bold")))
+        block.setPointSize(alfa)
+        self.chat.setFont(block)
+        self.chat.document().setDefaultFont(block)
+        text_css = "{}pt".format(alfa)
         self.room_users._text_css = text_css
-        self.files.setFont(shared)
-        self.room_users.setFont(shared)
-        alfa = max(1, min(96, int(ui.get("size") or appearance.get("uiFontSize") or 16)))
-        titles = dev.get("titles") or {}
-        beta = max(1, min(96, int(titles.get("size") or 11)))
-        plain = QFont(shared)
+        self.files.setFont(block)
+        self.room_users.setFont(block)
+        plain = QFont(block)
         plain.setBold(False)
-        plain.setPointSize(alfa)
         if hasattr(self, "volume_text"):
             self.volume_text.setFont(plain)
         if hasattr(self, "volume_readout"):
             self.volume_readout.setFont(plain)
         self._lock_volume_digits()
-        alfa_family = ' font-family: "{}";'.format(ui["family"]) if ui.get("family") else ""
+        titles = dev.get("titles") or {}
+        beta = max(1, min(96, int(titles.get("size") or 11)))
+        alfa_family = ' font-family: "{}";'.format(alfa_spec["family"]) if alfa_spec.get("family") else ""
         beta_family = ' font-family: "{}";'.format(titles["family"]) if titles.get("family") else ""
+        alfa_weight = 700 if alfa_spec.get("bold") else 400
         beta_weight = 700 if titles.get("bold", True) else 400
+        alfa_ink = _dev_ink(alfa_spec, theme)
         beta_ink = _dev_ink(titles, theme)
+        alfa_color = " color: {};".format(alfa_ink) if alfa_ink else ""
         beta_color = " color: {};".format(beta_ink) if beta_ink else ""
         self.setStyleSheet(
             self.styleSheet()
@@ -3316,10 +3314,11 @@ class MainWindow(QMainWindow):
             QTextEdit#roomchat, QListWidget#playlist, QListWidget#playlist::item,
             QWidget#usersbox QLabel {{
                 font-size: {size};
+                font-weight: {alfa_weight};{alfa_family}{alfa_color}
             }}
             QWidget#volume QLabel, QWidget#volumepop QLabel, QPushButton#trackrow {{
                 font-size: {alfa}pt;
-                font-weight: 400;{alfa_family}
+                font-weight: 400;{alfa_family}{alfa_color}
             }}
             QWidget#trackpop QLabel#heading {{
                 font-size: {beta}pt;
@@ -3330,6 +3329,8 @@ class MainWindow(QMainWindow):
                 alfa=alfa,
                 beta=beta,
                 alfa_family=alfa_family,
+                alfa_weight=alfa_weight,
+                alfa_color=alfa_color,
                 beta_family=beta_family,
                 beta_weight=beta_weight,
                 beta_color=beta_color,
@@ -3481,33 +3482,74 @@ class MainWindow(QMainWindow):
             self._place_overlays()
 
     def _sliding(self, widget):
-        anim = getattr(widget, "_slide", None)
-        return anim is not None and anim.state() == QAbstractAnimation.State.Running
+        return self._slide_item(widget) is not None
+
+    def _slide_item(self, widget):
+        for item in self._slides:
+            if item["widget"] is widget:
+                return item
+        return None
+
+    def _grab_widget(self, widget, rect):
+        widget.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        widget.setGeometry(rect)
+        widget.show()
+        layout = widget.layout()
+        if layout is not None:
+            layout.activate()
+        shot = widget.grab()
+        widget.hide()
+        widget.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, False)
+        return shot
 
     def _slide(self, widget, start, end, hide):
-        previous = getattr(widget, "_slide", None)
-        if previous is not None:
-            previous.stop()
-            previous.deleteLater()
-        widget.setGeometry(start)
-        widget.show()
-        widget.raise_()
-        anim = QPropertyAnimation(widget, b"geometry", widget)
-        anim.setDuration(240)
-        anim.setEasingCurve(QEasingCurve.Type.InCubic if hide else QEasingCurve.Type.OutCubic)
-        anim.setStartValue(start)
-        anim.setEndValue(end)
+        self._slides = [item for item in self._slides if item["widget"] is not widget]
+        shot = self._grab_widget(widget, end if widget is not None else start)
+        self._slides.append({
+            "widget": widget,
+            "shot": shot,
+            "start": QPoint(start.x(), start.y()),
+            "end": QPoint(end.x(), end.y()),
+            "place": QRect(end),
+            "born": time.monotonic(),
+            "hide": hide,
+        })
+        if not self._slide_timer.isActive():
+            self._slide_timer.start()
+        self.video.redraw()
 
-        def finished():
-            widget._slide = None
-            if hide:
-                widget.hide()
+    def _tick_slides(self):
+        now = time.monotonic()
+        alive = []
+        for item in self._slides:
+            if now - item["born"] >= SLIDE:
+                self._land_slide(item)
             else:
-                widget.setGeometry(end)
+                alive.append(item)
+        self._slides = alive
+        if alive:
+            self.video.redraw()
+        else:
+            self._slide_timer.stop()
+            self.video.redraw()
 
-        anim.finished.connect(finished)
-        widget._slide = anim
-        anim.start()
+    def _land_slide(self, item):
+        widget = item["widget"]
+        if item["hide"]:
+            widget.hide()
+        else:
+            widget.setGeometry(item["place"])
+            widget.show()
+            widget.raise_()
+
+    def _paint_slides(self, painter, width, height):
+        now = time.monotonic()
+        for item in self._slides:
+            done = min(1.0, max(0.0, (now - item["born"]) / SLIDE))
+            done = _ease(done)
+            x = item["start"].x() + (item["end"].x() - item["start"].x()) * done
+            y = item["start"].y() + (item["end"].y() - item["start"].y()) * done
+            painter.drawPixmap(int(round(x)), int(round(y)), item["shot"])
 
     def _bar_rect(self):
         width = self.stage.width()
