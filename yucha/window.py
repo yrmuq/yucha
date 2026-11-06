@@ -1468,6 +1468,7 @@ class StepScale(QWidget):
     def __init__(self, standard):
         super().__init__()
         self._standard = int(standard)
+        self._offset = 0
         self._numbers = False
         self.setMinimumWidth(180)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
