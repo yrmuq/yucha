@@ -77,7 +77,6 @@ class Picture(QOpenGLWidget):
         self.setAcceptDrops(True)
         self.error = None
         self.ctx = None
-        self.notes = None
         self._present = False
         self.mpv = None
         self._mpv_mod = None
@@ -155,12 +154,7 @@ class Picture(QOpenGLWidget):
         self._present = True
         super().update(*args)
 
-    def redraw(self):
-        QOpenGLWidget.update(self)
-
     def paintGL(self):
-        # Notes belong to this frame. A widget above the picture is blended on
-        # mpv's own frames, so it only stays smooth while the video is paused.
         present = self._present
         self._present = False
         painter = QPainter(self)
@@ -170,8 +164,6 @@ class Picture(QOpenGLWidget):
                 self._draw_video(present)
             finally:
                 painter.endNativePainting()
-            if self.notes is not None:
-                self.notes(painter, max(1, self.width()), max(1, self.height()))
         finally:
             painter.end()
 

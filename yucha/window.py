@@ -774,11 +774,16 @@ def _paint_mark(painter, kind, band, color):
 
 
 class NoticeBoard(QWidget):
-    """Room notes drawn into the video frame. The window asks for a new frame on the display refresh while a toast moves."""
+    """Room notes on their own layer. The video is not repainted to move them."""
 
     def __init__(self, parent):
         super().__init__(parent)
         self.setObjectName("notices")
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop, True)
+        self.setAutoFillBackground(False)
         self.hide()
         self.font_px = 18
         self.page = _palette("dark")
@@ -817,8 +822,23 @@ class NoticeBoard(QWidget):
         return self._moving(time.monotonic())
 
     def _tick(self):
-        if self.repaint_frame is not None:
+        show = bool(self.notices or self.ready or self.toasts)
+        self.setVisible(show)
+        if not show:
+            return
+        self.repaint()
+        if self.moving() and self.repaint_frame is not None:
             self.repaint_frame()
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        try:
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+            painter.fillRect(self.rect(), QColor(0, 0, 0, 0))
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+            self.paint_on(painter, max(1, self.width()), max(1, self.height()))
+        finally:
+            painter.end()
 
     def paint_on(self, painter, width, height):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -2735,7 +2755,6 @@ class MainWindow(QMainWindow):
         self.video.filesDropped.connect(self._add_dropped)
         self.video.enterPressed.connect(self._enter_chat)
         self.board.repaint_frame = self._kick_frame
-        self.video.notes = self.board.paint_on
         col.addWidget(self.video, 1)
 
         self.bar = QWidget(column)
@@ -2984,8 +3003,10 @@ class MainWindow(QMainWindow):
             self._place_overlays()
         elif kind == QEvent.Type.UpdateRequest and watched is getattr(self, "_frame_handle", None):
             self._advance_slides()
+            board = getattr(self, "board", None)
+            if board is not None and board.moving():
+                board.repaint()
             if self._frame_busy():
-                self.video.redraw()
                 watched.requestUpdate()
         elif kind == QEvent.Type.Wheel:
             if hasattr(self, "files") and watched is self.files.viewport():
@@ -3007,6 +3028,8 @@ class MainWindow(QMainWindow):
             return
         width = self.stage.width()
         height = self.stage.height()
+        if hasattr(self, "board"):
+            self.board.setGeometry(0, 0, max(1, width), max(1, height))
         inset = self._bar_height()
         gap = FLOAT_GAP if self._is_modern() else 0
         lift = POP_GAP if gap else 0
@@ -3052,12 +3075,20 @@ class MainWindow(QMainWindow):
             min(box_width, width),
             box_height,
         )
+        self._place_pops()
+        self._stack_chrome()
+
+    def _stack_chrome(self):
+        if not hasattr(self, "bar"):
+            return
+        board = getattr(self, "board", None)
+        if board is not None and board.isVisible():
+            board.raise_()
         self.bar.raise_()
         self.panel.raise_()
         if self._chat_open:
             self.chat_line.raise_()
         self.volume_box.raise_()
-        self._place_pops()
         if self._volume_open or self._volume_flash:
             self.volume_pop.raise_()
         if self._tracks_open:
@@ -3562,7 +3593,8 @@ class MainWindow(QMainWindow):
             handle.requestUpdate()
 
     def _kick_frame(self):
-        self.video.redraw()
+        # mpv repaints the picture on its own frames. Asking it to redraw here
+        # makes the video and the interface fight over the same widget.
         self._arm_frame()
 
     def _slide(self, widget, start, end, hide):
@@ -4507,6 +4539,7 @@ class MainWindow(QMainWindow):
             notices.append(tr(11))
         notices.extend(trf(58, name) for name in missing)
         self.board.show_state(point, page, me, page["accent"], other, notices, people, self._osd)
+        self._stack_chrome()
 
     def accept_files(self, paths, token=""):
         self._add_dropped(list(paths))
