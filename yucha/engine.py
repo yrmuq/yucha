@@ -69,7 +69,7 @@ class Picture(QOpenGLWidget):
 
     def __init__(self, runtime, parent=None):
         super().__init__(parent)
-        self.setUpdateBehavior(QOpenGLWidget.UpdateBehavior.NoPartialUpdate)
+        self.setUpdateBehavior(QOpenGLWidget.UpdateBehavior.PartialUpdate)
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
         self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
@@ -78,7 +78,6 @@ class Picture(QOpenGLWidget):
         self.error = None
         self.ctx = None
         self.notes = None
-        self.chrome = None
         self._present = False
         self.mpv = None
         self._mpv_mod = None
@@ -173,8 +172,6 @@ class Picture(QOpenGLWidget):
                 painter.endNativePainting()
             if self.notes is not None:
                 self.notes(painter, max(1, self.width()), max(1, self.height()))
-            if self.chrome is not None:
-                self.chrome(painter, max(1, self.width()), max(1, self.height()))
         finally:
             painter.end()
 
