@@ -164,10 +164,10 @@ class ConfigStore(object):
             if isinstance(loaded.get(section), dict):
                 self.data[section].update(loaded[section])
         look = self.data["appearance"]
-        look["uiFontSize"] = bounded_int(look.get("uiFontSize"), 16, 1, 32)
-        look["chatFontSize"] = bounded_int(look.get("chatFontSize"), 18, 1, 48)
+        look["uiFontSize"] = bounded_int(look.get("uiFontSize"), 16, 11, 21)
+        look["chatFontSize"] = bounded_int(look.get("chatFontSize"), 18, 13, 23)
         look["checkUpdates"] = bool(look.get("checkUpdates", True))
-        look["subFontSize"] = bounded_int(look.get("subFontSize"), 55, 8, 120)
+        look["subFontSize"] = bounded_int(look.get("subFontSize"), 55, 50, 60)
         look["subColor"] = hex_color(look.get("subColor"), "#FFFFFF")
         look["subFont"] = font_name(look.get("subFont"))
         look["panelWidth"] = bounded_int(look.get("panelWidth"), 380, 240, 900)

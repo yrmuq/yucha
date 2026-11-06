@@ -1460,6 +1460,95 @@ class TickSlider(QWidget):
         painter.end()
 
 
+class StepScale(QWidget):
+    """Eleven sizes around the usual one. The ball sits on a mark."""
+
+    valueChanged = Signal(int)
+
+    def __init__(self, standard):
+        super().__init__()
+        self._standard = int(standard)
+        self._offset = 0
+        self.setMinimumWidth(240)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+    def setValue(self, value):
+        offset = max(-5, min(5, int(value) - self._standard))
+        if offset == self._offset:
+            self.update()
+            return
+        self._offset = offset
+        self.update()
+        self.valueChanged.emit(self.value())
+
+    def value(self):
+        return self._standard + self._offset
+
+    def wheelEvent(self, event):
+        event.ignore()
+
+    def _xs(self):
+        pad = 10
+        room = max(1, self.width() - pad * 2)
+        return [pad + index * room / 10.0 for index in range(11)]
+
+    def _offset_at(self, x):
+        xs = self._xs()
+        nearest = min(range(11), key=lambda index: abs(xs[index] - x))
+        return nearest - 5
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.setValue(self._standard + self._offset_at(event.position().x()))
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.MouseButton.LeftButton:
+            self.setValue(self._standard + self._offset_at(event.position().x()))
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        ink = self.palette().color(QPalette.ColorRole.WindowText)
+        xs = self._xs()
+        line_y = 9
+        painter.setPen(QPen(ink, 1))
+        painter.drawLine(QPointF(xs[0], line_y), QPointF(xs[-1], line_y))
+        for x in xs:
+            painter.drawLine(QPointF(x, line_y - 4), QPointF(x, line_y + 4))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(ink)
+        painter.drawEllipse(QPointF(xs[self._offset + 5], line_y), 5, 5)
+        font = QFont(self.font())
+        font.setPointSize(7)
+        painter.setFont(font)
+        painter.setPen(ink)
+        names = []
+        for step in range(-5, 6):
+            if step > 0:
+                names.append("+{}".format(step))
+            elif step < 0:
+                names.append(str(step))
+            else:
+                names.append(tr(74))
+        metrics = QFontMetrics(font)
+        center_w = metrics.horizontalAdvance(names[5])
+        center = QRectF(xs[5] - center_w / 2 - 1, 15, center_w + 2, max(1, self.height() - 15))
+        for name, x in zip(names, xs):
+            width = metrics.horizontalAdvance(name)
+            rect = QRectF(x - width / 2, 15, width, max(1, self.height() - 15))
+            if name != names[5] and rect.intersects(center):
+                continue
+            painter.drawText(rect, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop, name)
+        painter.end()
+
+
 class IconButton(QPushButton):
     def __init__(self, kind):
         super().__init__()
@@ -1897,17 +1986,26 @@ class SettingsDialog(QDialog):
         picked_style = appearance.get("style") or "modern"
         self.style_pick.setCurrentIndex(1 if picked_style == "modern" else 0)
         self._style_popup(self.style_pick)
-        self.color, color_row = self._color_row(appearance.get("chatColor"), "#F4F1EA", tr(25))
-        self.accent, accent_row = self._color_row(appearance.get("accentColor"), "#9A3A52", tr(26))
-        self.accent2, accent2_row = self._color_row(appearance.get("accentColor2"), "#1F6A8A", tr(27))
-        self.chat_size = TickSlider()
-        self.chat_size.setRange(1, 48)
+        self._kept_chat = hex_color(appearance.get("chatColor"), "#F4F1EA")
+        self.accent = self._swatch(appearance.get("accentColor"), "#9A3A52")
+        self.accent2 = self._swatch(appearance.get("accentColor2"), "#1F6A8A")
+        accents = QWidget()
+        accent_row = QHBoxLayout(accents)
+        accent_row.setContentsMargins(0, 0, 0, 0)
+        accent_row.setSpacing(0)
+        accent_row.addWidget(self.accent)
+        accent_row.addSpacing(28)
+        accent_row.addWidget(self.accent2)
+        accent_row.addStretch(1)
+        row_h = max(self.theme.sizeHint().height(), self.style_pick.sizeHint().height())
+        self.chat_size = StepScale(18)
+        self.chat_size.setFixedHeight(row_h)
         self.chat_size.setValue(int(appearance.get("chatFontSize") or 18))
-        self.ui_size = TickSlider()
-        self.ui_size.setRange(1, 32)
+        self.ui_size = StepScale(16)
+        self.ui_size.setFixedHeight(row_h)
         self.ui_size.setValue(int(appearance.get("uiFontSize") or 16))
-        self.sub_size = TickSlider()
-        self.sub_size.setRange(8, 120)
+        self.sub_size = StepScale(55)
+        self.sub_size.setFixedHeight(row_h)
         self.sub_size.setValue(int(appearance.get("subFontSize") or 55))
         self.sub_font = QComboBox()
         chosen_font = font_name(appearance.get("subFont"))
@@ -1921,17 +2019,20 @@ class SettingsDialog(QDialog):
             self.sub_font.addItem(name, name)
         self.sub_font.setCurrentIndex(max(0, self.sub_font.findData(chosen_font)))
         self._style_popup(self.sub_font)
-        self.sub_color, sub_row = self._color_row(appearance.get("subColor"), "#FFFFFF", tr(56))
+        self.sub_color = self._swatch(appearance.get("subColor"), "#FFFFFF")
+        subtitles = QWidget()
+        sub_row = QHBoxLayout(subtitles)
+        sub_row.setContentsMargins(0, 0, 0, 0)
+        sub_row.setSpacing(12)
+        sub_row.addWidget(self.sub_font, 1)
+        sub_row.addWidget(self.sub_color)
         theme_form.addRow(tr(22), self.theme)
         theme_form.addRow(tr(71), self.style_pick)
-        theme_form.addRow(tr(25), color_row)
-        theme_form.addRow(tr(26), accent_row)
-        theme_form.addRow(tr(27), accent2_row)
+        theme_form.addRow(tr(26), accents)
         theme_form.addRow(tr(28), self.chat_size)
         theme_form.addRow(tr(29), self.ui_size)
+        theme_form.addRow(tr(55), subtitles)
         theme_form.addRow(tr(54), self.sub_size)
-        theme_form.addRow(tr(55), self.sub_font)
-        theme_form.addRow(tr(56), sub_row)
 
         room = QWidget()
         room_box = QVBoxLayout(room)
@@ -2621,9 +2722,9 @@ class SettingsDialog(QDialog):
             self.port_error.show()
             return
         self.port_error.hide()
-        color = hex_color(self.color.text(), "#F4F1EA")
-        accent = hex_color(self.accent.text(), "#9A3A52")
-        accent2 = hex_color(self.accent2.text(), "#1F6A8A")
+        color = self._kept_chat
+        accent = hex_color(self.accent._color.name(), "#9A3A52")
+        accent2 = hex_color(self.accent2._color.name(), "#1F6A8A")
         self.appearance = {
             "theme": self.theme.currentData(),
             "chatColor": color,
@@ -2633,7 +2734,7 @@ class SettingsDialog(QDialog):
             "uiFontSize": self.ui_size.value(),
             "subFont": font_name(self.sub_font.currentData()),
             "subFontSize": self.sub_size.value(),
-            "subColor": hex_color(self.sub_color.text(), "#FFFFFF"),
+            "subColor": hex_color(self.sub_color._color.name(), "#FFFFFF"),
             "autoplayNext": self.autoplay.isChecked(),
             "fastforwardOnDesync": self.fastforward.isChecked(),
             "slowOnDesync": self.slowdown.isChecked(),
@@ -2651,6 +2752,17 @@ class SettingsDialog(QDialog):
             "room": self.room_name.text(),
         }
         self.accept()
+
+    def _swatch(self, value, default):
+        button = RoundSwatch()
+        button.set_color(hex_color(value, default))
+        button.clicked.connect(lambda: self._pick_swatch(button, default))
+        return button
+
+    def _pick_swatch(self, button, default):
+        dialog = ColorPick(hex_color(button._color.name(), default), "", self)
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.picked:
+            button.set_color(dialog.picked)
 
     def _color_row(self, value, default, title):
         edit = QLineEdit(hex_color(value, default))

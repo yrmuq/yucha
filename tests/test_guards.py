@@ -33,7 +33,7 @@ class Guards(unittest.TestCase):
             self.assertEqual(original.strip(), shown.strip())
             self.assertNotIn(number.strip(), seen)
             seen.add(number.strip())
-        self.assertEqual(len(seen), 73)
+        self.assertEqual(len(seen), 74)
 
     def test_russian_keeps_the_same_ids(self):
         def rows(name):
@@ -106,7 +106,7 @@ class Guards(unittest.TestCase):
             )
             store = ConfigStore()
             self.assertEqual(store.data["appearance"]["uiFontSize"], 16)
-            self.assertEqual(store.data["appearance"]["chatFontSize"], 48)
+            self.assertEqual(store.data["appearance"]["chatFontSize"], 23)
         if previous is None:
             os.environ.pop("XDG_CONFIG_HOME", None)
         else:
