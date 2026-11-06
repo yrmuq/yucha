@@ -3016,6 +3016,10 @@ class MainWindow(QMainWindow):
             board = getattr(self, "board", None)
             if board is not None and board.moving():
                 board.repaint()
+            # While the picture is still, keep the same full redraw as playback.
+            # A partial flush is what shakes the bar icons.
+            if self._paused and hasattr(self, "video"):
+                self.video.redraw()
             if self._frame_busy():
                 watched.requestUpdate()
         elif kind == QEvent.Type.Wheel:
@@ -3610,7 +3614,9 @@ class MainWindow(QMainWindow):
         if self._slides:
             return True
         board = getattr(self, "board", None)
-        return board is not None and board.moving()
+        if board is not None and board.moving():
+            return True
+        return bool(self._paused) and self.isVisible()
 
     def _arm_frame(self):
         if not self._frame_busy():
@@ -3630,15 +3636,30 @@ class MainWindow(QMainWindow):
         layout = widget.layout()
         if layout is not None:
             layout.activate()
-        shot = widget.grab()
+        ratio = widget.devicePixelRatioF() or 1.0
+        image = QImage(
+            max(1, int(round(rect.width() * ratio))),
+            max(1, int(round(rect.height() * ratio))),
+            QImage.Format.Format_RGBA8888,
+        )
+        image.setDevicePixelRatio(ratio)
+        image.fill(0)
+        filled = widget.autoFillBackground()
+        widget.setAutoFillBackground(False)
+        painter = QPainter(image)
+        try:
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            radius = 12 if self._is_modern() else 0
+            if radius:
+                clip = QPainterPath()
+                clip.addRoundedRect(QRectF(0, 0, rect.width(), rect.height()), radius, radius)
+                painter.setClipPath(clip)
+            widget.render(painter)
+        finally:
+            painter.end()
+            widget.setAutoFillBackground(filled)
         widget.hide()
         widget.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, False)
-        image = shot.toImage()
-        if image.isNull():
-            return QImage()
-        if image.format() != QImage.Format.Format_RGBA8888:
-            image = image.convertToFormat(QImage.Format.Format_RGBA8888)
-        image.setDevicePixelRatio(shot.devicePixelRatio() or 1)
         return image
 
     def _forget_slide(self, widget):
@@ -4571,6 +4592,8 @@ class MainWindow(QMainWindow):
         if paused is not None:
             self._paused = bool(paused)
             self.play.set_kind("play" if paused else "pause")
+        if self._paused:
+            self._arm_frame()
         try:
             self._speed = float(self._get("speed") or 1)
         except (TypeError, ValueError):
@@ -4685,8 +4708,10 @@ class MainWindow(QMainWindow):
         if differ:
             notices.append(tr(11))
         notices.extend(trf(58, name) for name in missing)
+        was = self.board.isVisible()
         self.board.show_state(point, page, me, page["accent"], other, notices, people, self._osd)
-        self._stack_chrome()
+        if self.board.isVisible() != was:
+            self._stack_chrome()
 
     def accept_files(self, paths, token=""):
         self._add_dropped(list(paths))

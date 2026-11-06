@@ -69,7 +69,7 @@ class Picture(QOpenGLWidget):
 
     def __init__(self, runtime, parent=None):
         super().__init__(parent)
-        self.setUpdateBehavior(QOpenGLWidget.UpdateBehavior.PartialUpdate)
+        self.setUpdateBehavior(QOpenGLWidget.UpdateBehavior.NoPartialUpdate)
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
         self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
