@@ -782,6 +782,8 @@ class NoticeBoard(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_DontCreateNativeAncestors, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
         self.setAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop, True)
         self.setAutoFillBackground(False)
         self.hide()
@@ -928,6 +930,53 @@ class NoticeBoard(QWidget):
         color.setAlpha(self.plate_alpha)
         painter.setBrush(color)
         painter.drawRoundedRect(QRectF(x, y, w, h), 8, 8)
+
+
+class VideoGlass(QWidget):
+    """Input window above the video. It is transparent, so the picture stays put under it."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.picture = None
+        self.setObjectName("videoglass")
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_DontCreateNativeAncestors, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop, True)
+        self.setAutoFillBackground(False)
+        self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self.setAcceptDrops(True)
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        try:
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+            painter.fillRect(self.rect(), QColor(0, 0, 0, 0))
+        finally:
+            painter.end()
+
+    def mousePressEvent(self, event):
+        if self.picture is not None:
+            self.picture.mousePressEvent(event)
+        else:
+            super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        if self.picture is not None:
+            self.picture.mouseDoubleClickEvent(event)
+
+    def wheelEvent(self, event):
+        if self.picture is not None:
+            self.picture.wheelEvent(event)
+
+    def dragEnterEvent(self, event):
+        if self.picture is not None:
+            self.picture.dragEnterEvent(event)
+
+    def dropEvent(self, event):
+        if self.picture is not None:
+            self.picture.dropEvent(event)
 
 
 class ClickBox(QWidget):
@@ -2748,7 +2797,7 @@ class MainWindow(QMainWindow):
         col = QVBoxLayout(column)
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(0)
-        self.video = Picture(self.app.runtime)
+        self.video = Picture(self.app.runtime, column)
         self.video.fullscreenRequested.connect(self._toggle_full)
         self.video.volumeChanged.connect(self._show_volume)
         self.video.arrowPressed.connect(self._on_arrow)
@@ -2756,6 +2805,8 @@ class MainWindow(QMainWindow):
         self.video.enterPressed.connect(self._enter_chat)
         self.board.repaint_frame = self._kick_frame
         col.addWidget(self.video, 1)
+        self.hit = VideoGlass(column)
+        self.hit.picture = self.video
 
         self.bar = QWidget(column)
         self.bar.setObjectName("bar")
@@ -2976,9 +3027,12 @@ class MainWindow(QMainWindow):
         self._place_overlays()
 
     def _overlay(self, widget):
+        widget.setAttribute(Qt.WidgetAttribute.WA_DontCreateNativeAncestors, True)
+        widget.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
+        widget.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         widget.setAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop, True)
-        widget.setAutoFillBackground(True)
+        widget.setAutoFillBackground(False)
 
     def eventFilter(self, watched, event):
         kind = event.type()
@@ -2988,6 +3042,8 @@ class MainWindow(QMainWindow):
             return True
         if kind == QEvent.Type.MouseButtonPress and self._press_grip(watched, event):
             return False
+        if kind == QEvent.Type.MouseButtonPress:
+            self._dismiss_panel(watched, event)
         if self._grip is not None and kind == QEvent.Type.MouseMove:
             self._drag_grip(event)
             return True
@@ -3030,6 +3086,9 @@ class MainWindow(QMainWindow):
         height = self.stage.height()
         if hasattr(self, "board"):
             self.board.setGeometry(0, 0, max(1, width), max(1, height))
+        if hasattr(self, "hit"):
+            self.hit.setGeometry(0, 0, max(1, width), max(1, height))
+            self.hit.show()
         inset = self._bar_height()
         gap = FLOAT_GAP if self._is_modern() else 0
         lift = POP_GAP if gap else 0
@@ -3081,6 +3140,9 @@ class MainWindow(QMainWindow):
     def _stack_chrome(self):
         if not hasattr(self, "bar"):
             return
+        hit = getattr(self, "hit", None)
+        if hit is not None:
+            hit.raise_()
         board = getattr(self, "board", None)
         if board is not None and board.isVisible():
             board.raise_()
@@ -3142,6 +3204,25 @@ class MainWindow(QMainWindow):
         x = max(8, min(x, max(8, self.stage.width() - width - 8)))
         y = max(8, y)
         popup.setGeometry(x, y, width, height)
+
+    def _inside(self, widget, target):
+        while widget is not None:
+            if widget is target:
+                return True
+            widget = widget.parentWidget()
+        return False
+
+    def _dismiss_panel(self, watched, event):
+        if not self._panel_open:
+            return
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        widget = watched if isinstance(watched, QWidget) else None
+        if widget is None or widget.window() is not self:
+            return
+        if self._inside(widget, self.panel) or self._inside(widget, self.bar):
+            return
+        self.set_panel(False)
 
     def _popup_widget(self, widget):
         while widget is not None:

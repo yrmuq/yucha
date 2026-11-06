@@ -1,18 +1,15 @@
 # Copyright (C) 2026 yrmuq
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""mpv's engine inside the yucha window. It does not open a window of its own.
-Frames are drawn into this widget the same way mpv's own OpenGL example draws
-them: into the widget's framebuffer."""
+"""mpv draws into its own native window. The interface is other windows, so the
+two can refresh at different rates."""
 
 import os
 import re
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, Qt, Signal
-from PySide6.QtGui import QOpenGLFunctions, QPainter
-from PySide6.QtOpenGLWidgets import QOpenGLWidget
-from PySide6.QtWidgets import QSizePolicy
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from yucha.i18n import trf
 
@@ -26,7 +23,6 @@ PLAYING_MSG = (
     "ANS_path=${path}\n"
     "</SyncplayUpdateFile>"
 )
-GL_COLOR_BUFFER_BIT = 0x00004000
 
 
 def _library_version(player):
@@ -58,8 +54,8 @@ def _import_mpv():
     return mpv
 
 
-class Picture(QOpenGLWidget):
-    """The video area. Right click and Space pause. The wheel changes volume."""
+class Picture(QWidget):
+    """The video window. Right click and Space pause. The wheel changes volume."""
 
     fullscreenRequested = Signal()
     volumeChanged = Signal(int)
@@ -69,129 +65,88 @@ class Picture(QOpenGLWidget):
 
     def __init__(self, runtime, parent=None):
         super().__init__(parent)
-        self.setUpdateBehavior(QOpenGLWidget.UpdateBehavior.PartialUpdate)
+        self.setAttribute(Qt.WidgetAttribute.WA_DontCreateNativeAncestors, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setAutoFillBackground(False)
+        self.setUpdatesEnabled(False)
         self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setAcceptDrops(True)
         self.error = None
         self.ctx = None
-        self._present = False
         self.mpv = None
         self._mpv_mod = None
+        self._started = False
         self.ipc_path = Path(runtime) / "mpv.sock"
         try:
             if self.ipc_path.exists():
                 self.ipc_path.unlink()
         except OSError:
             pass
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._ensure_player()
+
+    def _ensure_player(self):
+        if self._started:
+            return
+        self.winId()
+        self._started = True
         self._start_engine()
 
     def _start_engine(self):
-        mpv = _import_mpv()
+        try:
+            mpv = _import_mpv()
+        except Exception as exc:
+            self.error = trf(47, exc)
+            return
         self._mpv_mod = mpv
-        self.mpv = mpv.MPV(
-            vo="libmpv",
-            idle="yes",
-            force_window="no",
-            keep_open="yes",
-            keep_open_pause="yes",
-            hr_seek="always",
-            osc="no",
-            config="no",
-            input_terminal="no",
-            terminal="no",
-            hwdec="auto-safe",
-            input_ipc_server=str(self.ipc_path),
-            term_playing_msg=PLAYING_MSG,
-        )
+        try:
+            self.mpv = mpv.MPV(
+                wid=str(int(self.winId())),
+                vo="gpu",
+                idle="yes",
+                keep_open="yes",
+                keep_open_pause="yes",
+                hr_seek="always",
+                osc="no",
+                config="no",
+                input_terminal="no",
+                terminal="no",
+                input_default_bindings="no",
+                input_vo_keyboard="no",
+                input_cursor="no",
+                hwdec="auto-safe",
+                input_ipc_server=str(self.ipc_path),
+                term_playing_msg=PLAYING_MSG,
+            )
+        except Exception as exc:
+            self.error = trf(47, exc)
+            self.mpv = None
+            return
         found = _library_version(self.mpv)
         if found is None or (found[0] == 0 and found[1] < 23):
-            raise RuntimeError("yucha needs libmpv 0.23 or newer")
+            self.error = "yucha needs libmpv 0.23 or newer"
+            return
         try:
             self.mpv.audio_client_name = "yucha"
         except Exception:
             pass
         # "script" is only a command-line alias. libmpv does not accept it
         # as an option, and the player quit before the window opened.
-        self.mpv.command("load-script", str(SCRIPT))
+        try:
+            self.mpv.command("load-script", str(SCRIPT))
+        except Exception as exc:
+            self.error = trf(47, exc)
+            return
         for _ in range(50):
             if self.ipc_path.exists():
                 return
             time.sleep(0.02)
-        raise RuntimeError("mpv did not open its control socket")
-
-    def _addr(self, _ctx, name):
-        gl = self.context()
-        if gl is None or not name:
-            return None
-        if not isinstance(name, (bytes, bytearray)):
-            name = str(name).encode()
-        ptr = gl.getProcAddress(QByteArray(name))
-        if not ptr:
-            return None
-        value = int(ptr)
-        return value or None
-
-    def initializeGL(self):
-        mpv = self._mpv_mod
-        self._proc_cb = mpv.MpvGlGetProcAddressFn(self._addr)
-        try:
-            self.ctx = mpv.MpvRenderContext(
-                self.mpv,
-                "opengl",
-                opengl_init_params={"get_proc_address": self._proc_cb},
-            )
-        except Exception as exc:
-            self.error = trf(47, exc)
-            self.ctx = None
-            return
-        self.ctx.update_cb = self.update
-
-    def update(self, *args):
-        # Only mpv's own callback asks to count this paint as a presented frame.
-        self._present = True
-        super().update(*args)
-
-    def paintGL(self):
-        present = self._present
-        self._present = False
-        painter = QPainter(self)
-        try:
-            painter.beginNativePainting()
-            try:
-                self._draw_video(present)
-            finally:
-                painter.endNativePainting()
-        finally:
-            painter.end()
-
-    def _draw_video(self, present):
-        gl = QOpenGLFunctions()
-        gl.initializeOpenGLFunctions()
-        gl.glClearColor(0.0, 0.0, 0.0, 1.0)
-        gl.glClear(GL_COLOR_BUFFER_BIT)
-        if self.ctx is None:
-            return
-        ratio = self.devicePixelRatioF()
-        width = max(1, int(round(self.width() * ratio)))
-        height = max(1, int(round(self.height() * ratio)))
-        try:
-            self.ctx.render(
-                flip_y=True,
-                opengl_fbo={
-                    "fbo": int(self.defaultFramebufferObject()),
-                    "w": width,
-                    "h": height,
-                    "internal_format": 0,
-                },
-            )
-            if present:
-                self.ctx.report_swap()
-        except Exception as exc:
-            self.error = trf(48, exc)
-            self.ctx = None
+        self.error = "mpv did not open its control socket"
 
     def mousePressEvent(self, event):
         self.setFocus(Qt.FocusReason.MouseFocusReason)
@@ -262,13 +217,8 @@ class Picture(QOpenGLWidget):
             pass
 
     def shutdown(self):
-        ctx, self.ctx = self.ctx, None
+        self.ctx = None
         player, self.mpv = self.mpv, None
-        if ctx is not None:
-            try:
-                ctx.free()
-            except Exception:
-                pass
         if player is not None:
             try:
                 player.terminate()
