@@ -23,6 +23,7 @@ from PySide6.QtGui import (
     QGuiApplication,
     QImage,
     QKeySequence,
+    QOpenGLFunctions,
     QPainter,
     QPainterPath,
     QPalette,
@@ -30,6 +31,7 @@ from PySide6.QtGui import (
     QPixmap,
     QShortcut,
 )
+from PySide6.QtOpenGL import QOpenGLTexture, QOpenGLTextureBlitter
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -782,8 +784,6 @@ class NoticeBoard(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
-        self.setAttribute(Qt.WidgetAttribute.WA_DontCreateNativeAncestors, True)
-        self.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
         self.setAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop, True)
         self.setAutoFillBackground(False)
         self.hide()
@@ -930,53 +930,6 @@ class NoticeBoard(QWidget):
         color.setAlpha(self.plate_alpha)
         painter.setBrush(color)
         painter.drawRoundedRect(QRectF(x, y, w, h), 8, 8)
-
-
-class VideoGlass(QWidget):
-    """Input window above the video. It is transparent, so the picture stays put under it."""
-
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.picture = None
-        self.setObjectName("videoglass")
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
-        self.setAttribute(Qt.WidgetAttribute.WA_DontCreateNativeAncestors, True)
-        self.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
-        self.setAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop, True)
-        self.setAutoFillBackground(False)
-        self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
-        self.setAcceptDrops(True)
-
-    def paintEvent(self, _event):
-        painter = QPainter(self)
-        try:
-            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
-            painter.fillRect(self.rect(), QColor(0, 0, 0, 0))
-        finally:
-            painter.end()
-
-    def mousePressEvent(self, event):
-        if self.picture is not None:
-            self.picture.mousePressEvent(event)
-        else:
-            super().mousePressEvent(event)
-
-    def mouseDoubleClickEvent(self, event):
-        if self.picture is not None:
-            self.picture.mouseDoubleClickEvent(event)
-
-    def wheelEvent(self, event):
-        if self.picture is not None:
-            self.picture.wheelEvent(event)
-
-    def dragEnterEvent(self, event):
-        if self.picture is not None:
-            self.picture.dragEnterEvent(event)
-
-    def dropEvent(self, event):
-        if self.picture is not None:
-            self.picture.dropEvent(event)
 
 
 class ClickBox(QWidget):
@@ -2740,6 +2693,12 @@ class MainWindow(QMainWindow):
         self._bar_h = BAR_HEIGHT
         self._dev = None
         self._slides = []
+        self._dead_tex = []
+        self._blitter = None
+        self._slide_timer = QTimer(self)
+        self._slide_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._slide_timer.setInterval(16)
+        self._slide_timer.timeout.connect(self._tick_slides)
         self._awake = SleepInhibit()
         icon = Path(__file__).resolve().parent / "icon.png"
         self._notes = Notifier(str(icon) if icon.is_file() else "")
@@ -2797,16 +2756,15 @@ class MainWindow(QMainWindow):
         col = QVBoxLayout(column)
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(0)
-        self.video = Picture(self.app.runtime, column)
+        self.video = Picture(self.app.runtime)
         self.video.fullscreenRequested.connect(self._toggle_full)
         self.video.volumeChanged.connect(self._show_volume)
         self.video.arrowPressed.connect(self._on_arrow)
         self.video.filesDropped.connect(self._add_dropped)
         self.video.enterPressed.connect(self._enter_chat)
         self.board.repaint_frame = self._kick_frame
+        self.video.chrome = self._paint_slides
         col.addWidget(self.video, 1)
-        self.hit = VideoGlass(column)
-        self.hit.picture = self.video
 
         self.bar = QWidget(column)
         self.bar.setObjectName("bar")
@@ -3027,12 +2985,9 @@ class MainWindow(QMainWindow):
         self._place_overlays()
 
     def _overlay(self, widget):
-        widget.setAttribute(Qt.WidgetAttribute.WA_DontCreateNativeAncestors, True)
-        widget.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
-        widget.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         widget.setAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop, True)
-        widget.setAutoFillBackground(False)
+        widget.setAutoFillBackground(True)
 
     def eventFilter(self, watched, event):
         kind = event.type()
@@ -3058,7 +3013,6 @@ class MainWindow(QMainWindow):
         if watched is self.stage and kind == QEvent.Type.Resize:
             self._place_overlays()
         elif kind == QEvent.Type.UpdateRequest and watched is getattr(self, "_frame_handle", None):
-            self._advance_slides()
             board = getattr(self, "board", None)
             if board is not None and board.moving():
                 board.repaint()
@@ -3075,7 +3029,6 @@ class MainWindow(QMainWindow):
         super().showEvent(event)
         self.winId()
         self._ensure_frame_handle()
-        self._advance_slides()
         self._place_overlays()
         self._arm_frame()
 
@@ -3086,9 +3039,6 @@ class MainWindow(QMainWindow):
         height = self.stage.height()
         if hasattr(self, "board"):
             self.board.setGeometry(0, 0, max(1, width), max(1, height))
-        if hasattr(self, "hit"):
-            self.hit.setGeometry(0, 0, max(1, width), max(1, height))
-            self.hit.show()
         inset = self._bar_height()
         gap = FLOAT_GAP if self._is_modern() else 0
         lift = POP_GAP if gap else 0
@@ -3140,9 +3090,6 @@ class MainWindow(QMainWindow):
     def _stack_chrome(self):
         if not hasattr(self, "bar"):
             return
-        hit = getattr(self, "hit", None)
-        if hit is not None:
-            hit.raise_()
         board = getattr(self, "board", None)
         if board is not None and board.isVisible():
             board.raise_()
@@ -3674,46 +3621,75 @@ class MainWindow(QMainWindow):
             handle.requestUpdate()
 
     def _kick_frame(self):
-        # mpv repaints the picture on its own frames. Asking it to redraw here
-        # makes the video and the interface fight over the same widget.
         self._arm_frame()
 
-    def _slide(self, widget, start, end, hide):
-        self._slides = [item for item in self._slides if item["widget"] is not widget]
-        widget.setGeometry(start)
+    def _grab_widget(self, widget, rect):
+        widget.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        widget.setGeometry(rect)
         widget.show()
-        widget.raise_()
+        layout = widget.layout()
+        if layout is not None:
+            layout.activate()
+        shot = widget.grab()
+        widget.hide()
+        widget.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, False)
+        image = shot.toImage()
+        if image.isNull():
+            return QImage()
+        if image.format() != QImage.Format.Format_RGBA8888:
+            image = image.convertToFormat(QImage.Format.Format_RGBA8888)
+        image.setDevicePixelRatio(shot.devicePixelRatio() or 1)
+        return image
+
+    def _forget_slide(self, widget):
+        kept = []
+        for item in self._slides:
+            if item["widget"] is widget:
+                self._retire_slide(item)
+            else:
+                kept.append(item)
+        self._slides = kept
+
+    def _retire_slide(self, item):
+        tex = item.get("tex")
+        if tex is not None:
+            self._dead_tex.append(tex)
+            item["tex"] = None
+
+    def _slide(self, widget, start, end, hide):
+        self._forget_slide(widget)
+        image = self._grab_widget(widget, end if widget is not None else start)
         self._slides.append({
             "widget": widget,
+            "image": image,
+            "tex": None,
             "start": QPoint(start.x(), start.y()),
             "end": QPoint(end.x(), end.y()),
             "place": QRect(end),
             "born": time.monotonic(),
             "hide": hide,
         })
-        self._kick_frame()
+        if not self._slide_timer.isActive():
+            self._slide_timer.start()
+        self.video.redraw()
 
-    def _advance_slides(self):
-        if not self._slides:
-            return
+    def _tick_slides(self):
         now = time.monotonic()
         alive = []
         for item in self._slides:
             if now - item["born"] >= SLIDE:
                 self._land_slide(item)
             else:
-                self._place_slide(item, now)
                 alive.append(item)
         self._slides = alive
-
-    def _place_slide(self, item, now):
-        done = _ease(min(1.0, max(0.0, (now - item["born"]) / SLIDE)))
-        x = item["start"].x() + (item["end"].x() - item["start"].x()) * done
-        y = item["start"].y() + (item["end"].y() - item["start"].y()) * done
-        place = item["place"]
-        item["widget"].setGeometry(int(round(x)), int(round(y)), place.width(), place.height())
+        if alive:
+            self.video.redraw()
+        else:
+            self._slide_timer.stop()
+            self.video.redraw()
 
     def _land_slide(self, item):
+        self._retire_slide(item)
         widget = item["widget"]
         if item["hide"]:
             widget.hide()
@@ -3722,6 +3698,96 @@ class MainWindow(QMainWindow):
             widget.show()
             widget.raise_()
 
+    def _flush_dead_textures(self):
+        if not self._dead_tex:
+            return
+        for tex in self._dead_tex:
+            try:
+                tex.destroy()
+            except Exception:
+                pass
+        self._dead_tex = []
+
+    def _slide_texture(self, item):
+        tex = item.get("tex")
+        if tex is not None:
+            return tex
+        image = item.get("image")
+        if image is None or image.isNull():
+            return None
+        tex = QOpenGLTexture(image, QOpenGLTexture.MipMapGeneration.DontGenerateMipMaps)
+        tex.setMinificationFilter(QOpenGLTexture.Filter.Linear)
+        tex.setMagnificationFilter(QOpenGLTexture.Filter.Linear)
+        tex.setWrapMode(QOpenGLTexture.WrapMode.ClampToEdge)
+        item["tex"] = tex
+        return tex
+
+    def _paint_slides(self, painter, width, height):
+        self._flush_dead_textures()
+        if not self._slides:
+            return
+        if self._blit_slides(painter, width, height):
+            return
+        now = time.monotonic()
+        for item in self._slides:
+            image = item.get("image")
+            if image is None or image.isNull():
+                continue
+            done = _ease(min(1.0, max(0.0, (now - item["born"]) / SLIDE)))
+            x = item["start"].x() + (item["end"].x() - item["start"].x()) * done
+            y = item["start"].y() + (item["end"].y() - item["start"].y()) * done
+            ratio = image.devicePixelRatio() or 1
+            painter.drawImage(QRectF(x, y, image.width() / ratio, image.height() / ratio), image)
+
+    def _blit_slides(self, painter, width, height):
+        painter.beginNativePainting()
+        try:
+            return self._blit_slides_gl(width, height)
+        except Exception:
+            return False
+        finally:
+            painter.endNativePainting()
+
+    def _blit_slides_gl(self, width, height):
+        video = self.video
+        ctx = video.context()
+        if ctx is None:
+            return False
+        gl = QOpenGLFunctions()
+        gl.initializeOpenGLFunctions()
+        if self._blitter is None:
+            blitter = QOpenGLTextureBlitter()
+            if not blitter.create():
+                return False
+            self._blitter = blitter
+        dpr = video.devicePixelRatioF() or 1.0
+        view_w = max(1, int(round(width * dpr)))
+        view_h = max(1, int(round(height * dpr)))
+        gl.glBindFramebuffer(0x8D40, int(video.defaultFramebufferObject() or 0))
+        gl.glViewport(0, 0, view_w, view_h)
+        gl.glDisable(0x0B71)
+        # The snapshot is a QImage, top row first. BottomLeft painted it upside down.
+        origin = QOpenGLTextureBlitter.Origin.OriginTopLeft
+        now = time.monotonic()
+        self._blitter.bind()
+        try:
+            gl.glEnable(0x0BE2)
+            gl.glBlendFunc(0x0302, 0x0303)
+            view = QRect(0, 0, view_w, view_h)
+            for item in self._slides:
+                tex = self._slide_texture(item)
+                if tex is None:
+                    continue
+                done = _ease(min(1.0, max(0.0, (now - item["born"]) / SLIDE)))
+                x = item["start"].x() + (item["end"].x() - item["start"].x()) * done
+                y = item["start"].y() + (item["end"].y() - item["start"].y()) * done
+                place = item["place"]
+                target = QRectF(x * dpr, y * dpr, place.width() * dpr, place.height() * dpr)
+                transform = QOpenGLTextureBlitter.targetTransform(target, view)
+                self._blitter.blit(int(tex.textureId()), transform, origin)
+        finally:
+            self._blitter.release()
+        return True
 
     def _bar_rect(self):
         width = self.stage.width()
