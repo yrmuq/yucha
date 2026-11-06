@@ -77,7 +77,6 @@ class Picture(QOpenGLWidget):
         self.setAcceptDrops(True)
         self.error = None
         self.ctx = None
-        self.notes = None
         self._present = False
         self.mpv = None
         self._mpv_mod = None
@@ -159,8 +158,6 @@ class Picture(QOpenGLWidget):
         QOpenGLWidget.update(self)
 
     def paintGL(self):
-        # The notices are painted into this same framebuffer. A separate widget
-        # above the video only moved on the video's own frames while it played.
         present = self._present
         self._present = False
         painter = QPainter(self)
@@ -170,8 +167,6 @@ class Picture(QOpenGLWidget):
                 self._draw_video(present)
             finally:
                 painter.endNativePainting()
-            if self.notes is not None:
-                self.notes(painter, max(1, self.width()), max(1, self.height()))
         finally:
             painter.end()
 

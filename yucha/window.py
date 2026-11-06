@@ -774,11 +774,16 @@ def _paint_mark(painter, kind, band, color):
 
 
 class NoticeBoard(QWidget):
-    """Room notes drawn into the video frame. The window repaints on the display refresh while a toast moves."""
+    """Room notes on a transparent layer. The window repaints them on the display refresh while a toast moves."""
 
     def __init__(self, parent):
         super().__init__(parent)
         self.setObjectName("notices")
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop, True)
+        self.setAutoFillBackground(False)
         self.hide()
         self.font_px = 18
         self.page = _palette("dark")
@@ -817,8 +822,19 @@ class NoticeBoard(QWidget):
         return self._moving(time.monotonic())
 
     def _tick(self):
+        self.update()
         if self.repaint_frame is not None:
             self.repaint_frame()
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        try:
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+            painter.fillRect(self.rect(), QColor(0, 0, 0, 0))
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+            self.paint_on(painter, max(1, self.width()), max(1, self.height()))
+        finally:
+            painter.end()
 
     def paint_on(self, painter, width, height):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -2735,7 +2751,6 @@ class MainWindow(QMainWindow):
         self.video.filesDropped.connect(self._add_dropped)
         self.video.enterPressed.connect(self._enter_chat)
         self.board.repaint_frame = self._kick_frame
-        self.video.notes = self.board.paint_on
         col.addWidget(self.video, 1)
 
         self.bar = QWidget(column)
@@ -2984,6 +2999,9 @@ class MainWindow(QMainWindow):
             self._place_overlays()
         elif kind == QEvent.Type.UpdateRequest and watched is getattr(self, "_frame_handle", None):
             self._advance_slides()
+            board = getattr(self, "board", None)
+            if board is not None and board.moving():
+                board.update()
             if self._frame_busy():
                 self.video.redraw()
                 watched.requestUpdate()
@@ -3007,15 +3025,13 @@ class MainWindow(QMainWindow):
             return
         width = self.stage.width()
         height = self.stage.height()
+        if hasattr(self, "board"):
+            self.board.setGeometry(0, 0, max(1, width), max(1, height))
+            self.board.show()
         inset = self._bar_height()
         gap = FLOAT_GAP if self._is_modern() else 0
         lift = POP_GAP if gap else 0
-        cut = (self._dev or {}).get("bar_inset", 25)
-        try:
-            cut = max(0, min(40, int(cut)))
-        except (TypeError, ValueError):
-            cut = 25
-        side = max(gap, int(round(width * cut / 100.0)))
+        side = max(gap, int(round(width * self._bar_cut() / 100.0)))
         bar_rect = QRect(side, max(0, height - inset - gap), max(1, width - side * 2), inset)
         moving = self._slide_item(self.bar)
         if moving is not None:
@@ -3057,6 +3073,7 @@ class MainWindow(QMainWindow):
             min(box_width, width),
             box_height,
         )
+        self.board.raise_()
         self.bar.raise_()
         self.panel.raise_()
         if self._chat_open:
@@ -3405,6 +3422,7 @@ class MainWindow(QMainWindow):
 
     def _apply_bar_buttons(self):
         flags = (self._dev or {}).get("bar_buttons") or {}
+        modern = self._is_modern()
         mapping = {
             "play": self.play,
             "ready": self.ready,
@@ -3415,15 +3433,46 @@ class MainWindow(QMainWindow):
         }
         for key, widget in mapping.items():
             widget.setVisible(bool(flags.get(key, True)))
+        if modern:
+            self.ready.setVisible(False)
+            self.chat_btn.setVisible(False)
+        if not self._tracks_useful():
+            self.tracks_btn.setVisible(False)
         if not self.volume_btn.isVisible():
             self._volume_open = False
             self.volume_pop.hide()
         if not self.tracks_btn.isVisible():
             self._tracks_open = False
+            self.tracks_btn.setChecked(False)
             self.tracks_pop.hide()
-        if not self.chat_btn.isVisible():
+        if not modern and not self.chat_btn.isVisible():
             self._chat_open = False
             self.chat_line.hide()
+
+    def _tracks_useful(self):
+        raw = self._get("track-list") or []
+        if not isinstance(raw, list):
+            return False
+        subs = 0
+        audios = 0
+        for track in raw:
+            if not isinstance(track, dict):
+                continue
+            kind = track.get("type")
+            if kind == "sub":
+                subs += 1
+            elif kind == "audio":
+                audios += 1
+        return subs > 0 or audios > 1
+
+    def _bar_cut(self):
+        if not self._is_modern():
+            return 0
+        cut = (self._dev or {}).get("bar_inset", 25)
+        try:
+            return max(0, min(40, int(cut)))
+        except (TypeError, ValueError):
+            return 25
 
     def _apply_skin(self):
         theme = _shown_theme(self.app.store.data["appearance"].get("theme"))
@@ -3588,12 +3637,7 @@ class MainWindow(QMainWindow):
         height = self.stage.height()
         inset = self._bar_height()
         gap = FLOAT_GAP if self._is_modern() else 0
-        cut = (self._dev or {}).get("bar_inset", 25)
-        try:
-            cut = max(0, min(40, int(cut)))
-        except (TypeError, ValueError):
-            cut = 25
-        side = max(gap, int(round(width * cut / 100.0)))
+        side = max(gap, int(round(width * self._bar_cut() / 100.0)))
         return QRect(side, max(0, height - inset - gap), max(1, width - side * 2), inset)
 
     def _panel_rect(self):
@@ -4413,6 +4457,7 @@ class MainWindow(QMainWindow):
         self._move_knob()
         loaded = bool(self._current_path) or bool(self._get("path"))
         self._awake.set_playing(loaded and not self._paused and not ended)
+        self._apply_bar_buttons()
 
     def _shown_position(self):
         if self.slider.isSliderDown() and self._duration > 0:
