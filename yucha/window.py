@@ -1524,7 +1524,7 @@ class StepScale(QWidget):
             painter.drawLine(QPointF(x, line_y - 4), QPointF(x, line_y + 4))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(ink)
-        painter.drawEllipse(QPointF(xs[self._offset + 3], line_y), 5, 5)
+        painter.drawEllipse(QPointF((xs[0] + xs[-1]) / 2 if self._offset == 0 else xs[self._offset + 3], line_y), 5, 5)
         painter.end()
 
 
@@ -1865,6 +1865,35 @@ class RoundSwatch(QPushButton):
         painter.end()
 
 
+class PencilButton(QPushButton):
+    def __init__(self):
+        super().__init__()
+        self.setFixedSize(28, 28)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setObjectName("swatch")
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        color = self.palette().color(QPalette.ColorRole.WindowText)
+        painter.translate(self.width() / 2, self.height() / 2)
+        painter.rotate(-45)
+        pen = QPen(color, 1.4)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(color)
+        painter.drawRoundedRect(QRectF(-8, -2.2, 11, 4.4), 0.6, 0.6)
+        tip = QPainterPath()
+        tip.moveTo(3, -2.2)
+        tip.lineTo(8, 0)
+        tip.lineTo(3, 2.2)
+        tip.closeSubpath()
+        painter.drawPath(tip)
+        painter.end()
+
+
 class EdgeTabBar(QTabBar):
     """The empty tab before dev is only a gap, so dev sits just to the right of About."""
 
@@ -1904,6 +1933,8 @@ class StarPassword(QLineEdit):
         self.setCursorPosition(len(super().text()))
 
     def keyPressEvent(self, event):
+        if self.isReadOnly():
+            return
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             self.returnPressed.emit()
             return
@@ -1949,7 +1980,9 @@ class SettingsDialog(QDialog):
         theme_page = QWidget()
         self._theme_page = theme_page
         theme_form = QFormLayout(theme_page)
-        theme_form.setContentsMargins(12, 12, 12, 12)
+        theme_form.setContentsMargins(69, 69, 69, 12)
+        theme_form.setVerticalSpacing(12)
+        theme_form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self._keep_side(theme_form)
         self.theme = QComboBox()
         self.theme.addItem(tr(57), "auto")
@@ -2021,10 +2054,12 @@ class SettingsDialog(QDialog):
         self.ui_size.valueChanged.connect(lambda _value: self._preview_theme())
         self.sub_size.valueChanged.connect(lambda _value: self._preview_theme())
         self.sub_font.currentIndexChanged.connect(lambda _index: self._preview_theme())
+        for field in (self.theme, self.style_pick, self.sub_font, self.chat_size, self.ui_size, self.sub_size, accents, subtitles):
+            field.setFixedHeight(row_h)
 
         room = QWidget()
         room_box = QVBoxLayout(room)
-        room_box.setContentsMargins(12, 12, 12, 12)
+        room_box.setContentsMargins(69, 69, 69, 12)
         self._keep_side(room_box)
         room_form = QFormLayout()
         room_form.setContentsMargins(0, 0, 0, 0)
@@ -2045,20 +2080,31 @@ class SettingsDialog(QDialog):
             room_form.addRow(tr(number), field)
             field.returnPressed.connect(self._connect_now)
         room_box.addLayout(room_form)
+        connect_row = QHBoxLayout()
+        connect_row.setContentsMargins(0, 0, 0, 0)
+        connect_row.setSpacing(8)
+        connect = QPushButton(tr(21))
+        connect.clicked.connect(self._connect_now)
+        self._room_edit = PencilButton()
+        self._room_edit.clicked.connect(self._edit_room)
+        connect_row.addWidget(connect)
+        connect_row.addWidget(self._room_edit)
+        connect_row.addStretch(1)
+        room_box.addLayout(connect_row)
         self.port_error = QLabel("")
         self.port_error.setWordWrap(True)
         self.port_error.hide()
         room_box.addWidget(self.port_error)
         room_box.addStretch(1)
-        connect = QPushButton(tr(21))
-        connect.clicked.connect(self._connect_now)
-        room_box.addWidget(connect)
+        self._room_fields = (self.host, self.port, self.name, self.password, self.room_name)
+        self._room_editing = False
+        self._apply_room_lock()
         self.tabs.addTab(room, tr(16))
         self.tabs.addTab(theme_page, tr(22))
 
         other = QWidget()
         other_form = QFormLayout(other)
-        other_form.setContentsMargins(12, 12, 12, 12)
+        other_form.setContentsMargins(69, 69, 69, 12)
         other_form.setVerticalSpacing(12)
         self._keep_side(other_form)
         self.language = QComboBox()
@@ -2118,7 +2164,7 @@ class SettingsDialog(QDialog):
         about = QWidget()
         self._about_page = about
         about_layout = QVBoxLayout(about)
-        about_layout.setContentsMargins(12, 12, 12, 12)
+        about_layout.setContentsMargins(69, 69, 69, 12)
         self._keep_side(about_layout)
         logo_line = QHBoxLayout()
         logo_line.setContentsMargins(0, 0, 0, 0)
@@ -2197,14 +2243,13 @@ class SettingsDialog(QDialog):
                 continue
             hint = page.sizeHint()
             wide = max(wide, hint.width())
-        natural = max(320, self._theme_page.sizeHint().height())
         if getattr(self, "_settings_h_saved", False):
             self._page_h = self._settings_h.value()
         else:
-            self._page_h = natural
+            self._page_h = 430
             if hasattr(self, "_settings_h"):
                 self._settings_h.blockSignals(True)
-                self._settings_h.setValue(natural)
+                self._settings_h.setValue(430)
                 self._settings_h.blockSignals(False)
         self._page_w = min(640, max(420, wide if 0 < wide < 2000 else 520))
         kept = []
@@ -2230,8 +2275,8 @@ class SettingsDialog(QDialog):
                 self._dev_page = area
         self.tabs.setCurrentIndex(self._open_page if 0 <= self._open_page < self.tabs.count() else 0)
         root.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
-        if hasattr(self, "_settings_pad") and self._settings_pad.value() != 12:
-            self._set_settings_pad(self._settings_pad.value())
+        if hasattr(self, "_settings_pad"):
+            self._apply_settings_edges()
 
     def _scroll_page(self, page):
         gutter = 12
@@ -2341,6 +2386,7 @@ class SettingsDialog(QDialog):
             face[key] = {"dark": dark_pal[key], "light": light_pal[key]}
         face["ready"] = {"dark": "#3EAD62", "light": "#3EAD62"}
         face["away"] = {"dark": "#C4453C", "light": "#C4453C"}
+        face["locked"] = {"dark": "#2A2D36", "light": "#E4E0D8"}
         return {
             "ui": {"size": 16, "bold": False, "family": family, "dark": dark, "light": light},
             "alfa": {"size": 11, "bold": False, "family": family, "dark": dark, "light": light},
@@ -2354,8 +2400,9 @@ class SettingsDialog(QDialog):
             "panel_alpha": 90,
             "osd_alpha": 90,
             "bar_inset": 30,
-            "settings_h": 0,
-            "settings_pad": 12,
+            "settings_h": 430,
+            "settings_pad": 69,
+            "settings_top": 69,
             "bar_buttons": {
                 "play": True,
                 "ready": True,
@@ -2392,8 +2439,9 @@ class SettingsDialog(QDialog):
         seed = self._dev_seed()
         page = QWidget()
         form = QFormLayout(page)
-        pad = int(seed.get("settings_pad", 12))
-        form.setContentsMargins(pad, 12, pad, 12)
+        pad = int(seed.get("settings_pad", 69))
+        top = int(seed.get("settings_top", 69))
+        form.setContentsMargins(pad, top, pad, 12)
         form.setVerticalSpacing(12)
         self._keep_side(form)
         self._dev_rows = {}
@@ -2415,8 +2463,9 @@ class SettingsDialog(QDialog):
             ("button_fg", "Button text"),
             ("ready", "Ready"),
             ("away", "Not ready"),
+            ("locked", "Locked field"),
         ):
-            form.addRow(title, self._face_row(key, face[key]))
+            form.addRow(title, self._face_row(key, face.get(key) or self._dev_defaults()["face"][key]))
         self._dev_panel = QuietSpin()
         self._dev_panel.setRange(240, 900)
         self._dev_panel.setValue(int(seed["panel"]))
@@ -2440,17 +2489,22 @@ class SettingsDialog(QDialog):
         form.addRow("Side opacity", self._panel_alpha)
         form.addRow("OSD opacity", self._osd_alpha)
         saved_h = int(seed.get("settings_h") or 0)
-        self._settings_h_saved = saved_h > 0
+        self._settings_h_saved = saved_h >= 240
         self._settings_h = QuietSpin()
         self._settings_h.setRange(240, 900)
-        self._settings_h.setValue(saved_h if saved_h > 0 else int(getattr(self, "_page_h", 0) or 480))
+        self._settings_h.setValue(saved_h if self._settings_h_saved else 430)
         self._settings_h.valueChanged.connect(self._set_settings_height)
         form.addRow("Window height", self._settings_h)
         self._settings_pad = QuietSpin()
-        self._settings_pad.setRange(0, 80)
+        self._settings_pad.setRange(0, 160)
         self._settings_pad.setValue(pad)
         self._settings_pad.valueChanged.connect(self._set_settings_pad)
         form.addRow("Side pad", self._settings_pad)
+        self._settings_top = QuietSpin()
+        self._settings_top.setRange(0, 160)
+        self._settings_top.setValue(top)
+        self._settings_top.valueChanged.connect(self._set_settings_top)
+        form.addRow("Top pad", self._settings_top)
         self._bar_buttons = {}
         buttons = QWidget()
         button_row = QHBoxLayout(buttons)
@@ -2568,6 +2622,7 @@ class SettingsDialog(QDialog):
             self._osd_alpha,
             self._settings_h,
             self._settings_pad,
+            self._settings_top,
         ]
         widgets.extend(self._bar_buttons.values())
         for row in self._dev_rows.values():
@@ -2592,8 +2647,9 @@ class SettingsDialog(QDialog):
         self._bar_alpha.setValue(int(seed.get("bar_alpha", 90)))
         self._panel_alpha.setValue(int(seed.get("panel_alpha", 90)))
         self._osd_alpha.setValue(int(seed.get("osd_alpha", 90)))
-        self._settings_h.setValue(int(seed.get("settings_h") or self._settings_h.value()))
-        self._settings_pad.setValue(int(seed.get("settings_pad", 12)))
+        self._settings_h.setValue(int(seed.get("settings_h") or 430))
+        self._settings_pad.setValue(int(seed.get("settings_pad", 69)))
+        self._settings_top.setValue(int(seed.get("settings_top", 69)))
         flags = seed.get("bar_buttons") or {}
         for key, box in self._bar_buttons.items():
             box.setChecked(bool(flags.get(key, True)))
@@ -2601,7 +2657,7 @@ class SettingsDialog(QDialog):
             widget.blockSignals(False)
         if getattr(self, "_scrolls", None):
             self._set_settings_height(self._settings_h.value())
-            self._set_settings_pad(self._settings_pad.value())
+            self._apply_settings_edges()
 
     def _reset_dev(self):
         self._fill_dev(self._dev_defaults())
@@ -2617,6 +2673,7 @@ class SettingsDialog(QDialog):
             "bar_inset": self._bar_inset.value(),
             "settings_h": self._settings_h.value(),
             "settings_pad": self._settings_pad.value(),
+            "settings_top": self._settings_top.value(),
             "bar_buttons": {key: box.isChecked() for key, box in self._bar_buttons.items()},
             "face": {},
         }
@@ -2640,6 +2697,7 @@ class SettingsDialog(QDialog):
         if window is None or not hasattr(self, "_dev_rows"):
             return
         window.apply_dev(self._dev_spec())
+        self._apply_room_lock()
 
     def _export_dev(self):
         spec = self._dev_spec()
@@ -2794,14 +2852,57 @@ class SettingsDialog(QDialog):
             self._preview_theme()
 
     def _keep_side(self, layout):
-        margins = layout.contentsMargins()
-        self._side_layouts.append((layout, margins.top(), margins.bottom()))
+        self._side_layouts.append((layout, layout.contentsMargins().bottom()))
 
-    def _set_settings_pad(self, pad):
-        pad = int(pad)
-        for layout, top, bottom in self._side_layouts:
-            layout.setContentsMargins(pad, top, pad, bottom)
+    def _apply_settings_edges(self):
+        pad = self._settings_pad.value() if hasattr(self, "_settings_pad") else 69
+        top = self._settings_top.value() if hasattr(self, "_settings_top") else 69
+        for layout, bottom in self._side_layouts:
+            layout.setContentsMargins(int(pad), int(top), int(pad), int(bottom))
+
+    def _set_settings_pad(self, _pad):
+        self._apply_settings_edges()
         self._push_dev()
+
+    def _set_settings_top(self, _top):
+        self._apply_settings_edges()
+        self._push_dev()
+
+    def _edit_room(self):
+        self._room_editing = True
+        self._apply_room_lock()
+
+    def _locked_color(self):
+        theme = self._look_theme
+        window = self.parent()
+        if window is not None:
+            theme = _shown_theme(window.app.store.data["appearance"].get("theme"))
+        row = {}
+        if hasattr(self, "_face_rows"):
+            picked = self._face_rows.get("locked")
+            if picked:
+                row = {
+                    "dark": picked["dark"]._color.name(),
+                    "light": picked["light"]._color.name(),
+                }
+        ink = _dev_ink(row, theme)
+        if ink:
+            return ink
+        return "#E4E0D8" if theme == "light" else "#2A2D36"
+
+    def _apply_room_lock(self):
+        if not hasattr(self, "_room_fields"):
+            return
+        window = self.parent()
+        connected = bool(window is not None and getattr(window, "_connected", False))
+        locked = connected and not self._room_editing
+        color = self._locked_color()
+        for field in self._room_fields:
+            field.setReadOnly(locked)
+            if locked:
+                field.setStyleSheet("QLineEdit {{ background: {}; }}".format(color))
+            else:
+                field.setStyleSheet("")
 
     def _set_settings_height(self, height):
         self._page_h = max(240, int(height))
