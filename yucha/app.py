@@ -106,11 +106,11 @@ class App(object):
             second = hex_color(command.get("accentColor2"), appearance.get("accentColor2") or "#1F6A8A")
             appearance["accentColor2"] = second
             appearance["chatFontSize"] = bounded_int(
-                command.get("chatFontSize"), appearance.get("chatFontSize") or 18, 13, 23
+                command.get("chatFontSize"), appearance.get("chatFontSize") or 18, 15, 21
             )
             appearance["checkUpdates"] = bool(command.get("checkUpdates", appearance.get("checkUpdates", True)))
             if command.get("uiFontSize") is not None:
-                appearance["uiFontSize"] = bounded_int(command.get("uiFontSize"), 16, 11, 21)
+                appearance["uiFontSize"] = bounded_int(command.get("uiFontSize"), 16, 13, 19)
             appearance["autoplayNext"] = bool(command.get("autoplayNext"))
             appearance["fastforwardOnDesync"] = bool(command.get("fastforwardOnDesync", True))
             appearance["slowOnDesync"] = bool(command.get("slowOnDesync", True))
@@ -127,7 +127,7 @@ class App(object):
                 language = "English"
             appearance["language"] = language
             appearance["subFont"] = font_name(command.get("subFont", appearance.get("subFont")))
-            appearance["subFontSize"] = bounded_int(command.get("subFontSize"), 55, 50, 60)
+            appearance["subFontSize"] = bounded_int(command.get("subFontSize"), 55, 52, 58)
             appearance["subColor"] = hex_color(command.get("subColor"), "#FFFFFF")
             style = command.get("style") or appearance.get("style") or "modern"
             appearance["style"] = "classic" if style == "classic" else "modern"
