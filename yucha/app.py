@@ -106,11 +106,11 @@ class App(object):
             second = hex_color(command.get("accentColor2"), appearance.get("accentColor2") or "#1F6A8A")
             appearance["accentColor2"] = second
             appearance["chatFontSize"] = bounded_int(
-                command.get("chatFontSize"), appearance.get("chatFontSize") or 18, 15, 21
+                command.get("chatFontSize"), appearance.get("chatFontSize") or 17, 14, 20
             )
             appearance["checkUpdates"] = bool(command.get("checkUpdates", appearance.get("checkUpdates", True)))
             if command.get("uiFontSize") is not None:
-                appearance["uiFontSize"] = bounded_int(command.get("uiFontSize"), 16, 13, 19)
+                appearance["uiFontSize"] = bounded_int(command.get("uiFontSize"), 13, 10, 16)
             appearance["autoplayNext"] = bool(command.get("autoplayNext"))
             appearance["fastforwardOnDesync"] = bool(command.get("fastforwardOnDesync", True))
             appearance["slowOnDesync"] = bool(command.get("slowOnDesync", True))

@@ -1557,6 +1557,7 @@ class IconButton(QPushButton):
         self._accent = QColor("#9A3A52")
         self._ready_on = QColor("#3EAD62")
         self._ready_off = QColor("#C4453C")
+        self._silent = False
         self.setObjectName("icon")
         self.setFixedSize(40, 36)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -1571,6 +1572,13 @@ class IconButton(QPushButton):
         self._ink = QColor(ink)
         self._ink_on = QColor(ink_on)
         self._accent = QColor(accent)
+        self.update()
+
+    def set_silent(self, silent):
+        silent = bool(silent)
+        if self._silent == silent:
+            return
+        self._silent = silent
         self.update()
 
     def paintEvent(self, event):
@@ -1675,6 +1683,9 @@ class IconButton(QPushButton):
             painter.drawPath(path)
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawArc(int(cx + 2), int(cy - 4), 6, 8, -50 * 16, 100 * 16)
+            if self._silent:
+                painter.setPen(QPen(color, 1.6))
+                painter.drawLine(QPointF(cx - 6, cy - 6), QPointF(cx + 7, cy + 5))
         elif kind == "tracks":
             painter.drawLine(QPointF(cx - 6, cy - 5), QPointF(cx + 6, cy - 5))
             painter.drawLine(QPointF(cx - 6, cy), QPointF(cx + 3, cy))
@@ -2001,8 +2012,9 @@ class SettingsDialog(QDialog):
         theme_page = QWidget()
         self._theme_page = theme_page
         theme_form = QFormLayout(theme_page)
-        theme_form.setContentsMargins(81, 75, 81, 12)
+        theme_form.setContentsMargins(75, 55, 75, 12)
         theme_form.setVerticalSpacing(12)
+        theme_form.setHorizontalSpacing(32)
         theme_form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self._keep_side(theme_form)
         self._name_forms.append(theme_form)
@@ -2035,12 +2047,12 @@ class SettingsDialog(QDialog):
         accent_row.addWidget(self.accent2)
         accent_row.addStretch(1)
         row_h = max(self.theme.sizeHint().height(), self.style_pick.sizeHint().height())
-        self.chat_size = StepScale(18)
+        self.chat_size = StepScale(17)
         self.chat_size.setFixedHeight(row_h)
-        self.chat_size.setValue(int(appearance.get("chatFontSize") or 18))
-        self.ui_size = StepScale(16)
+        self.chat_size.setValue(int(appearance.get("chatFontSize") or 17))
+        self.ui_size = StepScale(13)
         self.ui_size.setFixedHeight(row_h)
-        self.ui_size.setValue(int(appearance.get("uiFontSize") or 16))
+        self.ui_size.setValue(int(appearance.get("uiFontSize") or 13))
         self.sub_size = StepScale(55)
         self.sub_size.setFixedHeight(row_h)
         self.sub_size.setValue(int(appearance.get("subFontSize") or 55))
@@ -2081,7 +2093,7 @@ class SettingsDialog(QDialog):
 
         room = QWidget()
         room_box = QVBoxLayout(room)
-        room_box.setContentsMargins(81, 75, 81, 12)
+        room_box.setContentsMargins(75, 55, 75, 12)
         self._keep_side(room_box)
         room_form = QFormLayout()
         room_form.setContentsMargins(0, 0, 0, 0)
@@ -2108,6 +2120,7 @@ class SettingsDialog(QDialog):
         connect_row.setSpacing(8)
         connect = QPushButton(tr(21))
         connect.clicked.connect(self._connect_now)
+        self._connect = connect
         self._room_edit = PencilButton()
         self._room_edit.clicked.connect(self._edit_room)
         connect_row.addWidget(connect)
@@ -2127,7 +2140,7 @@ class SettingsDialog(QDialog):
 
         other = QWidget()
         other_form = QFormLayout(other)
-        other_form.setContentsMargins(81, 75, 81, 12)
+        other_form.setContentsMargins(75, 55, 75, 12)
         other_form.setVerticalSpacing(12)
         self._keep_side(other_form)
         self._name_forms.append(other_form)
@@ -2188,7 +2201,7 @@ class SettingsDialog(QDialog):
         about = QWidget()
         self._about_page = about
         about_layout = QVBoxLayout(about)
-        about_layout.setContentsMargins(81, 75, 81, 12)
+        about_layout.setContentsMargins(75, 55, 75, 12)
         self._keep_side(about_layout)
         logo_line = QHBoxLayout()
         logo_line.setContentsMargins(0, 0, 0, 0)
@@ -2260,13 +2273,6 @@ class SettingsDialog(QDialog):
         buttons.addWidget(cancel)
         root.addLayout(buttons)
 
-        wide = 0
-        for index in range(self.tabs.count()):
-            page = self.tabs.widget(index)
-            if page is self._dev_gap or page is self._dev_page:
-                continue
-            hint = page.sizeHint()
-            wide = max(wide, hint.width())
         if getattr(self, "_settings_h_saved", False):
             self._page_h = self._settings_h.value()
         else:
@@ -2275,14 +2281,13 @@ class SettingsDialog(QDialog):
                 self._settings_h.blockSignals(True)
                 self._settings_h.setValue(430)
                 self._settings_h.blockSignals(False)
-        natural_w = min(640, max(420, wide if 0 < wide < 2000 else 520))
         if getattr(self, "_settings_w_saved", False):
             self._page_w = self._settings_w.value()
         else:
-            self._page_w = natural_w
+            self._page_w = 550
             if hasattr(self, "_settings_w"):
                 self._settings_w.blockSignals(True)
-                self._settings_w.setValue(natural_w)
+                self._settings_w.setValue(550)
                 self._settings_w.blockSignals(False)
         kept = []
         for index in range(self.tabs.count()):
@@ -2309,6 +2314,8 @@ class SettingsDialog(QDialog):
         root.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
         if hasattr(self, "_settings_pad"):
             self._apply_settings_edges()
+        hint = self._connect.sizeHint()
+        self._connect.setFixedSize(max(1, int(hint.width() * 0.9)), max(1, int(hint.height() * 0.9)))
 
     def _scroll_page(self, page):
         gutter = 12
@@ -2420,9 +2427,9 @@ class SettingsDialog(QDialog):
         face["away"] = {"dark": "#C4453C", "light": "#C4453C"}
         face["locked"] = {"dark": "#2A2D36", "light": "#E4E0D8"}
         return {
-            "ui": {"size": 16, "bold": False, "family": family, "dark": dark, "light": light},
+            "ui": {"size": 13, "bold": False, "family": family, "dark": dark, "light": light},
             "alfa": {"size": 11, "bold": False, "family": family, "dark": dark, "light": light},
-            "osd": {"size": 18, "bold": False, "family": family, "dark": dark, "light": light},
+            "osd": {"size": 17, "bold": False, "family": family, "dark": dark, "light": light},
             "sub": {"size": 55, "bold": False, "family": "sans-serif", "dark": white, "light": white},
             "titles": {"size": 11, "bold": True, "family": family, "dark": dark, "light": light},
             "face": face,
@@ -2433,9 +2440,9 @@ class SettingsDialog(QDialog):
             "osd_alpha": 90,
             "bar_inset": 30,
             "settings_h": 430,
-            "settings_w": 0,
-            "settings_pad": 81,
-            "settings_top": 75,
+            "settings_w": 550,
+            "settings_pad": 75,
+            "settings_top": 55,
             "slider_numbers": False,
             "bold_names": False,
             "bar_buttons": {
@@ -2459,8 +2466,8 @@ class SettingsDialog(QDialog):
         if window is None:
             return base
         look = window.app.store.data["appearance"]
-        base["ui"]["size"] = int(look.get("uiFontSize") or 16)
-        base["osd"]["size"] = int(look.get("chatFontSize") or 18)
+        base["ui"]["size"] = int(look.get("uiFontSize") or 13)
+        base["osd"]["size"] = int(look.get("chatFontSize") or 17)
         base["sub"]["size"] = int(look.get("subFontSize") or 55)
         base["sub"]["family"] = font_name(look.get("subFont"))
         sub = hex_color(look.get("subColor"), "#FFFFFF")
@@ -2474,8 +2481,8 @@ class SettingsDialog(QDialog):
         seed = self._dev_seed()
         page = QWidget()
         form = QFormLayout(page)
-        pad = int(seed.get("settings_pad", 81))
-        top = int(seed.get("settings_top", 75))
+        pad = int(seed.get("settings_pad", 75))
+        top = int(seed.get("settings_top", 55))
         form.setContentsMargins(pad, top, pad, 12)
         form.setVerticalSpacing(12)
         self._keep_side(form)
@@ -2535,7 +2542,7 @@ class SettingsDialog(QDialog):
         self._settings_w_saved = saved_w >= 360
         self._settings_w = QuietSpin()
         self._settings_w.setRange(360, 1100)
-        self._settings_w.setValue(saved_w if self._settings_w_saved else int(getattr(self, "_page_w", 0) or 520))
+        self._settings_w.setValue(saved_w if self._settings_w_saved else 550)
         self._settings_w.valueChanged.connect(self._set_settings_width)
         form.addRow("Window width", self._settings_w)
         self._settings_pad = QuietSpin()
@@ -2710,8 +2717,8 @@ class SettingsDialog(QDialog):
         self._osd_alpha.setValue(int(seed.get("osd_alpha", 90)))
         self._settings_h.setValue(int(seed.get("settings_h") or 430))
         self._settings_w.setValue(int(seed.get("settings_w") or self._settings_w.value()))
-        self._settings_pad.setValue(int(seed.get("settings_pad", 81)))
-        self._settings_top.setValue(int(seed.get("settings_top", 75)))
+        self._settings_pad.setValue(int(seed.get("settings_pad", 75)))
+        self._settings_top.setValue(int(seed.get("settings_top", 55)))
         self._slider_numbers.setChecked(bool(seed.get("slider_numbers", False)))
         self._label_bold.setChecked(bool(seed.get("bold_names", False)))
         flags = seed.get("bar_buttons") or {}
@@ -2926,8 +2933,8 @@ class SettingsDialog(QDialog):
         self._side_layouts.append((layout, layout.contentsMargins().bottom()))
 
     def _apply_settings_edges(self):
-        pad = self._settings_pad.value() if hasattr(self, "_settings_pad") else 81
-        top = self._settings_top.value() if hasattr(self, "_settings_top") else 75
+        pad = self._settings_pad.value() if hasattr(self, "_settings_pad") else 75
+        top = self._settings_top.value() if hasattr(self, "_settings_top") else 55
         for layout, bottom in self._side_layouts:
             layout.setContentsMargins(int(pad), int(top), int(pad), int(bottom))
 
@@ -2970,6 +2977,7 @@ class SettingsDialog(QDialog):
                 font = widget.font()
                 font.setBold(bold)
                 widget.setFont(font)
+                widget.setStyleSheet("font-weight: {};".format(700 if bold else 400))
 
     def _toggle_label_bold(self):
         self._apply_label_weight()
@@ -3301,6 +3309,7 @@ class MainWindow(QMainWindow):
         volume_row.addWidget(self.volume, 1)
         volume_row.addWidget(self.volume_text)
         self._lock_volume_digits()
+        self._refresh_speaker()
 
         self.volume_pop = QWidget(column)
         self.volume_pop.setObjectName("volumepop")
@@ -3666,6 +3675,13 @@ class MainWindow(QMainWindow):
         self.volume_slider.setValue(int(level))
         self.volume_slider.blockSignals(False)
         self.volume_readout.setText(str(int(level)))
+        self._refresh_speaker()
+
+    def _refresh_speaker(self):
+        if not hasattr(self, "volume_btn"):
+            return
+        level = self.volume.value() if hasattr(self, "volume") else 0
+        self.volume_btn.set_silent(self._muted or int(level) <= 0)
 
     def _toggle_tracks_popup(self):
         if not self._playlist:
@@ -3768,7 +3784,7 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(_stylesheet(theme, accent, self._face_paint(theme)) + self._chrome_css(theme))
         dev = self._dev or {}
         ui = dev.get("ui") or {}
-        size = int(ui.get("size") or appearance.get("uiFontSize") or 16)
+        size = int(ui.get("size") or appearance.get("uiFontSize") or 13)
         font = QFont()
         if ui.get("family"):
             font.setFamily(ui["family"])
@@ -4196,6 +4212,7 @@ class MainWindow(QMainWindow):
             button.setChecked(self._muted)
             button.blockSignals(False)
             button.update()
+        self._refresh_speaker()
 
     def _volume_overlay(self):
         mode = self.app.store.data["appearance"].get("volumeOverlay") or "horizontal"
@@ -4877,7 +4894,7 @@ class MainWindow(QMainWindow):
         self._osd = kept
         appearance = self.app.store.data["appearance"]
         theme = _shown_theme(appearance.get("theme"))
-        point = int(appearance.get("chatFontSize") or 18)
+        point = int(appearance.get("chatFontSize") or 17)
         osd = (getattr(self, "_dev", None) or {}).get("osd")
         if osd:
             point = int(osd.get("size") or point)

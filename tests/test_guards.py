@@ -105,8 +105,8 @@ class Guards(unittest.TestCase):
                 encoding="utf-8",
             )
             store = ConfigStore()
-            self.assertEqual(store.data["appearance"]["uiFontSize"], 16)
-            self.assertEqual(store.data["appearance"]["chatFontSize"], 21)
+            self.assertEqual(store.data["appearance"]["uiFontSize"], 13)
+            self.assertEqual(store.data["appearance"]["chatFontSize"], 20)
         if previous is None:
             os.environ.pop("XDG_CONFIG_HOME", None)
         else:
