@@ -61,9 +61,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from yucha import __version__, fetch_newer_stable
-from yucha.configstore import dev_settings, font_name, hex_color, move_entry, wheel_rgb
+from yucha.configstore import DEFAULTS, dev_settings, font_name, hex_color, move_entry, wheel_rgb
 from yucha.engine import Picture
-from yucha.i18n import languages, tr, trf
+from yucha.i18n import languages, system_language, tr, trf
 from yucha.player_ui import replace_seek_toast, room_file_notes
 from yucha.system import Notifier, SleepInhibit, join_line, people_joined
 
@@ -2034,6 +2034,7 @@ class SettingsDialog(QDialog):
 
     def __init__(self, appearance, connection, parent, page=1):
         super().__init__(parent)
+        self.setObjectName("settings")
         self.setWindowTitle(tr(15))
         self.setModal(True)
         self.appearance = None
@@ -2044,6 +2045,7 @@ class SettingsDialog(QDialog):
         self._panel_before = parent._panel_width
         self._saved_dev = deepcopy(parent._dev)
         self._dev_loading = False
+        self._standard_reset = False
         self._side_layouts = []
         self._name_forms = []
         self._checking = False
@@ -2142,7 +2144,9 @@ class SettingsDialog(QDialog):
         self.ui_size.valueChanged.connect(lambda _value: self._queue_theme(True))
         self.sub_size.valueChanged.connect(lambda _value: self._queue_theme(True))
         self.sub_font.currentIndexChanged.connect(lambda _index: self._preview_theme())
-        for field in (self.theme, self.style_pick, self.sub_font, self.chat_size, self.ui_size, self.sub_size, accents, subtitles):
+        self._theme_fields = (self.theme, self.style_pick, self.sub_font, self.chat_size,
+                              self.ui_size, self.sub_size, accents, subtitles)
+        for field in self._theme_fields:
             field.setFixedHeight(row_h)
 
         room = QWidget()
@@ -2193,7 +2197,7 @@ class SettingsDialog(QDialog):
         other = QWidget()
         other_form = QFormLayout(other)
         other_form.setContentsMargins(23, 23, 23, 12)
-        other_form.setVerticalSpacing(12)
+        other_form.setVerticalSpacing(7)
         self._keep_side(other_form)
         self._name_forms.append(other_form)
         self.language = QComboBox()
@@ -2248,6 +2252,9 @@ class SettingsDialog(QDialog):
         self._check_row(other_form, tr(33), self.slowdown, row_h)
         self._check_row(other_form, tr(67), self.check_updates, row_h)
         self.check_updates.toggled.connect(lambda _checked: self._sync_update_row())
+        self.reset_other = QPushButton(tr(70))
+        self.reset_other.clicked.connect(self._reset_standard)
+        other_form.addRow("", self.reset_other)
         self.tabs.addTab(other, tr(30))
 
         about = QWidget()
@@ -2366,6 +2373,7 @@ class SettingsDialog(QDialog):
         self._apply_settings_edges()
         self._show_slider_numbers()
         self._apply_label_weight()
+        self._apply_settings_font()
         hint = self._connect.sizeHint()
         self._connect.setFixedHeight(max(1, int(hint.height() * 0.9)))
 
@@ -2485,6 +2493,7 @@ class SettingsDialog(QDialog):
             "osd": {"size": 17, "bold": False, "family": family, "dark": dark, "light": light},
             "sub": {"size": 55, "bold": False, "family": "sans-serif", "dark": white, "light": white},
             "titles": {"size": 11, "bold": True, "family": family, "dark": dark, "light": light},
+            "gamma": 13,
             "face": face,
             "panel": PANEL_WIDTH,
             "bar": BAR_HEIGHT,
@@ -2553,6 +2562,12 @@ class SettingsDialog(QDialog):
             ("sub", "Subtitles"),
         ):
             form.addRow(title, self._dev_font_row(key, seed[key]))
+            if key == "titles":
+                self.gamma_size = QuietSpin()
+                self.gamma_size.setRange(1, 96)
+                self.gamma_size.setValue(int(seed.get("gamma", 13)))
+                self.gamma_size.valueChanged.connect(self._set_gamma_size)
+                form.addRow("gamma text size", self.gamma_size)
         self._face_rows = {}
         face = seed.get("face") or self._dev_defaults()["face"]
         for key, title in (
@@ -2749,6 +2764,7 @@ class SettingsDialog(QDialog):
             self._settings_top,
             self._slider_numbers,
             self._label_bold,
+            self.gamma_size,
         ]
         widgets.extend(self._bar_buttons.values())
         for row in self._dev_rows.values():
@@ -2779,6 +2795,7 @@ class SettingsDialog(QDialog):
         self._settings_top.setValue(int(seed.get("settings_top", 23)))
         self._slider_numbers.setChecked(bool(seed.get("slider_numbers", False)))
         self._label_bold.setChecked(bool(seed.get("bold_names", False)))
+        self.gamma_size.setValue(int(seed.get("gamma", 13)))
         flags = seed.get("bar_buttons") or {}
         for key, box in self._bar_buttons.items():
             box.setChecked(bool(flags.get(key, True)))
@@ -2810,6 +2827,7 @@ class SettingsDialog(QDialog):
             "settings_top": self._settings_top.value(),
             "slider_numbers": self._slider_numbers.isChecked(),
             "bold_names": self._label_bold.isChecked(),
+            "gamma": self.gamma_size.value(),
             "bar_buttons": {key: box.isChecked() for key, box in self._bar_buttons.items()},
             "face": {},
         }
@@ -2832,33 +2850,64 @@ class SettingsDialog(QDialog):
         window = self.parent()
         if window is None or self._dev_loading or not hasattr(self, "_bar_buttons"):
             return
-        spec = self._dev_spec()
-        look = window.app.store.data["appearance"]
-        for key, setting, scale in (("ui", "uiFontSize", self.ui_size),
-                                    ("osd", "chatFontSize", self.chat_size),
-                                    ("sub", "subFontSize", self.sub_size)):
-            if scale._standard - 3 <= spec[key]["size"] <= scale._standard + 3:
-                scale.blockSignals(True)
-                scale.setValue(spec[key]["size"])
-                scale.blockSignals(False)
-                look[setting] = spec[key]["size"]
-        family = spec["sub"]["family"]
-        self.sub_font.blockSignals(True)
-        if self.sub_font.findData(family) < 0:
-            self.sub_font.addItem(family, family)
-        self.sub_font.setCurrentIndex(self.sub_font.findData(family))
-        self.sub_font.blockSignals(False)
-        look["subFont"] = family
-        theme = _shown_theme(look.get("theme"))
-        self.sub_color.set_color(_dev_ink(spec["sub"], theme))
-        look["subColor"] = self.sub_color._color.name().upper()
-        window.apply_dev(spec)
+        window.apply_dev(self._dev_spec())
         self._apply_room_lock()
         self._apply_label_weight()
+        self._apply_settings_font()
+
+    def _set_gamma_size(self, size):
+        self.parent()._dev["gamma"] = int(size)
+        self._apply_settings_font()
+
+    def _apply_settings_font(self):
+        size = int(self.parent()._dev.get("gamma", 13))
+        font = self.font()
+        font.setPointSize(size)
+        self.setFont(font)
+        self.setStyleSheet("QDialog#settings, QDialog#settings QWidget { font-size: %dpt; }" % size)
+        self.ensurePolished()
+        row_h = max(self.theme.sizeHint().height(), QFontMetrics(font).height() + 14)
+        for field in self._theme_fields:
+            field.setFixedHeight(row_h)
+        for scale in (self.chat_size, self.ui_size, self.sub_size):
+            scale._base_h = row_h
+        self._show_slider_numbers()
+        self._fit_settings_pages()
+
+    def _reset_standard(self):
+        defaults = DEFAULTS["appearance"]
+        self._theme_timer.stop()
+        combos = ((self.theme, "theme"), (self.style_pick, "style"),
+                  (self.sub_font, "subFont"), (self.language, "language"),
+                  (self.overlay, "volumeOverlay"))
+        scales = ((self.chat_size, "chatFontSize"), (self.ui_size, "uiFontSize"),
+                  (self.sub_size, "subFontSize"))
+        boxes = ((self.autoplay, "autoplayNext"), (self.fastforward, "fastforwardOnDesync"),
+                 (self.slowdown, "slowOnDesync"), (self.check_updates, "checkUpdates"))
+        for widget, key in combos + scales + boxes:
+            widget.blockSignals(True)
+            value = system_language() if key == "language" else defaults[key]
+            if isinstance(widget, QComboBox):
+                widget.setCurrentIndex(max(0, widget.findData(value)))
+            elif isinstance(widget, QCheckBox):
+                widget.setChecked(value)
+            else:
+                widget.setValue(value)
+            widget.blockSignals(False)
+        for widget, key in ((self.accent, "accentColor"), (self.accent2, "accentColor2"),
+                            (self.sub_color, "subColor")):
+            widget.set_color(defaults[key])
+        self._kept_chat = defaults["chatColor"]
+        self.volume_max = defaults["volumeMax"]
+        self._show_volume_max()
+        self._standard_reset = True
+        self._push_theme(False, sync_dev=False)
+        self._sync_update_row()
 
     def _export_dev(self):
         spec = self._dev_spec()
         lines = []
+        lines.append("gamma.size={}".format(spec["gamma"]))
         for key in ("ui", "alfa", "osd", "sub", "titles"):
             row = spec[key]
             lines.append("{}.size={}".format(key, row["size"]))
@@ -2992,6 +3041,8 @@ class SettingsDialog(QDialog):
             "dev": deepcopy(self.parent()._dev),
             "devTab": bool(self.parent().app.store.data["appearance"].get("devTab")),
         }
+        if self._standard_reset:
+            self.appearance["panelWidth"] = DEFAULTS["appearance"]["panelWidth"]
         self.connection = {
             "host": self.host.text(),
             "port": self.port.text(),
@@ -3144,7 +3195,7 @@ class SettingsDialog(QDialog):
         self._theme_timer.stop()
         self._push_theme(False)
 
-    def _push_theme(self, light):
+    def _push_theme(self, light, sync_dev=True):
         window = self.parent()
         if window is None or not hasattr(window, "apply_theme"):
             return
@@ -3161,14 +3212,14 @@ class SettingsDialog(QDialog):
         look["subColor"] = hex_color(self.sub_color._color.name(), "#FFFFFF")
         # Ordinary size controls and the development tab edit the same sizes.
         for key, setting in (("ui", "uiFontSize"), ("osd", "chatFontSize"), ("sub", "subFontSize")):
-            if before.get(setting) != look[setting] and window._dev:
+            if sync_dev and before.get(setting) != look[setting] and window._dev:
                 window._dev.setdefault(key, {})["size"] = look[setting]
                 if hasattr(self, "_dev_rows"):
                     spin = self._dev_rows[key]["size"]
                     spin.blockSignals(True)
                     spin.setValue(look[setting])
                     spin.blockSignals(False)
-        if window._dev:
+        if sync_dev and window._dev:
             sub = window._dev.setdefault("sub", {})
             if before.get("subFont") != look["subFont"]:
                 sub["family"] = look["subFont"]
@@ -3184,11 +3235,7 @@ class SettingsDialog(QDialog):
                         row[shade].set_color(sub[shade])
         self._theme_dirty = True
         window.apply_theme()
-        self._fit_settings_pages()
-        if light:
-            font = self.font()
-            font.setPointSize(self.ui_size.value())
-            self.setFont(font)
+        self._apply_settings_font()
 
     def reject(self):
         self._theme_timer.stop()
@@ -4700,6 +4747,9 @@ class MainWindow(QMainWindow):
             self._apply_volume_max()
         if before.get("language") != after.get("language"):
             self._retranslate()
+        if before.get("panelWidth") != after.get("panelWidth") and "panel" not in self._dev:
+            self._panel_width = bounded_panel(after["panelWidth"])
+            self._place_overlays()
         if dialog.connection and (dialog.wants_connect or self._connection_changed(dialog.connection)):
             self.app.on_command({"c": "connect", **dialog.connection})
             self._refresh_banner()
