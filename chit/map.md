@@ -12,8 +12,9 @@ Read only the row the task needs. Do not read `third_party/` or `packaging/appim
 - `yucha/system.py` — open a file in an already running window, sleep inhibit, notifications.
 - `yucha/configstore.py` — saved host, room, and settings.
 - `yucha/i18n.py` — reads `languages/*.ini`. A line is `id = English original = text shown`.
-- `languages/` — one ini file per language. `English.ini` is the only file. The id is a number.
-- `tests/test_guards.py`, `tests/test_system.py`, `tests/test_release.py`, `tests/test_color.py` — the only tests.
+- `languages/` — English and Russian ini files. The id is a number.
+- `tests/test_guards.py`, `tests/test_system.py`, `tests/test_release.py`, `tests/test_color.py` — config, system, release, and room checks.
+- `tests/test_window.py` — Qt control, settings, and overlay regressions. Runs offscreen without mpv or a room server.
 
 ## Packaging
 - `packaging/appimage/build.sh` — builds the image, copies Ubuntu `libmpv`, writes the `mpv --version` stub.
@@ -21,7 +22,7 @@ Read only the row the task needs. Do not read `third_party/` or `packaging/appim
 - `requirements.txt` — `PySide6_Essentials`, Twisted, `python-mpv`.
 - `.github/workflows/appimage.yml` — builds a version tag. `X.Y.0` is a release. Any other `X.Y.Z` is a prerelease.
 - `.github/workflows/release.yml` — a merge commit from `dev` into `main` raises Y and publishes.
-- `.github/workflows/dev.yml` — manual draft from `dev`. It does not take a version number.
+- `.github/workflows/dev.yml` — tests and updates the draft on pushes to `dev`, or a manual request. It does not take a version number.
 - `.github/workflows/deps.yml` — Dependabot prerelease on `deps`. It does not change `main`.
 - `.github/workflows/pins.yml` — `appimagetool` pin, on the 28th. Same prerelease path, not `main`.
 - `packaging/release/` — version bump and notes. Not the player.

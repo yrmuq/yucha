@@ -56,6 +56,59 @@ def font_name(value, default="sans-serif"):
     return text
 
 
+def dev_settings(value):
+    """Keep known development controls within the ranges used by the dialog."""
+    if not isinstance(value, dict):
+        return {}
+    result = {}
+    ranges = {
+        "panel": (380, 240, 900), "bar": (57, 36, 160),
+        "bar_alpha": (90, 0, 100), "panel_alpha": (90, 0, 100),
+        "osd_alpha": (90, 0, 100), "bar_inset": (30, 0, 40),
+        "settings_h": (350, 240, 900), "settings_w": (450, 360, 1100),
+        "settings_pad": (23, 0, 160), "settings_top": (23, 0, 160),
+    }
+    for key, limits in ranges.items():
+        if key in value:
+            result[key] = bounded_int(value[key], *limits)
+    for key in ("slider_numbers", "bold_names"):
+        if isinstance(value.get(key), bool):
+            result[key] = value[key]
+    for key in ("ui", "alfa", "titles", "osd", "sub"):
+        row = value.get(key)
+        if not isinstance(row, dict):
+            continue
+        cleaned = {}
+        if "size" in row:
+            cleaned["size"] = bounded_int(row["size"], 13, 1, 96)
+        if isinstance(row.get("bold"), bool):
+            cleaned["bold"] = row["bold"]
+        if "family" in row:
+            cleaned["family"] = font_name(row["family"])
+        for shade in ("dark", "light"):
+            color = hex_color(row.get(shade), None)
+            if color:
+                cleaned[shade] = color
+        result[key] = cleaned
+    face = value.get("face")
+    if isinstance(face, dict):
+        result["face"] = {}
+        for key in ("bg", "field", "border", "button", "button_fg", "ready", "away", "locked"):
+            row = face.get(key)
+            if isinstance(row, dict):
+                result["face"][key] = {
+                    shade: color for shade in ("dark", "light")
+                    if (color := hex_color(row.get(shade), None))
+                }
+    buttons = value.get("bar_buttons")
+    if isinstance(buttons, dict):
+        result["bar_buttons"] = {
+            key: buttons[key] for key in ("play", "ready", "volume", "tracks", "chat", "room")
+            if isinstance(buttons.get(key), bool)
+        }
+    return result
+
+
 def wheel_rgb(dx, dy, radius):
     """One point on the color disc. The rim is a hue, the middle is white."""
     dist = math.hypot(dx, dy)
@@ -139,6 +192,7 @@ DEFAULTS = {
         "subColor": "#FFFFFF",
         "panelWidth": 380,
         "devTab": False,
+        "dev": {},
         "style": "modern",
     },
 }
@@ -172,6 +226,7 @@ class ConfigStore(object):
         look["subFont"] = font_name(look.get("subFont"))
         look["panelWidth"] = bounded_int(look.get("panelWidth"), 380, 240, 900)
         look["devTab"] = bool(look.get("devTab", False))
+        look["dev"] = dev_settings(look.get("dev"))
         if look.get("style") not in ("classic", "modern"):
             look["style"] = "modern"
         if look.get("theme") not in ("auto", "dark", "light"):

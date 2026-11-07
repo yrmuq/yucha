@@ -1,15 +1,21 @@
 # Copyright (C) 2026 yrmuq
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Manual AppImage from the dev branch.
+# Tested AppImage from the dev branch, on push or manual request.
 # It updates the draft release "yucha dev" and does not replace an X.Y.0 release.
 
 name: Development build
 
 on:
   workflow_dispatch:
+  push:
+    branches: [dev]
 
 permissions:
   contents: write
+
+concurrency:
+  group: dev-draft
+  cancel-in-progress: true
 
 jobs:
   appimage:
@@ -17,6 +23,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Test
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python -m pip install -r requirements.txt
+          python -m unittest discover -s tests -v
 
       - name: Install file
         run: |
@@ -32,7 +49,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          printf '%s\n' 'Development build from dev. Not a release.' > notes.md
+          printf '%s\n' 'Development build from dev. Not a release.' \
+            "Commit: $GITHUB_SHA" \
+            '' \
+            'Fixed playback shortcuts, control hitboxes, panel clicks, volume layout and opacity.' \
+            'Development settings now persist, reset to defaults, and cancel previews cleanly.' \
+            'Settings already previewed are saved without applying them again.' > notes.md
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           gh release delete dev --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true

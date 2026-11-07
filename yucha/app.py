@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT / "third_party" / "syncplay"))
 from twisted.internet import reactor
 
 from yucha.bridge import Bridge
-from yucha.configstore import ConfigStore, bounded_int, font_name, hex_color, port_number, runtime_dir
+from yucha.configstore import ConfigStore, bounded_int, dev_settings, font_name, hex_color, port_number, runtime_dir
 from yucha.i18n import languages, tr, use
 from yucha.player_ui import PlayerUI
 from yucha.session import launch_player, make_client, submit_login
@@ -131,6 +131,10 @@ class App(object):
             appearance["subColor"] = hex_color(command.get("subColor"), "#FFFFFF")
             style = command.get("style") or appearance.get("style") or "modern"
             appearance["style"] = "classic" if style == "classic" else "modern"
+            if "dev" in command:
+                appearance["dev"] = dev_settings(command["dev"])
+            if "devTab" in command:
+                appearance["devTab"] = bool(command["devTab"])
             use(language)
             self.client._config["pauseOnLeave"] = True
             self.client._config["fastforwardOnDesync"] = appearance["fastforwardOnDesync"]
