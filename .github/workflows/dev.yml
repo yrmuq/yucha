@@ -1,14 +1,12 @@
 # Copyright (C) 2026 yrmuq
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Tested AppImage from the dev branch, on push or manual request.
+# Tested AppImage from the dev branch, on manual request.
 # It updates the draft release "yucha dev" and does not replace an X.Y.0 release.
 
 name: Development build
 
 on:
   workflow_dispatch:
-  push:
-    branches: [dev]
 
 permissions:
   contents: write
@@ -50,11 +48,7 @@ jobs:
         run: |
           set -eu
           printf '%s\n' 'Development build from dev. Not a release.' \
-            "Commit: $GITHUB_SHA" \
-            '' \
-            'Fixed playback shortcuts, control hitboxes, panel clicks, volume layout and opacity.' \
-            'Development settings now persist, reset to defaults, and cancel previews cleanly.' \
-            'Settings already previewed are saved without applying them again.' > notes.md
+            "Commit: $GITHUB_SHA" > notes.md
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           gh release delete dev --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
