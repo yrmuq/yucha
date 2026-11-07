@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT / "third_party" / "syncplay"))
 from twisted.internet import reactor
 
 from yucha.bridge import Bridge
-from yucha.configstore import ConfigStore, bounded_int, font_name, hex_color, port_number, runtime_dir
+from yucha.configstore import ConfigStore, bounded_int, dev_settings, font_name, hex_color, port_number, runtime_dir
 from yucha.i18n import languages, tr, use
 from yucha.player_ui import PlayerUI
 from yucha.session import launch_player, make_client, submit_login
@@ -105,18 +105,12 @@ class App(object):
             appearance["accentColor"] = accent
             second = hex_color(command.get("accentColor2"), appearance.get("accentColor2") or "#1F6A8A")
             appearance["accentColor2"] = second
-            try:
-                size = int(command.get("chatFontSize"))
-            except (TypeError, ValueError):
-                size = appearance.get("chatFontSize") or 18
-            appearance["chatFontSize"] = max(1, min(48, size))
+            appearance["chatFontSize"] = bounded_int(
+                command.get("chatFontSize"), appearance.get("chatFontSize") or 17, 14, 20
+            )
             appearance["checkUpdates"] = bool(command.get("checkUpdates", appearance.get("checkUpdates", True)))
             if command.get("uiFontSize") is not None:
-                try:
-                    ui = int(command.get("uiFontSize"))
-                except (TypeError, ValueError):
-                    ui = appearance.get("uiFontSize") or 16
-                appearance["uiFontSize"] = max(1, min(32, ui))
+                appearance["uiFontSize"] = bounded_int(command.get("uiFontSize"), 13, 10, 16)
             appearance["autoplayNext"] = bool(command.get("autoplayNext"))
             appearance["fastforwardOnDesync"] = bool(command.get("fastforwardOnDesync", True))
             appearance["slowOnDesync"] = bool(command.get("slowOnDesync", True))
@@ -133,10 +127,14 @@ class App(object):
                 language = "English"
             appearance["language"] = language
             appearance["subFont"] = font_name(command.get("subFont", appearance.get("subFont")))
-            appearance["subFontSize"] = bounded_int(command.get("subFontSize"), 55, 8, 120)
+            appearance["subFontSize"] = bounded_int(command.get("subFontSize"), 55, 52, 58)
             appearance["subColor"] = hex_color(command.get("subColor"), "#FFFFFF")
             style = command.get("style") or appearance.get("style") or "modern"
             appearance["style"] = "classic" if style == "classic" else "modern"
+            if "dev" in command:
+                appearance["dev"] = dev_settings(command["dev"])
+            if "devTab" in command:
+                appearance["devTab"] = bool(command["devTab"])
             use(language)
             self.client._config["pauseOnLeave"] = True
             self.client._config["fastforwardOnDesync"] = appearance["fastforwardOnDesync"]

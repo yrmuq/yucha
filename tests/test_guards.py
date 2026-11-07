@@ -13,11 +13,24 @@ sys.path.insert(0, str(ROOT / "third_party" / "syncplay"))
 
 from yucha import i18n
 from yucha.bridge import Bridge
-from yucha.configstore import ConfigStore, port_number
+from yucha.configstore import ConfigStore, dev_settings, port_number
 from yucha.session import load_client_tls
 
 
 class Guards(unittest.TestCase):
+    def test_dev_config_clamps_sizes_and_ignores_malformed_rows(self):
+        result = dev_settings({"bar": 500, "settings_w": "bad", "panel_alpha": -2,
+                               "alfa": {"size": 900, "family": "  Demo Sans  ", "dark": "invalid"},
+                               "sub": "bad", "face": {"bg": []},
+                               "bar_buttons": {"volume": False, "tracks": "false"}})
+        self.assertEqual(result["bar"], 160)
+        self.assertEqual(result["settings_w"], 450)
+        self.assertEqual(result["panel_alpha"], 0)
+        self.assertEqual(result["alfa"], {"size": 96, "family": "Demo Sans"})
+        self.assertNotIn("sub", result)
+        self.assertEqual(result["bar_buttons"], {"volume": False})
+        self.assertEqual(dev_settings(None), {})
+
     def test_language_file(self):
         i18n.use("English")
         self.assertEqual(i18n.tr(1), "Users")
@@ -33,7 +46,7 @@ class Guards(unittest.TestCase):
             self.assertEqual(original.strip(), shown.strip())
             self.assertNotIn(number.strip(), seen)
             seen.add(number.strip())
-        self.assertEqual(len(seen), 73)
+        self.assertEqual(len(seen), 74)
 
     def test_russian_keeps_the_same_ids(self):
         def rows(name):
@@ -105,8 +118,8 @@ class Guards(unittest.TestCase):
                 encoding="utf-8",
             )
             store = ConfigStore()
-            self.assertEqual(store.data["appearance"]["uiFontSize"], 16)
-            self.assertEqual(store.data["appearance"]["chatFontSize"], 48)
+            self.assertEqual(store.data["appearance"]["uiFontSize"], 13)
+            self.assertEqual(store.data["appearance"]["chatFontSize"], 20)
         if previous is None:
             os.environ.pop("XDG_CONFIG_HOME", None)
         else:

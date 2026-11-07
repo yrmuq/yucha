@@ -56,6 +56,59 @@ def font_name(value, default="sans-serif"):
     return text
 
 
+def dev_settings(value):
+    """Keep known development controls within the ranges used by the dialog."""
+    if not isinstance(value, dict):
+        return {}
+    result = {}
+    ranges = {
+        "panel": (380, 240, 900), "bar": (57, 36, 160),
+        "bar_alpha": (90, 0, 100), "panel_alpha": (90, 0, 100),
+        "osd_alpha": (90, 0, 100), "bar_inset": (30, 0, 40),
+        "settings_h": (350, 240, 900), "settings_w": (450, 360, 1100),
+        "settings_pad": (23, 0, 160), "settings_top": (23, 0, 160),
+    }
+    for key, limits in ranges.items():
+        if key in value:
+            result[key] = bounded_int(value[key], *limits)
+    for key in ("slider_numbers", "bold_names"):
+        if isinstance(value.get(key), bool):
+            result[key] = value[key]
+    for key in ("ui", "alfa", "titles", "osd", "sub"):
+        row = value.get(key)
+        if not isinstance(row, dict):
+            continue
+        cleaned = {}
+        if "size" in row:
+            cleaned["size"] = bounded_int(row["size"], 13, 1, 96)
+        if isinstance(row.get("bold"), bool):
+            cleaned["bold"] = row["bold"]
+        if "family" in row:
+            cleaned["family"] = font_name(row["family"])
+        for shade in ("dark", "light"):
+            color = hex_color(row.get(shade), None)
+            if color:
+                cleaned[shade] = color
+        result[key] = cleaned
+    face = value.get("face")
+    if isinstance(face, dict):
+        result["face"] = {}
+        for key in ("bg", "field", "border", "button", "button_fg", "ready", "away", "locked"):
+            row = face.get(key)
+            if isinstance(row, dict):
+                result["face"][key] = {
+                    shade: color for shade in ("dark", "light")
+                    if (color := hex_color(row.get(shade), None))
+                }
+    buttons = value.get("bar_buttons")
+    if isinstance(buttons, dict):
+        result["bar_buttons"] = {
+            key: buttons[key] for key in ("play", "ready", "volume", "tracks", "chat", "room")
+            if isinstance(buttons.get(key), bool)
+        }
+    return result
+
+
 def wheel_rgb(dx, dy, radius):
     """One point on the color disc. The rim is a hue, the middle is white."""
     dist = math.hypot(dx, dy)
@@ -125,8 +178,8 @@ DEFAULTS = {
         "chatColor": "#F4F1EA",
         "accentColor": "#9A3A52",
         "accentColor2": "#1F6A8A",
-        "chatFontSize": 18,
-        "uiFontSize": 16,
+        "chatFontSize": 17,
+        "uiFontSize": 13,
         "checkUpdates": True,
         "autoplayNext": False,
         "fastforwardOnDesync": True,
@@ -139,6 +192,7 @@ DEFAULTS = {
         "subColor": "#FFFFFF",
         "panelWidth": 380,
         "devTab": False,
+        "dev": {},
         "style": "modern",
     },
 }
@@ -164,14 +218,15 @@ class ConfigStore(object):
             if isinstance(loaded.get(section), dict):
                 self.data[section].update(loaded[section])
         look = self.data["appearance"]
-        look["uiFontSize"] = bounded_int(look.get("uiFontSize"), 16, 1, 32)
-        look["chatFontSize"] = bounded_int(look.get("chatFontSize"), 18, 1, 48)
+        look["uiFontSize"] = bounded_int(look.get("uiFontSize"), 13, 10, 16)
+        look["chatFontSize"] = bounded_int(look.get("chatFontSize"), 17, 14, 20)
         look["checkUpdates"] = bool(look.get("checkUpdates", True))
-        look["subFontSize"] = bounded_int(look.get("subFontSize"), 55, 8, 120)
+        look["subFontSize"] = bounded_int(look.get("subFontSize"), 55, 52, 58)
         look["subColor"] = hex_color(look.get("subColor"), "#FFFFFF")
         look["subFont"] = font_name(look.get("subFont"))
         look["panelWidth"] = bounded_int(look.get("panelWidth"), 380, 240, 900)
         look["devTab"] = bool(look.get("devTab", False))
+        look["dev"] = dev_settings(look.get("dev"))
         if look.get("style") not in ("classic", "modern"):
             look["style"] = "modern"
         if look.get("theme") not in ("auto", "dark", "light"):
