@@ -19,13 +19,14 @@ from yucha.session import load_client_tls
 
 class Guards(unittest.TestCase):
     def test_dev_config_clamps_sizes_and_ignores_malformed_rows(self):
-        result = dev_settings({"bar": 500, "settings_w": "bad", "panel_alpha": -2,
+        result = dev_settings({"bar": 500, "settings_w": "bad", "panel_alpha": -2, "gamma": 900,
                                "alfa": {"size": 900, "family": "  Demo Sans  ", "dark": "invalid"},
                                "sub": "bad", "face": {"bg": []},
                                "bar_buttons": {"volume": False, "tracks": "false"}})
         self.assertEqual(result["bar"], 160)
         self.assertEqual(result["settings_w"], 450)
         self.assertEqual(result["panel_alpha"], 0)
+        self.assertEqual(result["gamma"], 96)
         self.assertEqual(result["alfa"], {"size": 96, "family": "Demo Sans"})
         self.assertNotIn("sub", result)
         self.assertEqual(result["bar_buttons"], {"volume": False})
@@ -46,7 +47,7 @@ class Guards(unittest.TestCase):
             self.assertEqual(original.strip(), shown.strip())
             self.assertNotIn(number.strip(), seen)
             seen.add(number.strip())
-        self.assertEqual(len(seen), 74)
+        self.assertEqual(len(seen), 107)
 
     def test_russian_keeps_the_same_ids(self):
         def rows(name):

@@ -135,6 +135,8 @@ class App(object):
                 appearance["dev"] = dev_settings(command["dev"])
             if "devTab" in command:
                 appearance["devTab"] = bool(command["devTab"])
+            if "panelWidth" in command:
+                appearance["panelWidth"] = bounded_int(command["panelWidth"], 380, 240, 900)
             use(language)
             self.client._config["pauseOnLeave"] = True
             self.client._config["fastforwardOnDesync"] = appearance["fastforwardOnDesync"]

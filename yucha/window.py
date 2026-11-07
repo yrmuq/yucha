@@ -61,9 +61,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from yucha import __version__, fetch_newer_stable
-from yucha.configstore import dev_settings, font_name, hex_color, move_entry, wheel_rgb
+from yucha.configstore import DEFAULTS, dev_settings, font_name, hex_color, move_entry, wheel_rgb
 from yucha.engine import Picture
-from yucha.i18n import languages, tr, trf
+from yucha.i18n import languages, system_language, tr, trf
 from yucha.player_ui import replace_seek_toast, room_file_notes
 from yucha.system import Notifier, SleepInhibit, join_line, people_joined
 
@@ -2034,6 +2034,7 @@ class SettingsDialog(QDialog):
 
     def __init__(self, appearance, connection, parent, page=1):
         super().__init__(parent)
+        self.setObjectName("settings")
         self.setWindowTitle(tr(15))
         self.setModal(True)
         self.appearance = None
@@ -2044,6 +2045,7 @@ class SettingsDialog(QDialog):
         self._panel_before = parent._panel_width
         self._saved_dev = deepcopy(parent._dev)
         self._dev_loading = False
+        self._standard_reset = False
         self._side_layouts = []
         self._name_forms = []
         self._checking = False
@@ -2142,7 +2144,9 @@ class SettingsDialog(QDialog):
         self.ui_size.valueChanged.connect(lambda _value: self._queue_theme(True))
         self.sub_size.valueChanged.connect(lambda _value: self._queue_theme(True))
         self.sub_font.currentIndexChanged.connect(lambda _index: self._preview_theme())
-        for field in (self.theme, self.style_pick, self.sub_font, self.chat_size, self.ui_size, self.sub_size, accents, subtitles):
+        self._theme_fields = (self.theme, self.style_pick, self.sub_font, self.chat_size,
+                              self.ui_size, self.sub_size, accents, subtitles)
+        for field in self._theme_fields:
             field.setFixedHeight(row_h)
 
         room = QWidget()
@@ -2193,12 +2197,13 @@ class SettingsDialog(QDialog):
         other = QWidget()
         other_form = QFormLayout(other)
         other_form.setContentsMargins(23, 23, 23, 12)
-        other_form.setVerticalSpacing(12)
+        other_form.setVerticalSpacing(7)
         self._keep_side(other_form)
         self._name_forms.append(other_form)
         self.language = QComboBox()
         for name in languages():
-            self.language.addItem(name, name)
+            label = tr(105) if name == "English" else tr(106) if name == "Russian" else name
+            self.language.addItem(label, name)
         picked = str(appearance.get("language") or "English")
         index = self.language.findData(picked)
         if index < 0:
@@ -2248,9 +2253,13 @@ class SettingsDialog(QDialog):
         self._check_row(other_form, tr(33), self.slowdown, row_h)
         self._check_row(other_form, tr(67), self.check_updates, row_h)
         self.check_updates.toggled.connect(lambda _checked: self._sync_update_row())
+        self.reset_other = QPushButton(tr(70))
+        self.reset_other.clicked.connect(self._reset_standard)
+        other_form.addRow(self.reset_other)
         self.tabs.addTab(other, tr(30))
 
         about = QWidget()
+        self._about_content = about
         self._about_page = about
         about_layout = QVBoxLayout(about)
         about_layout.setContentsMargins(23, 23, 23, 12)
@@ -2274,7 +2283,8 @@ class SettingsDialog(QDialog):
         name = QLabel("yucha")
         name.setObjectName("heading")
         name.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        repo = QLabel('github: <a href="https://github.com/yrmuq/yucha">yucha</a>')
+        repo = QLabel('{}: <a href="https://github.com/yrmuq/yucha">{}</a>'.format(
+            html.escape(tr(75)), html.escape(tr(76))))
         repo.setTextFormat(Qt.TextFormat.RichText)
         repo.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
         repo.setOpenExternalLinks(True)
@@ -2304,6 +2314,7 @@ class SettingsDialog(QDialog):
         about_layout.addWidget(self.update_button, 0, Qt.AlignmentFlag.AlignLeft)
         about_layout.addWidget(self.update_note)
         about_layout.addWidget(self.download_button, 0, Qt.AlignmentFlag.AlignLeft)
+        about_layout.addStretch(1)
         about_layout.addWidget(thanks, 0, Qt.AlignmentFlag.AlignLeft)
         self.tabs.addTab(about, tr(39))
         self._dev_page = None
@@ -2327,10 +2338,10 @@ class SettingsDialog(QDialog):
         if getattr(self, "_settings_h_saved", False):
             self._page_h = self._settings_h.value()
         else:
-            self._page_h = int(self._saved_dev.get("settings_h", 350))
+            self._page_h = int(self._saved_dev.get("settings_h", 375))
             if hasattr(self, "_settings_h"):
                 self._settings_h.blockSignals(True)
-                self._settings_h.setValue(350)
+                self._settings_h.setValue(375)
                 self._settings_h.blockSignals(False)
         if getattr(self, "_settings_w_saved", False):
             self._page_w = self._settings_w.value()
@@ -2366,6 +2377,7 @@ class SettingsDialog(QDialog):
         self._apply_settings_edges()
         self._show_slider_numbers()
         self._apply_label_weight()
+        self._apply_settings_font()
         hint = self._connect.sizeHint()
         self._connect.setFixedHeight(max(1, int(hint.height() * 0.9)))
 
@@ -2374,8 +2386,11 @@ class SettingsDialog(QDialog):
         page.setMinimumWidth(max(1, self._page_w - gutter))
         hint_h = max(page.sizeHint().height(), 1)
         page.setMinimumHeight(hint_h)
-        page.setMaximumHeight(hint_h)
-        page.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        if page is self._about_content:
+            page.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        else:
+            page.setMaximumHeight(hint_h)
+            page.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         if not page.objectName():
             page.setObjectName("settingspage")
         host = QWidget()
@@ -2463,7 +2478,7 @@ class SettingsDialog(QDialog):
         if self._page_h:
             page = self._scroll_page(page)
         self._dev_page = page
-        self.tabs.addTab(self._dev_page, "dev")
+        self.tabs.addTab(self._dev_page, tr(77))
         self._tabbar.updateGeometry()
 
     def _dev_defaults(self):
@@ -2485,6 +2500,7 @@ class SettingsDialog(QDialog):
             "osd": {"size": 17, "bold": False, "family": family, "dark": dark, "light": light},
             "sub": {"size": 55, "bold": False, "family": "sans-serif", "dark": white, "light": white},
             "titles": {"size": 11, "bold": True, "family": family, "dark": dark, "light": light},
+            "gamma": 12,
             "face": face,
             "panel": PANEL_WIDTH,
             "bar": BAR_HEIGHT,
@@ -2492,7 +2508,7 @@ class SettingsDialog(QDialog):
             "panel_alpha": 90,
             "osd_alpha": 90,
             "bar_inset": 30,
-            "settings_h": 350,
+            "settings_h": 375,
             "settings_w": 450,
             "settings_pad": 23,
             "settings_top": 23,
@@ -2538,6 +2554,7 @@ class SettingsDialog(QDialog):
         seed = self._dev_seed()
         page = QWidget()
         form = QFormLayout(page)
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         pad = int(seed.get("settings_pad", 23))
         top = int(seed.get("settings_top", 23))
         form.setContentsMargins(pad, top, pad, 12)
@@ -2546,24 +2563,30 @@ class SettingsDialog(QDialog):
         self._name_forms.append(form)
         self._dev_rows = {}
         for key, title in (
-            ("ui", "Interface"),
-            ("alfa", "alfa text size"),
-            ("titles", "beta text size"),
-            ("osd", "OSD"),
-            ("sub", "Subtitles"),
+            ("ui", tr(78)),
+            ("alfa", tr(79)),
+            ("titles", tr(80)),
+            ("osd", tr(28)),
+            ("sub", tr(55)),
         ):
             form.addRow(title, self._dev_font_row(key, seed[key]))
+            if key == "titles":
+                self.gamma_size = QuietSpin()
+                self.gamma_size.setRange(1, 96)
+                self.gamma_size.setValue(int(seed.get("gamma", 12)))
+                self.gamma_size.valueChanged.connect(self._set_gamma_size)
+                form.addRow(tr(81), self.gamma_size)
         self._face_rows = {}
         face = seed.get("face") or self._dev_defaults()["face"]
         for key, title in (
-            ("bg", "alfa color"),
-            ("field", "beta color"),
-            ("border", "Border"),
-            ("button", "Button"),
-            ("button_fg", "Button text"),
-            ("ready", "Ready"),
-            ("away", "Not ready"),
-            ("locked", "Locked field"),
+            ("bg", tr(82)),
+            ("field", tr(83)),
+            ("border", tr(84)),
+            ("button", tr(85)),
+            ("button_fg", tr(86)),
+            ("ready", tr(87)),
+            ("away", tr(88)),
+            ("locked", tr(89)),
         ):
             form.addRow(title, self._face_row(key, face.get(key) or self._dev_defaults()["face"][key]))
         self._dev_panel = QuietSpin()
@@ -2574,55 +2597,55 @@ class SettingsDialog(QDialog):
         self._dev_bar.setRange(36, 160)
         self._dev_bar.setValue(int(seed["bar"]))
         self._dev_bar.valueChanged.connect(lambda _value: self._push_dev())
-        form.addRow("Panel width", self._dev_panel)
-        form.addRow("Bar height", self._dev_bar)
+        form.addRow(tr(90), self._dev_panel)
+        form.addRow(tr(91), self._dev_bar)
         self._bar_inset = QuietSpin()
         self._bar_inset.setRange(0, 40)
         self._bar_inset.setSuffix("%")
         self._bar_inset.setValue(int(seed.get("bar_inset", 30)))
         self._bar_inset.valueChanged.connect(lambda _value: self._push_dev())
-        form.addRow("Bar side", self._bar_inset)
+        form.addRow(tr(92), self._bar_inset)
         self._bar_alpha = self._alpha_spin(seed.get("bar_alpha", 90))
         self._panel_alpha = self._alpha_spin(seed.get("panel_alpha", 90))
         self._osd_alpha = self._alpha_spin(seed.get("osd_alpha", 90))
-        form.addRow("Bar opacity", self._bar_alpha)
-        form.addRow("Side opacity", self._panel_alpha)
-        form.addRow("OSD opacity", self._osd_alpha)
+        form.addRow(tr(93), self._bar_alpha)
+        form.addRow(tr(94), self._panel_alpha)
+        form.addRow(tr(95), self._osd_alpha)
         saved_h = int(seed.get("settings_h") or 0)
         self._settings_h_saved = saved_h >= 240
         self._settings_h = QuietSpin()
         self._settings_h.setRange(240, 900)
-        self._settings_h.setValue(saved_h if self._settings_h_saved else 350)
+        self._settings_h.setValue(saved_h if self._settings_h_saved else 375)
         self._settings_h.valueChanged.connect(self._set_settings_height)
-        form.addRow("Window height", self._settings_h)
+        form.addRow(tr(96), self._settings_h)
         saved_w = int(seed.get("settings_w") or 0)
         self._settings_w_saved = saved_w >= 360
         self._settings_w = QuietSpin()
         self._settings_w.setRange(360, 1100)
         self._settings_w.setValue(saved_w if self._settings_w_saved else 450)
         self._settings_w.valueChanged.connect(self._set_settings_width)
-        form.addRow("Window width", self._settings_w)
+        form.addRow(tr(97), self._settings_w)
         self._settings_pad = QuietSpin()
         self._settings_pad.setRange(0, 160)
         self._settings_pad.setValue(pad)
         self._settings_pad.valueChanged.connect(self._set_settings_pad)
-        form.addRow("Side pad", self._settings_pad)
+        form.addRow(tr(98), self._settings_pad)
         self._settings_top = QuietSpin()
         self._settings_top.setRange(0, 160)
         self._settings_top.setValue(top)
         self._settings_top.valueChanged.connect(self._set_settings_top)
-        form.addRow("Top pad", self._settings_top)
+        form.addRow(tr(99), self._settings_top)
         look = _palette(self._look_theme, self._look_accent)
         self._slider_numbers = BoxCheck()
         self._slider_numbers.setChecked(bool(seed.get("slider_numbers", False)))
         self._slider_numbers.set_colors(look["field"], look["border"], look["on_fg"], look["accent"])
         self._slider_numbers.toggled.connect(lambda _value: self._toggle_slider_numbers())
-        form.addRow("Slider numbers", self._slider_numbers)
+        form.addRow(tr(100), self._slider_numbers)
         self._label_bold = BoxCheck()
         self._label_bold.setChecked(bool(seed.get("bold_names", False)))
         self._label_bold.set_colors(look["field"], look["border"], look["on_fg"], look["accent"])
         self._label_bold.toggled.connect(lambda _value: self._toggle_label_bold())
-        form.addRow("Bold names", self._label_bold)
+        form.addRow(tr(101), self._label_bold)
         if self._slider_numbers.isChecked():
             self._show_slider_numbers()
         if self._label_bold.isChecked():
@@ -2634,12 +2657,12 @@ class SettingsDialog(QDialog):
         flags = seed.get("bar_buttons") or {}
         look = _palette(self._look_theme, self._look_accent)
         for key, title in (
-            ("play", "Play"),
-            ("ready", "Ready"),
-            ("volume", "Sound"),
-            ("tracks", "Subs"),
-            ("chat", "Chat"),
-            ("room", "Room"),
+            ("play", tr(102)),
+            ("ready", tr(87)),
+            ("volume", tr(103)),
+            ("tracks", tr(12)),
+            ("chat", tr(3)),
+            ("room", tr(16)),
         ):
             box = BoxCheck()
             box.setChecked(bool(flags.get(key, True)))
@@ -2649,7 +2672,7 @@ class SettingsDialog(QDialog):
             button_row.addWidget(box)
             button_row.addWidget(QLabel(title))
         button_row.addStretch(1)
-        form.addRow("Bar buttons", buttons)
+        form.addRow(tr(104), buttons)
         reset = QPushButton(tr(70))
         export = QPushButton(tr(69))
         reset.clicked.connect(self._reset_dev)
@@ -2677,8 +2700,8 @@ class SettingsDialog(QDialog):
         family = QFontComboBox()
         family.setCurrentFont(QFont(str(seed["family"])))
         family.setMaximumWidth(180)
-        dark = self._dev_swatch(seed.get("dark") or seed.get("color") or "#F3EFE6", "dark")
-        light = self._dev_swatch(seed.get("light") or seed.get("color") or "#1A1A1A", "light")
+        dark = self._dev_swatch(seed.get("dark") or seed.get("color") or "#F3EFE6", tr(23))
+        light = self._dev_swatch(seed.get("light") or seed.get("color") or "#1A1A1A", tr(24))
         look = _palette(self._look_theme, self._look_accent)
         bold.set_colors(look["field"], look["border"], look["on_fg"], look["accent"])
         size.valueChanged.connect(lambda _value: self._push_dev())
@@ -2687,9 +2710,9 @@ class SettingsDialog(QDialog):
         row.addWidget(size)
         row.addWidget(bold)
         row.addWidget(family, 1)
-        row.addWidget(QLabel("dark"))
+        row.addWidget(QLabel(tr(23)))
         row.addWidget(dark)
-        row.addWidget(QLabel("light"))
+        row.addWidget(QLabel(tr(24)))
         row.addWidget(light)
         self._dev_rows[key] = {
             "size": size,
@@ -2704,11 +2727,11 @@ class SettingsDialog(QDialog):
         host = QWidget()
         row = QHBoxLayout(host)
         row.setContentsMargins(0, 0, 0, 0)
-        dark = self._dev_swatch(seed.get("dark") or "#000000", "dark")
-        light = self._dev_swatch(seed.get("light") or "#FFFFFF", "light")
-        row.addWidget(QLabel("dark"))
+        dark = self._dev_swatch(seed.get("dark") or "#000000", tr(23))
+        light = self._dev_swatch(seed.get("light") or "#FFFFFF", tr(24))
+        row.addWidget(QLabel(tr(23)))
         row.addWidget(dark)
-        row.addWidget(QLabel("light"))
+        row.addWidget(QLabel(tr(24)))
         row.addWidget(light)
         row.addStretch(1)
         self._face_rows[key] = {"dark": dark, "light": light}
@@ -2749,6 +2772,7 @@ class SettingsDialog(QDialog):
             self._settings_top,
             self._slider_numbers,
             self._label_bold,
+            self.gamma_size,
         ]
         widgets.extend(self._bar_buttons.values())
         for row in self._dev_rows.values():
@@ -2773,12 +2797,13 @@ class SettingsDialog(QDialog):
         self._bar_alpha.setValue(int(seed.get("bar_alpha", 90)))
         self._panel_alpha.setValue(int(seed.get("panel_alpha", 90)))
         self._osd_alpha.setValue(int(seed.get("osd_alpha", 90)))
-        self._settings_h.setValue(int(seed.get("settings_h") or 350))
+        self._settings_h.setValue(int(seed.get("settings_h") or 375))
         self._settings_w.setValue(int(seed.get("settings_w") or self._settings_w.value()))
         self._settings_pad.setValue(int(seed.get("settings_pad", 23)))
         self._settings_top.setValue(int(seed.get("settings_top", 23)))
         self._slider_numbers.setChecked(bool(seed.get("slider_numbers", False)))
         self._label_bold.setChecked(bool(seed.get("bold_names", False)))
+        self.gamma_size.setValue(int(seed.get("gamma", 12)))
         flags = seed.get("bar_buttons") or {}
         for key, box in self._bar_buttons.items():
             box.setChecked(bool(flags.get(key, True)))
@@ -2810,6 +2835,7 @@ class SettingsDialog(QDialog):
             "settings_top": self._settings_top.value(),
             "slider_numbers": self._slider_numbers.isChecked(),
             "bold_names": self._label_bold.isChecked(),
+            "gamma": self.gamma_size.value(),
             "bar_buttons": {key: box.isChecked() for key, box in self._bar_buttons.items()},
             "face": {},
         }
@@ -2832,33 +2858,64 @@ class SettingsDialog(QDialog):
         window = self.parent()
         if window is None or self._dev_loading or not hasattr(self, "_bar_buttons"):
             return
-        spec = self._dev_spec()
-        look = window.app.store.data["appearance"]
-        for key, setting, scale in (("ui", "uiFontSize", self.ui_size),
-                                    ("osd", "chatFontSize", self.chat_size),
-                                    ("sub", "subFontSize", self.sub_size)):
-            if scale._standard - 3 <= spec[key]["size"] <= scale._standard + 3:
-                scale.blockSignals(True)
-                scale.setValue(spec[key]["size"])
-                scale.blockSignals(False)
-                look[setting] = spec[key]["size"]
-        family = spec["sub"]["family"]
-        self.sub_font.blockSignals(True)
-        if self.sub_font.findData(family) < 0:
-            self.sub_font.addItem(family, family)
-        self.sub_font.setCurrentIndex(self.sub_font.findData(family))
-        self.sub_font.blockSignals(False)
-        look["subFont"] = family
-        theme = _shown_theme(look.get("theme"))
-        self.sub_color.set_color(_dev_ink(spec["sub"], theme))
-        look["subColor"] = self.sub_color._color.name().upper()
-        window.apply_dev(spec)
+        window.apply_dev(self._dev_spec())
         self._apply_room_lock()
         self._apply_label_weight()
+        self._apply_settings_font()
+
+    def _set_gamma_size(self, size):
+        self.parent()._dev["gamma"] = int(size)
+        self._apply_settings_font()
+
+    def _apply_settings_font(self):
+        size = int(self.parent()._dev.get("gamma", 12))
+        font = self.font()
+        font.setPointSize(size)
+        self.setFont(font)
+        self.setStyleSheet("QDialog#settings, QDialog#settings QWidget { font-size: %dpt; }" % size)
+        self.ensurePolished()
+        row_h = max(self.theme.sizeHint().height(), QFontMetrics(font).height() + 14)
+        for field in self._theme_fields:
+            field.setFixedHeight(row_h)
+        for scale in (self.chat_size, self.ui_size, self.sub_size):
+            scale._base_h = row_h
+        self._show_slider_numbers()
+        self._fit_settings_pages()
+
+    def _reset_standard(self):
+        defaults = DEFAULTS["appearance"]
+        self._theme_timer.stop()
+        combos = ((self.theme, "theme"), (self.style_pick, "style"),
+                  (self.sub_font, "subFont"), (self.language, "language"),
+                  (self.overlay, "volumeOverlay"))
+        scales = ((self.chat_size, "chatFontSize"), (self.ui_size, "uiFontSize"),
+                  (self.sub_size, "subFontSize"))
+        boxes = ((self.autoplay, "autoplayNext"), (self.fastforward, "fastforwardOnDesync"),
+                 (self.slowdown, "slowOnDesync"), (self.check_updates, "checkUpdates"))
+        for widget, key in combos + scales + boxes:
+            widget.blockSignals(True)
+            value = system_language() if key == "language" else defaults[key]
+            if isinstance(widget, QComboBox):
+                widget.setCurrentIndex(max(0, widget.findData(value)))
+            elif isinstance(widget, QCheckBox):
+                widget.setChecked(value)
+            else:
+                widget.setValue(value)
+            widget.blockSignals(False)
+        for widget, key in ((self.accent, "accentColor"), (self.accent2, "accentColor2"),
+                            (self.sub_color, "subColor")):
+            widget.set_color(defaults[key])
+        self._kept_chat = defaults["chatColor"]
+        self.volume_max = defaults["volumeMax"]
+        self._show_volume_max()
+        self._standard_reset = True
+        self._push_theme(False, sync_dev=False)
+        self._sync_update_row()
 
     def _export_dev(self):
         spec = self._dev_spec()
         lines = []
+        lines.append("gamma.size={}".format(spec["gamma"]))
         for key in ("ui", "alfa", "osd", "sub", "titles"):
             row = spec[key]
             lines.append("{}.size={}".format(key, row["size"]))
@@ -2877,7 +2934,7 @@ class SettingsDialog(QDialog):
         lines.append("bar.inset={}".format(spec["bar_inset"]))
         for key, shown in spec["bar_buttons"].items():
             lines.append("bar.button.{}={}".format(key, "yes" if shown else "no"))
-        path, _chosen = QFileDialog.getSaveFileName(self, tr(69), "yucha-dev.txt", "Text (*.txt)")
+        path, _chosen = QFileDialog.getSaveFileName(self, tr(69), "yucha-dev.txt", "{} (*.txt)".format(tr(107)))
         if not path:
             return
         Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -2992,6 +3049,8 @@ class SettingsDialog(QDialog):
             "dev": deepcopy(self.parent()._dev),
             "devTab": bool(self.parent().app.store.data["appearance"].get("devTab")),
         }
+        if self._standard_reset:
+            self.appearance["panelWidth"] = DEFAULTS["appearance"]["panelWidth"]
         self.connection = {
             "host": self.host.text(),
             "port": self.port.text(),
@@ -3029,7 +3088,11 @@ class SettingsDialog(QDialog):
             page.setMinimumHeight(0)
             page.setMaximumHeight(16777215)
             page.layout().invalidate()
-            page.setFixedHeight(max(1, page.sizeHint().height()))
+            height = max(1, page.sizeHint().height(), page.heightForWidth(area.viewport().width()))
+            if page is self._about_content:
+                page.setMinimumHeight(height)
+            else:
+                page.setFixedHeight(height)
 
     def _set_settings_pad(self, _pad):
         self._apply_settings_edges()
@@ -3144,7 +3207,7 @@ class SettingsDialog(QDialog):
         self._theme_timer.stop()
         self._push_theme(False)
 
-    def _push_theme(self, light):
+    def _push_theme(self, light, sync_dev=True):
         window = self.parent()
         if window is None or not hasattr(window, "apply_theme"):
             return
@@ -3161,14 +3224,14 @@ class SettingsDialog(QDialog):
         look["subColor"] = hex_color(self.sub_color._color.name(), "#FFFFFF")
         # Ordinary size controls and the development tab edit the same sizes.
         for key, setting in (("ui", "uiFontSize"), ("osd", "chatFontSize"), ("sub", "subFontSize")):
-            if before.get(setting) != look[setting] and window._dev:
+            if sync_dev and before.get(setting) != look[setting] and window._dev:
                 window._dev.setdefault(key, {})["size"] = look[setting]
                 if hasattr(self, "_dev_rows"):
                     spin = self._dev_rows[key]["size"]
                     spin.blockSignals(True)
                     spin.setValue(look[setting])
                     spin.blockSignals(False)
-        if window._dev:
+        if sync_dev and window._dev:
             sub = window._dev.setdefault("sub", {})
             if before.get("subFont") != look["subFont"]:
                 sub["family"] = look["subFont"]
@@ -3184,11 +3247,7 @@ class SettingsDialog(QDialog):
                         row[shade].set_color(sub[shade])
         self._theme_dirty = True
         window.apply_theme()
-        self._fit_settings_pages()
-        if light:
-            font = self.font()
-            font.setPointSize(self.ui_size.value())
-            self.setFont(font)
+        self._apply_settings_font()
 
     def reject(self):
         self._theme_timer.stop()
@@ -4700,6 +4759,9 @@ class MainWindow(QMainWindow):
             self._apply_volume_max()
         if before.get("language") != after.get("language"):
             self._retranslate()
+        if before.get("panelWidth") != after.get("panelWidth") and "panel" not in self._dev:
+            self._panel_width = bounded_panel(after["panelWidth"])
+            self._place_overlays()
         if dialog.connection and (dialog.wants_connect or self._connection_changed(dialog.connection)):
             self.app.on_command({"c": "connect", **dialog.connection})
             self._refresh_banner()

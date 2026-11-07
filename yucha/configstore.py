@@ -65,8 +65,9 @@ def dev_settings(value):
         "panel": (380, 240, 900), "bar": (57, 36, 160),
         "bar_alpha": (90, 0, 100), "panel_alpha": (90, 0, 100),
         "osd_alpha": (90, 0, 100), "bar_inset": (30, 0, 40),
-        "settings_h": (350, 240, 900), "settings_w": (450, 360, 1100),
+        "settings_h": (375, 240, 900), "settings_w": (450, 360, 1100),
         "settings_pad": (23, 0, 160), "settings_top": (23, 0, 160),
+        "gamma": (12, 1, 96),
     }
     for key, limits in ranges.items():
         if key in value:

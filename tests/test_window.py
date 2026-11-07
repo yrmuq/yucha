@@ -19,10 +19,12 @@ sys.path.insert(0, str(ROOT / "third_party" / "syncplay"))
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, Signal
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog, QWidget
+from PySide6.QtWidgets import QApplication, QDialog, QFormLayout, QLabel, QWidget
 
 from yucha.app import App
-from yucha.configstore import ConfigStore
+from yucha.configstore import DEFAULTS, ConfigStore
+from yucha import __version__, i18n
+from yucha.i18n import system_language
 from yucha.window import MainWindow, SettingsDialog
 
 
@@ -86,7 +88,9 @@ class WindowTests(unittest.TestCase):
         self.env = patch.dict(os.environ, {"XDG_CONFIG_HOME": self.temp.name})
         self.env.start()
         self.patches = [patch("yucha.window.Picture", PictureStub),
-                        patch("yucha.window.Notifier"), patch("yucha.window.SleepInhibit")]
+                        patch("yucha.window.Notifier"), patch("yucha.window.SleepInhibit"),
+                        patch("yucha.window.SettingsDialog._check_release"),
+                        patch("yucha.window.MainWindow._begin_release_check")]
         for item in self.patches:
             item.start()
         self.store = ConfigStore()
@@ -356,6 +360,9 @@ class WindowTests(unittest.TestCase):
         dialog.reject()
 
     def test_reset_restores_all_dev_defaults_and_is_saved(self):
+        self.store.data["appearance"].update({"uiFontSize": 16, "chatFontSize": 20,
+                                              "subFontSize": 58, "subColor": "#AABBCC"})
+        ordinary = copy.deepcopy(self.store.data["appearance"])
         def edit(dialog):
             dialog._dev_rows["alfa"]["size"].setValue(29)
             dialog._bar_alpha.setValue(12)
@@ -371,6 +378,143 @@ class WindowTests(unittest.TestCase):
         self.app.store = ConfigStore()
         restarted = self.make_window()
         self.assertEqual(restarted._dev, self.expected_defaults)
+        for key in ("uiFontSize", "chatFontSize", "subFontSize", "subColor"):
+            self.assertEqual(self.app.store.data["appearance"][key], ordinary[key])
+
+    def test_other_reset_saves_defaults_without_changing_room_or_dev(self):
+        self.store.data["appearance"].update({
+            "theme": "light", "style": "classic", "accentColor": "#123456",
+            "accentColor2": "#ABCDEF", "chatColor": "#010203", "uiFontSize": 16,
+            "chatFontSize": 20, "subFontSize": 58, "subFont": "serif", "subColor": "#AABBCC",
+            "autoplayNext": True, "fastforwardOnDesync": False, "slowOnDesync": False,
+            "panelWidth": 650, "volumeOverlay": "vertical"})
+        self.window._dev = {"gamma": 18, "ui": {"size": 15}, "panel": 650,
+                            "osd": {"size": 22}, "sub": {"size": 57}}
+        self.window.apply_theme()
+        dev = copy.deepcopy(self.window._dev)
+        room = copy.deepcopy(self.store.data["connection"])
+        self.app.on_command = Mock(wraps=self.app.on_command)
+
+        def edit(dialog):
+            fields = tuple(field.text() for field in dialog._room_fields)
+            dialog.reset_other.click()
+            self.assertEqual(tuple(field.text() for field in dialog._room_fields), fields)
+            self.assertEqual(self.window._dev, dev)
+            dialog._accept()
+            return QDialog.DialogCode.Accepted
+
+        with patch.object(SettingsDialog, "exec", edit):
+            self.window._open_settings()
+        saved = ConfigStore().data
+        for key, value in DEFAULTS["appearance"].items():
+            if key not in ("dev", "devTab"):
+                self.assertEqual(saved["appearance"][key], system_language() if key == "language" else value, key)
+        self.assertEqual(saved["appearance"]["dev"], dev)
+        self.assertTrue(saved["appearance"]["devTab"])
+        self.assertEqual(saved["connection"], room)
+        self.assertEqual([call.args[0]["c"] for call in self.app.on_command.call_args_list], ["appearance"])
+        self.assertEqual(self.window.ctl.properties["volume-max"], 100)
+
+    def test_cancel_undoes_both_resets(self):
+        self.store.data["appearance"].update({"style": "classic", "uiFontSize": 16})
+        self.window._dev = {"gamma": 19, "bar": 70}
+        self.window.apply_theme()
+        self.store.data["appearance"]["dev"] = copy.deepcopy(self.window._dev)
+        self.store.save()
+        before = copy.deepcopy(self.store.data)
+        dialog = self.dialog()
+        dialog._reset_standard()
+        dialog._reset_dev()
+        dialog.reject()
+        self.assertEqual(self.store.data, before)
+        self.assertEqual(self.window._dev, before["appearance"]["dev"])
+        self.assertEqual(ConfigStore().data, before)
+
+    def test_gamma_changes_only_settings_and_survives_reopening(self):
+        ordinary = copy.deepcopy(self.store.data["appearance"])
+        main_size = self.window.font().pointSize()
+        content_size = self.window.chat.font().pointSize()
+        def edit(dialog):
+            form = dialog._dev_rows["titles"]["size"].parentWidget().parentWidget().layout()
+            labels = [form.itemAt(row, QFormLayout.ItemRole.LabelRole) for row in range(form.rowCount())]
+            names = [item.widget().text() for item in labels if item and hasattr(item.widget(), "text")]
+            self.assertEqual(names[names.index("beta text size") + 1], "gamma text size")
+            dialog.gamma_size.setValue(20)
+            self.qt.processEvents()
+            for field in (dialog, dialog.tabs.tabBar(), dialog.port, dialog.theme,
+                          dialog.theme.view(), dialog.reset_other, dialog._dev_rows["ui"]["size"]):
+                self.assertEqual(field.font().pointSize(), 20)
+            self.assertEqual(self.window.font().pointSize(), main_size)
+            self.assertEqual(self.window.chat.font().pointSize(), content_size)
+            self.assertEqual(self.store.data["appearance"], ordinary)
+            dialog._accept()
+            return QDialog.DialogCode.Accepted
+
+        with patch.object(SettingsDialog, "exec", edit):
+            self.window._open_settings()
+        self.app.store = ConfigStore()
+        self.app.store.data["appearance"]["devTab"] = False
+        restarted = self.make_window()
+        dialog = SettingsDialog(self.app.store.data["appearance"], self.app.store.data["connection"], restarted)
+        self.assertIsNone(dialog._dev_page)
+        self.assertEqual(dialog.port.font().pointSize(), 20)
+        dialog.reject()
+
+    def test_settings_defaults_and_layout_use_the_selected_language(self):
+        try:
+            for language, horizontal, vertical, repository, link, version, gamma in (
+                ("English", "Horizontal", "Vertical", "Repository", "GitHub", "Version", "gamma text size"),
+                ("Russian", "Горизонтальная", "Вертикальная", "Репозиторий", "гитхаб", "Версия", "Размер текста гамма"),
+            ):
+                with self.subTest(language=language):
+                    i18n.use(language)
+                    dialog = self.dialog()
+                    dialog.tabs.setCurrentIndex(2)
+                    dialog.show()
+                    self.qt.processEvents()
+                    self.assertEqual(dialog.gamma_size.value(), 12)
+                    self.assertEqual(dialog.port.font().pointSize(), 12)
+                    self.assertEqual(dialog._page_h, 375)
+                    self.assertEqual([dialog.overlay.itemText(index) for index in (0, 1)], [horizontal, vertical])
+                    form = dialog.reset_other.parentWidget().layout()
+                    self.assertEqual(form.getWidgetPosition(dialog.reset_other)[1], QFormLayout.ItemRole.SpanningRole)
+                    self.assertEqual(dialog.reset_other.x(), form.contentsMargins().left())
+                    self.assertEqual(dialog.reset_other.width(), dialog.reset_other.parentWidget().width()
+                                     - form.contentsMargins().left() - form.contentsMargins().right())
+                    gamma_form = dialog.gamma_size.parentWidget().layout()
+                    self.assertEqual(gamma_form.labelForField(dialog.gamma_size).text(), gamma)
+                    dialog.tabs.setCurrentIndex(5)
+                    self.qt.processEvents()
+                    spin = dialog._dev_rows["ui"]["size"]
+                    self.assertGreaterEqual(spin.height(), spin.minimumSizeHint().height())
+                    dialog.tabs.setCurrentIndex(3)
+                    self.qt.processEvents()
+                    about = dialog._about_content
+                    texts = [label.text() for label in about.findChildren(QLabel)]
+                    self.assertIn(f'{repository}: <a href="https://github.com/yrmuq/yucha">{link}</a>', texts)
+                    self.assertIn(f'{version}: {__version__}', texts)
+                    thanks = about.layout().itemAt(about.layout().count() - 1).widget()
+                    for height in (375, 500):
+                        dialog._settings_h.setValue(height)
+                        self.qt.processEvents()
+                        expected = about.height() - about.layout().contentsMargins().bottom() - 1
+                        self.assertLessEqual(abs(thanks.geometry().bottom() - expected), 1)
+                    dialog.reject()
+                    dialog.hide()
+        finally:
+            i18n.use("English")
+
+    def test_saved_sizes_stay_custom_until_dev_reset(self):
+        self.window._dev = {"gamma": 17, "settings_h": 430}
+        dialog = self.dialog()
+        self.assertEqual(dialog.port.font().pointSize(), 17)
+        self.assertEqual(dialog._page_h, 430)
+        dialog._reset_dev()
+        self.qt.processEvents()
+        self.assertEqual(dialog.gamma_size.value(), 12)
+        self.assertEqual(dialog.port.font().pointSize(), 12)
+        self.assertEqual(dialog._page_h, 375)
+        dialog.reject()
 
 
 if __name__ == "__main__":

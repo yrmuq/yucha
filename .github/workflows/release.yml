@@ -22,7 +22,10 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Tag the next minor
+      - name: Test release flow
+        run: python3 -m unittest discover -s tests -p test_release.py -v
+
+      - name: Prepare version tag
         id: tag
         env:
           GIT_AUTHOR_NAME: github-actions[bot]
@@ -30,6 +33,7 @@ jobs:
           GIT_COMMITTER_NAME: github-actions[bot]
           GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
         run: |
+          set -euo pipefail
           ver="$(bash packaging/release/cut.sh | tail -n 1)"
           case "$ver" in
             [0-9]*.[0-9]*.0) echo "version=${ver}" >> "$GITHUB_OUTPUT" ;;
@@ -55,5 +59,11 @@ jobs:
           set -eu
           ver="${{ steps.tag.outputs.version }}"
           git push origin HEAD
-          git push origin "refs/tags/v${ver}"
+          if [ "${{ steps.tag.outputs.refresh }}" = "true" ]; then
+            git push origin \
+              --force-with-lease="refs/tags/v${ver}:${{ steps.tag.outputs.previous_tag }}" \
+              "refs/tags/v${ver}"
+          else
+            git push origin "refs/tags/v${ver}"
+          fi
           bash packaging/release/publish.sh "v${ver}"
