@@ -1,6 +1,8 @@
 # lore
 
 Reply in Russian, short and plain.
+The default delivery for requested code changes is a tested draft from dev.
+If a user approval is needed, notify in Mattermost immediately so the user can reopen the chat and approve.
 Repository: `https://github.com/yrmuq/yucha`. Commit as `yrmuq <76932153+yrmuq@users.noreply.github.com>`.
 Own code is `yucha/`. Do not patch `third_party/syncplay` or `third_party/mpv`.
 Picture: build-machine `libmpv`. No third-party `mpv` program. Syncplay `mpv --version` is a stub that prints that package's version.

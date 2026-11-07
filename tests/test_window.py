@@ -19,10 +19,11 @@ sys.path.insert(0, str(ROOT / "third_party" / "syncplay"))
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, Signal
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog, QFormLayout, QWidget
+from PySide6.QtWidgets import QApplication, QDialog, QFormLayout, QLabel, QWidget
 
 from yucha.app import App
 from yucha.configstore import DEFAULTS, ConfigStore
+from yucha import __version__, i18n
 from yucha.i18n import system_language
 from yucha.window import MainWindow, SettingsDialog
 
@@ -457,6 +458,62 @@ class WindowTests(unittest.TestCase):
         dialog = SettingsDialog(self.app.store.data["appearance"], self.app.store.data["connection"], restarted)
         self.assertIsNone(dialog._dev_page)
         self.assertEqual(dialog.port.font().pointSize(), 20)
+        dialog.reject()
+
+    def test_settings_defaults_and_layout_use_the_selected_language(self):
+        try:
+            for language, horizontal, vertical, repository, link, version, gamma in (
+                ("English", "Horizontal", "Vertical", "Repository", "GitHub", "Version", "gamma text size"),
+                ("Russian", "Горизонтальная", "Вертикальная", "Репозиторий", "гитхаб", "Версия", "Размер текста гамма"),
+            ):
+                with self.subTest(language=language):
+                    i18n.use(language)
+                    dialog = self.dialog()
+                    dialog.tabs.setCurrentIndex(2)
+                    dialog.show()
+                    self.qt.processEvents()
+                    self.assertEqual(dialog.gamma_size.value(), 12)
+                    self.assertEqual(dialog.port.font().pointSize(), 12)
+                    self.assertEqual(dialog._page_h, 375)
+                    self.assertEqual([dialog.overlay.itemText(index) for index in (0, 1)], [horizontal, vertical])
+                    form = dialog.reset_other.parentWidget().layout()
+                    self.assertEqual(form.getWidgetPosition(dialog.reset_other)[1], QFormLayout.ItemRole.SpanningRole)
+                    self.assertEqual(dialog.reset_other.x(), form.contentsMargins().left())
+                    self.assertEqual(dialog.reset_other.width(), dialog.reset_other.parentWidget().width()
+                                     - form.contentsMargins().left() - form.contentsMargins().right())
+                    gamma_form = dialog.gamma_size.parentWidget().layout()
+                    self.assertEqual(gamma_form.labelForField(dialog.gamma_size).text(), gamma)
+                    dialog.tabs.setCurrentIndex(5)
+                    self.qt.processEvents()
+                    spin = dialog._dev_rows["ui"]["size"]
+                    self.assertGreaterEqual(spin.height(), spin.minimumSizeHint().height())
+                    dialog.tabs.setCurrentIndex(3)
+                    self.qt.processEvents()
+                    about = dialog._about_content
+                    texts = [label.text() for label in about.findChildren(QLabel)]
+                    self.assertIn(f'{repository}: <a href="https://github.com/yrmuq/yucha">{link}</a>', texts)
+                    self.assertIn(f'{version}: {__version__}', texts)
+                    thanks = about.layout().itemAt(about.layout().count() - 1).widget()
+                    for height in (375, 500):
+                        dialog._settings_h.setValue(height)
+                        self.qt.processEvents()
+                        expected = about.height() - about.layout().contentsMargins().bottom() - 1
+                        self.assertLessEqual(abs(thanks.geometry().bottom() - expected), 1)
+                    dialog.reject()
+                    dialog.hide()
+        finally:
+            i18n.use("English")
+
+    def test_saved_sizes_stay_custom_until_dev_reset(self):
+        self.window._dev = {"gamma": 17, "settings_h": 430}
+        dialog = self.dialog()
+        self.assertEqual(dialog.port.font().pointSize(), 17)
+        self.assertEqual(dialog._page_h, 430)
+        dialog._reset_dev()
+        self.qt.processEvents()
+        self.assertEqual(dialog.gamma_size.value(), 12)
+        self.assertEqual(dialog.port.font().pointSize(), 12)
+        self.assertEqual(dialog._page_h, 375)
         dialog.reject()
 
 
