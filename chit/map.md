@@ -22,7 +22,7 @@ Read only the row the task needs. Do not read `third_party/` or `packaging/appim
 - `requirements.txt` — `PySide6_Essentials`, Twisted, `python-mpv`.
 - `.github/workflows/appimage.yml` — builds a version tag. `X.Y.0` is a release. Any other `X.Y.Z` is a prerelease.
 - `.github/workflows/release.yml` — a merge commit from `dev` into `main` raises Y and publishes.
-- `.github/workflows/dev.yml` — tests and updates the draft on a manual request from `dev`. It does not take a version number.
+- `.github/workflows/dev.yml` — tests and updates the draft on a manual request or an explicit `[draft]` commit on `dev`. Ordinary pushes skip the build. It does not take a version number.
 - `.github/workflows/deps.yml` — Dependabot prerelease on `deps`. It does not change `main`.
 - `.github/workflows/pins.yml` — `appimagetool` pin, on the 28th. Same prerelease path, not `main`.
 - `packaging/release/` — version bump and notes. Not the player.
