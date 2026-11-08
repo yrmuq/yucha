@@ -429,6 +429,7 @@ class WindowTests(unittest.TestCase):
 
     def test_panel_bottom_follows_chat_limit_with_unchanged_padding_and_top(self):
         window = self.window
+        window._dev["panel_center"] = False
         window.set_panel(True)
         for style in ("classic", "modern"):
             self.store.data["appearance"]["style"] = style
@@ -785,8 +786,17 @@ class WindowTests(unittest.TestCase):
         window = self.window
         window.resize(1280, 1100)
         window.set_panel(True)
-        window.apply_dev({"panel_center": True, "panel_drag": True})
+        window.apply_dev({})
         self.qt.processEvents()
+        for field in (window.users_title, window.playlist_title, window.chat_title):
+            self.assertEqual(field.cursor().shape(), Qt.CursorShape.ArrowCursor)
+        for field in (window.gear, window.panel_home, window.banner):
+            self.assertEqual(field.cursor().shape(), Qt.CursorShape.PointingHandCursor)
+        for point, cursor in ((QPoint(2, 80), Qt.CursorShape.SizeHorCursor),
+                (QPoint(window.panel.width() // 2, window.panel.height() - 2), Qt.CursorShape.SizeVerCursor),
+                (QPoint(window.panel.width() - 2, 10), Qt.CursorShape.ArrowCursor)):
+            QTest.mouseMove(window.panel, point)
+            self.assertEqual(window.panel.cursor().shape(), cursor)
         bounds = window._panel_rect()
         expected = QPoint(bounds.x(), bounds.y() + (bounds.height() - window.panel.height()) // 2)
         self.assertEqual(window.panel.pos(), expected)
@@ -809,7 +819,7 @@ class WindowTests(unittest.TestCase):
         self.qt.processEvents()
         window.panel_home.click()
         self.assertEqual(window.panel.pos(), expected)
-        self.assertTrue(window._dev["panel_drag"])
+        self.assertTrue(window.panel_home.isVisible())
         QTest.mouseClick(window.banner, Qt.MouseButton.LeftButton)
         window._open_settings.assert_called_once_with(0)
         self.drag(window.banner, window.banner.rect().center(), QPoint(-100, -30))
@@ -827,47 +837,49 @@ class WindowTests(unittest.TestCase):
         self.assertIsNone(window._grip)
         QTest.mouseRelease(window.panel, Qt.MouseButton.LeftButton)
         window._open_settings.assert_not_called()
-        window.apply_dev({"panel_center": True})
+        window.apply_dev({"panel_drag": False})
         self.assertEqual(window.panel.pos(), expected)
         self.assertIsNone(window._panel_pos)
         self.assertTrue(window.panel_home.isHidden())
-        window.apply_dev({})
+        window.apply_dev({"panel_center": False})
         self.assertEqual(window.panel.y(), bounds.y())
 
     def test_panel_options_and_minimum_bar_width_preview_save_and_reset(self):
         dialog = self.dialog()
         self.assertEqual(dialog._chat_max.value(), 340)
-        self.assertFalse(dialog._panel_flags["panel_center"].isChecked())
-        self.assertFalse(dialog._panel_flags["panel_drag"].isChecked())
+        self.assertTrue(dialog._panel_flags["panel_center"].isChecked())
+        self.assertTrue(dialog._panel_flags["panel_drag"].isChecked())
         self.assertEqual(dialog._bar_min.value(), 0)
-        dialog._panel_flags["panel_center"].setChecked(True)
-        dialog._panel_flags["panel_drag"].setChecked(True)
+        dialog._panel_flags["panel_center"].setChecked(False)
+        dialog._panel_flags["panel_drag"].setChecked(False)
         dialog._bar_min.setValue(1000)
         self.assertEqual(self.window._bar_rect().width(), 1000)
         dialog._accept()
         self.app.on_command({"c": "appearance", **dialog.appearance})
         self.app.store = ConfigStore()
         restarted = self.make_window()
-        self.assertTrue(restarted._dev["panel_center"])
-        self.assertTrue(restarted._dev["panel_drag"])
+        self.assertFalse(restarted._dev["panel_center"])
+        self.assertFalse(restarted._dev["panel_drag"])
         self.assertFalse(restarted.panel_home.isVisible())
         restarted.set_panel(True)
-        self.assertTrue(restarted.panel_home.isVisible())
+        self.assertTrue(restarted.panel_home.isHidden())
         self.assertEqual(restarted._bar_rect().width(), 1000)
         restarted.resize(900, 600)
         self.qt.processEvents()
         self.assertEqual(restarted._bar_rect().width(), restarted.stage.width())
         self.app.store = self.store
         dialog = self.dialog()
-        dialog._panel_flags["panel_drag"].setChecked(False)
+        dialog._panel_flags["panel_drag"].setChecked(True)
         dialog._bar_min.setValue(300)
         dialog.reject()
-        self.assertTrue(self.window._dev["panel_drag"])
+        self.assertFalse(self.window._dev["panel_drag"])
         self.assertEqual(self.window._dev["bar_min"], 1000)
         dialog = self.dialog()
         dialog._reset_dev()
         self.assertEqual(self.window._dev, {})
-        self.assertTrue(self.window.panel_home.isHidden())
+        self.assertFalse(self.window.panel_home.isHidden())
+        self.assertTrue(dialog._panel_flags["panel_center"].isChecked())
+        self.assertTrue(dialog._panel_flags["panel_drag"].isChecked())
         self.assertEqual(ConfigStore().data["appearance"]["dev"], {})
         dialog.reject()
 

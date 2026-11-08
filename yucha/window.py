@@ -139,8 +139,8 @@ def _dev_values(appearance, overrides=None):
         "titles": {"size": 11, "bold": True, "family": family, "dark": dark, "light": light},
         "gamma": 10,
         "chat_max": 340,
-        "panel_center": False,
-        "panel_drag": False,
+        "panel_center": True,
+        "panel_drag": True,
         "bar_min": 0,
         "face": face,
         "panel": PANEL_WIDTH,
@@ -4163,13 +4163,12 @@ class MainWindow(QMainWindow):
         if state == getattr(self, "_theme_state", None):
             return
         self._theme_state = state
-        self.panel_home.setVisible(bool(self._dev.get("panel_drag")))
-        if not self._dev.get("panel_drag"):
+        self.panel_home.setVisible(bool(self._dev.get("panel_drag", True)))
+        if not self._dev.get("panel_drag", True):
             self._panel_pos = None
         for widget in (self.banner, self.users_title, self.playlist_title, self.chat_title):
             widget.setMouseTracking(True)
-            widget.setCursor(Qt.CursorShape.OpenHandCursor if self._dev.get("panel_drag") else
-                             Qt.CursorShape.PointingHandCursor if widget is self.banner else Qt.CursorShape.ArrowCursor)
+            widget.setCursor(Qt.CursorShape.PointingHandCursor if widget is self.banner else Qt.CursorShape.ArrowCursor)
         accent = appearance.get("accentColor")
         self.setStyleSheet(_stylesheet(theme, accent, self._face_paint(theme)) + self._chrome_css(theme))
         dev = _dev_values(appearance, self._dev)
@@ -4488,7 +4487,7 @@ class MainWindow(QMainWindow):
             self._grip = ("height", origin, self.chat.height())
         elif watched is self.panel and 0 <= local.x() <= GRIP_PX:
             self._grip = ("width", origin, self._panel_width)
-        elif self._dev.get("panel_drag") and watched in (self.panel, self.banner, self.users_title, self.playlist_title, self.chat_title):
+        elif self._dev.get("panel_drag", True) and watched in (self.panel, self.banner, self.users_title, self.playlist_title, self.chat_title):
             self._grip = ("move", origin, self.panel.pos(), watched)
         else:
             return False
@@ -4512,7 +4511,7 @@ class MainWindow(QMainWindow):
                 self._dev["chat_max"] = cap
         else:
             self._panel_pos = initial + delta
-            self.panel.setCursor(Qt.CursorShape.ClosedHandCursor)
+            self.panel.setCursor(Qt.CursorShape.ArrowCursor)
         self._place_overlays()
 
     def _release_grip(self, click_banner=True):
@@ -4537,9 +4536,9 @@ class MainWindow(QMainWindow):
         bounds = self._panel_rect()
         x = bounds.x()
         y = bounds.y()
-        if self._dev.get("panel_center"):
+        if self._dev.get("panel_center", True):
             y += max(0, (bounds.height() - self.panel.height()) // 2)
-        if self._dev.get("panel_drag") and self._panel_pos is not None:
+        if self._dev.get("panel_drag", True) and self._panel_pos is not None:
             x, y = self._panel_pos.x(), self._panel_pos.y()
         gap = FLOAT_GAP if self._is_modern() else 0
         x = max(gap, min(x, self.stage.width() - self.panel.width() - gap))
@@ -4558,8 +4557,6 @@ class MainWindow(QMainWindow):
             self.panel.setCursor(Qt.CursorShape.SizeVerCursor)
         elif 0 <= local.x() <= GRIP_PX:
             self.panel.setCursor(Qt.CursorShape.SizeHorCursor)
-        elif self._dev.get("panel_drag"):
-            self.panel.setCursor(Qt.CursorShape.OpenHandCursor)
         else:
             self.panel.unsetCursor()
 
