@@ -154,6 +154,76 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(self.window.ctl.calls.count(("cycle", "pause")), 1)
         self.window._toggle_ready.assert_not_called()
 
+    def test_mute_uses_the_physical_m_key_without_intercepting_text(self):
+        for platform in ("wayland", "xcb"):
+            with patch("yucha.window.QGuiApplication.platformName", return_value=platform):
+                for text in ("m", "ь", "μ"):
+                    with self.subTest(platform=platform, text=text):
+                        self.window._set_muted(False)
+                        event = QKeyEvent(QEvent.Type.KeyPress, ord(text.upper()), Qt.KeyboardModifier.NoModifier,
+                                          58, 0, 0, text)
+                        QApplication.sendEvent(self.window.video, event)
+                        self.assertTrue(self.window._muted)
+                        repeat = QKeyEvent(QEvent.Type.KeyPress, ord(text.upper()), Qt.KeyboardModifier.NoModifier,
+                                           58, 0, 0, text, True)
+                        QApplication.sendEvent(self.window.video, repeat)
+                        self.assertTrue(self.window._muted)
+                self.window._set_muted(False)
+                other_key = QKeyEvent(QEvent.Type.KeyPress, ord("Ь"), Qt.KeyboardModifier.NoModifier,
+                                      57, 0, 0, "ь")
+                QApplication.sendEvent(self.window.video, other_key)
+                self.assertFalse(self.window._muted)
+                self.window._open_chat_field()
+                self.qt.processEvents()
+                text_key = QKeyEvent(QEvent.Type.KeyPress, ord("Ь"), Qt.KeyboardModifier.NoModifier,
+                                     58, 0, 0, "ь")
+                QApplication.sendEvent(self.window.bar_message, text_key)
+                self.assertTrue(self.window.bar_message.text().endswith("ь"))
+                self.assertFalse(self.window._muted)
+                self.window._close_chat_field()
+        QTest.keyClick(self.window.video, Qt.Key.Key_M)
+        self.assertTrue(self.window._muted)
+
+    def test_sidebar_separators_keep_empty_rows_and_people_at_the_top(self):
+        self.window.set_panel(True)
+        for theme in ("dark", "light"):
+            self.store.data["appearance"]["theme"] = theme
+            self.window.apply_theme()
+            for count in (0, 1, 3):
+                with self.subTest(theme=theme, count=count):
+                    self.window._playlist = [{"path": f"/tmp/{index}.mkv", "name": f"{index}.mkv"}
+                                             for index in range(count)]
+                    self.window._users = [{"name": f"user{index}", "file": f"{index}.mkv",
+                                           "size": 10000000, "ready": True} for index in range(count)]
+                    self.window._refresh_files()
+                    self.window._paint_users()
+                    self.qt.processEvents()
+                    files = self.window.files
+                    self.assertEqual(files.count(), count)
+                    image = files.viewport().grab().toImage()
+                    for index in range(max(2, count) - 1):
+                        y = (files.visualItemRect(files.item(index)).bottom() if count
+                             else files.viewport().height() // 2 - 1)
+                        self.assertNotEqual(image.pixelColor(10, y), image.pixelColor(10, y - 1))
+                    users = self.window.room_users
+                    self.assertEqual(len(users._full_names), count)
+                    if count:
+                        for column in (users.names_col, users.files_col, users.sizes_col):
+                            self.assertEqual(column.itemAt(0).widget().y(), 0)
+                    lines = users._lines
+                    image = users.grab().toImage()
+                    for index in range(1, max(2, count)):
+                        y = lines.top + index * lines.row_h
+                        self.assertNotEqual(image.pixelColor(10, y), image.pixelColor(10, y + 2))
+                    for x in (lines.split_x, lines.split2_x):
+                        y = lines.top + 3
+                        line = image.pixelColor(x, y).lightness()
+                        background = image.pixelColor(x - 2, y).lightness()
+                        if theme == "dark":
+                            self.assertGreater(line, background)
+                        else:
+                            self.assertLess(line, background)
+
     def test_space_repeats_and_chat_do_not_toggle_playback(self):
         self.window.ready.setChecked(True)
         self.window.video.setFocus()
@@ -483,12 +553,28 @@ class WindowTests(unittest.TestCase):
                     self.assertEqual(dialog.reset_other.x(), form.contentsMargins().left())
                     self.assertEqual(dialog.reset_other.width(), dialog.reset_other.parentWidget().width()
                                      - form.contentsMargins().left() - form.contentsMargins().right())
+                    host = dialog.check_updates.parentWidget()
+                    reset_gap = dialog.reset_other.mapTo(dialog, QPoint()).y() - host.mapTo(dialog, QPoint(0, host.height())).y()
+                    dialog.tabs.setCurrentIndex(0)
+                    self.qt.processEvents()
+                    connect_gap = (dialog._connect.mapTo(dialog, QPoint()).y()
+                                   - dialog.room_name.mapTo(dialog, QPoint(0, dialog.room_name.height())).y())
+                    self.assertEqual(connect_gap, reset_gap)
                     gamma_form = dialog.gamma_size.parentWidget().layout()
                     self.assertEqual(gamma_form.labelForField(dialog.gamma_size).text(), gamma)
                     dialog.tabs.setCurrentWidget(dialog._dev_page)
                     self.qt.processEvents()
                     spin = dialog._dev_rows["ui"]["size"]
                     self.assertGreaterEqual(spin.height(), spin.minimumSizeHint().height())
+                    form = dialog.gamma_size.parentWidget().layout()
+                    actions = form.itemAt(0, QFormLayout.ItemRole.SpanningRole).widget()
+                    reset, export = (actions.layout().itemAt(index).widget() for index in (0, 1))
+                    self.assertEqual([reset.text(), export.text()], [i18n.tr(70), i18n.tr(69)])
+                    self.assertLessEqual(abs(reset.width() - export.width()), 1)
+                    self.assertEqual(reset.x(), 0)
+                    self.assertEqual(export.geometry().right(), actions.width() - 1)
+                    self.assertEqual(actions.width(), actions.parentWidget().width()
+                                     - form.contentsMargins().left() - form.contentsMargins().right())
                     dialog.tabs.setCurrentIndex(3)
                     self.qt.processEvents()
                     about = dialog._about_content

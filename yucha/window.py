@@ -12,7 +12,7 @@ import threading
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QBrush,
     QColor,
@@ -657,7 +657,8 @@ def _spans_html(spans, me, mine, other, bad="#E07474"):
             bits.append('<span style="color: {};">{}</span>'.format(bad, safe))
         elif span["k"] == "mark":
             glyph = html.escape(_MARK_GLYPH.get(span["v"], ""), quote=False)
-            bits.append('<span style="font-size: 0.5em; vertical-align: middle;">{}</span>'.format(glyph))
+            style = "font-size: 1em; font-weight: 700;" if span["v"] == "pause" else "font-size: 0.5em;"
+            bits.append('<span style="{} vertical-align: middle;">{}</span>'.format(style, glyph))
         else:
             bits.append(safe)
     return "".join(bits)
@@ -1011,6 +1012,20 @@ class FileList(QListWidget):
     def set_mark(self, color):
         self._line.setStyleSheet("background: {}; border: none;".format(color))
 
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        color = self.palette().color(QPalette.ColorRole.Text)
+        color.setAlpha(100)
+        painter = QPainter(self.viewport())
+        painter.setPen(QPen(color, 1))
+        for index in range(max(2, self.count()) - 1):
+            if self.count():
+                y = self.visualItemRect(self.item(index)).bottom()
+            else:
+                y = max(24, QFontMetrics(self.font()).height() + 12) - 1
+            painter.drawLine(6, y, self.viewport().width() - 6, y)
+        painter.end()
+
     def mousePressEvent(self, event):
         item = self.itemAt(event.position().toPoint())
         path = item.data(Qt.ItemDataRole.UserRole) if item is not None else ""
@@ -1189,6 +1204,7 @@ class UserTable(QWidget):
         self.names_col = QVBoxLayout(self.names)
         self.names_col.setContentsMargins(0, 0, 0, 0)
         self.names_col.setSpacing(0)
+        self.names_col.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.files_scroll = QScrollArea()
         self.files_scroll.setObjectName("userfiles")
         self.files_scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -1199,6 +1215,7 @@ class UserTable(QWidget):
         self.files_col = QVBoxLayout(self.files_host)
         self.files_col.setContentsMargins(0, 0, 0, 0)
         self.files_col.setSpacing(0)
+        self.files_col.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.files_scroll.viewport().setAutoFillBackground(False)
         self.files_scroll.setWidget(self.files_host)
         self.files_scroll.viewport().installEventFilter(self)
@@ -1208,6 +1225,7 @@ class UserTable(QWidget):
         self.sizes_col = QVBoxLayout(self.sizes)
         self.sizes_col.setContentsMargins(0, 0, 0, 0)
         self.sizes_col.setSpacing(0)
+        self.sizes_col.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.sizes.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         row.addWidget(self.names, 4)
         row.addWidget(self.files_scroll, 11)
@@ -1226,7 +1244,7 @@ class UserTable(QWidget):
         row_h = metrics.height() + 8
         self._row_h = row_h
         faded = QColor(line)
-        faded.setAlpha(56)
+        faded.setAlpha(100)
         self._line = faded
         margins = self.layout().contentsMargins()
         self.names.show()
@@ -1312,7 +1330,7 @@ class UserTable(QWidget):
         right = self.files_scroll.geometry().left()
         file_right = self.files_scroll.geometry().right()
         size_left = self.sizes.geometry().left()
-        self._lines.rows = len(self._full_names)
+        self._lines.rows = max(2, len(self._full_names))
         self._lines.row_h = self._row_h
         self._lines.top = self.layout().contentsMargins().top()
         self._lines.split_x = int((left + right) / 2) if right > left else left
@@ -1724,7 +1742,7 @@ class IconButton(QPushButton):
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawArc(int(cx + 2), int(cy - 4), 6, 8, -50 * 16, 100 * 16)
             if self._silent:
-                painter.setPen(QPen(color, 1.6))
+                painter.setPen(QPen(QColor("#C4453C"), 1.6))
                 painter.drawLine(QPointF(cx - 6, cy - 6), QPointF(cx + 7, cy + 5))
         elif kind == "tracks":
             painter.drawLine(QPointF(cx - 6, cy - 5), QPointF(cx + 6, cy - 5))
@@ -2179,6 +2197,7 @@ class SettingsDialog(QDialog):
         other_form = QFormLayout(other)
         other_form.setContentsMargins(23, 23, 23, 12)
         other_form.setVerticalSpacing(7)
+        room_box.setSpacing(other_form.verticalSpacing())
         self._keep_side(other_form)
         self._name_forms.append(other_form)
         self.language = QComboBox()
@@ -2529,6 +2548,16 @@ class SettingsDialog(QDialog):
         form.setVerticalSpacing(12)
         self._keep_side(form)
         self._name_forms.append(form)
+        reset = QPushButton(tr(70))
+        export = QPushButton(tr(69))
+        reset.clicked.connect(self._reset_dev)
+        export.clicked.connect(self._export_dev)
+        actions = QWidget()
+        action_row = QHBoxLayout(actions)
+        action_row.setContentsMargins(0, 0, 0, 0)
+        action_row.addWidget(reset, 1)
+        action_row.addWidget(export, 1)
+        form.addRow(actions)
         self._dev_rows = {}
         for key, title in (
             ("ui", tr(78)),
@@ -2641,17 +2670,6 @@ class SettingsDialog(QDialog):
             button_row.addWidget(QLabel(title))
         button_row.addStretch(1)
         form.addRow(tr(104), buttons)
-        reset = QPushButton(tr(70))
-        export = QPushButton(tr(69))
-        reset.clicked.connect(self._reset_dev)
-        export.clicked.connect(self._export_dev)
-        actions = QWidget()
-        action_row = QHBoxLayout(actions)
-        action_row.setContentsMargins(0, 0, 0, 0)
-        action_row.addWidget(reset)
-        action_row.addWidget(export)
-        action_row.addStretch(1)
-        form.addRow("", actions)
         if getattr(self, "_scrolls", None):
             self._set_settings_pad(self._settings_pad.value())
         return page
@@ -4469,7 +4487,9 @@ class MainWindow(QMainWindow):
             if not event.isAutoRepeat():
                 self._toggle_pause()
             return True
-        if key == int(Qt.Key.Key_M):
+        # XKB uses Linux KEY_M (50) plus its eight-key offset.
+        physical_m = event.nativeScanCode() == 58 and QGuiApplication.platformName() in ("xcb", "wayland", "wayland-egl")
+        if key == int(Qt.Key.Key_M) or physical_m:
             if not event.isAutoRepeat():
                 self._toggle_mute()
             return True
@@ -4642,16 +4662,17 @@ class MainWindow(QMainWindow):
             return
         appearance = self.app.store.data["appearance"]
         pal = _palette(_shown_theme(appearance.get("theme")), appearance.get("accentColor"))
+        row_h = max(24, QFontMetrics(self.files.font()).height() + 12)
         self.files.clear()
         for index, item in enumerate(self._playlist, start=1):
             row = QListWidgetItem("{}. {}".format(index, item["name"]))
+            row.setSizeHint(QSize(0, row_h))
             row.setData(Qt.ItemDataRole.UserRole, item["path"])
             if item["path"] == self._current_path:
                 row.setBackground(QColor(pal["accent"]))
                 row.setForeground(QColor(pal["on_fg"]))
             self.files.addItem(row)
         self.files.set_mark(pal["accent"])
-        row_h = max(24, QFontMetrics(self.files.font()).height() + 12)
         rows = max(2, self.files.count())
         self.files.setFixedHeight(rows * row_h + 2 * self.files.frameWidth())
         has_files = bool(self._playlist)
@@ -4957,8 +4978,8 @@ class MainWindow(QMainWindow):
             return
         me, mine, other = self._nick_colors()
         appearance = self.app.store.data["appearance"]
-        border = _palette(_shown_theme(appearance.get("theme")), appearance.get("accentColor"))["border"]
-        self.room_users.set_people(self._users, me, mine, other, border)
+        line = _palette(_shown_theme(appearance.get("theme")), appearance.get("accentColor"))["fg"]
+        self.room_users.set_people(self._users, me, mine, other, line)
         me = str(self.app.store.data["connection"].get("name") or "")
         mine = next((person for person in self._users if person["name"] == me), None)
         if mine is not None and hasattr(self, "ready"):
