@@ -5,6 +5,8 @@ import os
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import Mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,6 +14,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "third_party" / "syncplay"))
 
 from yucha import i18n
+from yucha.app import App
 from yucha.bridge import Bridge
 from yucha.configstore import ConfigStore, dev_settings, port_number
 from yucha.session import load_client_tls
@@ -104,6 +107,18 @@ class Guards(unittest.TestCase):
         finally:
             i18n.FOLDER = previous
             i18n.use("English")
+
+    def test_room_only_change_does_not_report_a_network_reconnection(self):
+        client = Mock()
+        client._running = True
+        client._config = {"host": "example.test", "port": 8999}
+        client.getUsername.return_value = "me"
+        client._serverPassword = None
+        app = SimpleNamespace(client=client, bridge=Mock())
+        App._connect(app, "example.test", 8999, "me", "new-room", "")
+        app.bridge.emit.assert_not_called()
+        client.sendRoom.assert_called_once()
+        client.stop.assert_not_called()
 
     def test_port(self):
         self.assertIsNone(port_number("abc"))

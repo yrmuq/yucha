@@ -3488,6 +3488,7 @@ class MainWindow(QMainWindow):
         self._bridge_pos = 0
         self._osd = []
         self._connected = False
+        self._connecting = False
         self._failed = False
         self._chat_open = False
         self._duration = 0
@@ -5167,6 +5168,7 @@ class MainWindow(QMainWindow):
         state = event.get("state") or ""
         was = self._connected
         self._connected = state == "connected"
+        self._connecting = state == "connecting"
         if not self._connected:
             self._alone_pending = False
             self._alone_until = 0.0
@@ -5179,7 +5181,7 @@ class MainWindow(QMainWindow):
         self._failed = state == "failed"
         if state == "failed":
             self._set_status(event.get("text") or "")
-        if state == "connected":
+        elif state in ("connected", "connecting", "disconnected"):
             self._set_status("")
         if self._connected and not was:
             self._notify_background("yucha", tr(6))
@@ -5203,25 +5205,20 @@ class MainWindow(QMainWindow):
     def _refresh_banner(self):
         if not hasattr(self, "banner_text"):
             return
-        pal = _palette(_shown_theme(self.app.store.data["appearance"].get("theme")))
         if not self._configured():
             text, color = tr(5), "#D6B23A"
         elif self._connected:
             self._chat_held = False
             text, color = tr(6), "#3EAD62"
-        elif self._chat_held:
-            text, color = tr(7), "#D6B23A"
-        elif self._failed:
-            text, color = tr(8), pal["bad"]
-        else:
+        elif self._connecting:
             text, color = tr(9), "#D6B23A"
-        self.banner_text.setText(text)
-        if self._connected and self._configured():
-            self.banner_text.setStyleSheet("color: {}; font-size: {}pt; background: transparent;".format(
-                color, max(1, self.font().pointSize() - 1)
-            ))
         else:
-            self.banner_text.setStyleSheet("")
+            text, color = tr(7), "#C4453C"
+        self.banner_text.setText(text)
+        size = self.font().pointSize() - (1 if self._connected and self._configured() else 0)
+        self.banner_text.setStyleSheet("color: {}; font-size: {}pt; background: transparent;".format(
+            color, max(1, size)
+        ))
         self.banner_dot.setStyleSheet("color: {}; background: transparent;".format(color))
         self.reconnect.setVisible(bool(self._failed and self._configured()))
         self._fit_playlist()

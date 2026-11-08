@@ -10,7 +10,7 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,7 +22,10 @@ from PySide6.QtGui import QColor, QFontMetrics, QImage, QKeyEvent, QMouseEvent, 
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QFormLayout, QLabel, QWidget
 
+from syncplay.messages import getMessage
 from yucha.app import App
+from yucha.bridge import Bridge
+from yucha.player_ui import PlayerUI
 from yucha.configstore import DEFAULTS, ConfigStore
 from yucha import __version__, i18n
 from yucha.i18n import system_language
@@ -591,7 +594,7 @@ class WindowTests(unittest.TestCase):
                 self.qt.processEvents()
                 self.assertEqual((users.names.width(), users.files_scroll.width(), users.sizes.width()), changed)
 
-    def test_connected_banner_is_smaller_and_green_only_when_connected(self):
+    def test_connection_banner_uses_matching_text_and_dot_colors(self):
         try:
             for language in ("English", "Russian"):
                 i18n.use(language)
@@ -599,22 +602,58 @@ class WindowTests(unittest.TestCase):
                     with self.subTest(language=language, theme=theme):
                         self.store.data["appearance"]["theme"] = theme
                         self.window.apply_theme()
-                        self.window._connected = True
-                        self.window._refresh_banner()
-                        label = self.window.banner_text
-                        self.assertEqual(label.text(), i18n.tr(6))
-                        self.assertEqual(label.font().pointSize(), self.window.font().pointSize() - 1)
-                        self.assertEqual(label.palette().color(QPalette.ColorRole.WindowText), QColor("#3EAD62"))
-                        self.window._connected = False
-                        for failed, held, message in ((False, False, 9), (True, False, 8), (False, True, 7)):
-                            self.window._failed = failed
-                            self.window._chat_held = held
-                            self.window._refresh_banner()
+                        for state, message, color in (("connected", 6, "#3EAD62"),
+                                ("disconnected", 7, "#C4453C"), ("connecting", 9, "#D6B23A"),
+                                ("failed", 7, "#C4453C")):
+                            self.window._on_conn({"state": state})
+                            label = self.window.banner_text
                             self.assertEqual(label.text(), i18n.tr(message))
-                            self.assertEqual(label.font().pointSize(), self.window.font().pointSize())
-                            self.assertEqual(label.palette().color(QPalette.ColorRole.WindowText), QColor(_palette(theme)["fg"]))
+                            size = self.window.font().pointSize() - (1 if state == "connected" else 0)
+                            self.assertEqual(label.font().pointSize(), size)
+                            for field in (label, self.window.banner_dot):
+                                self.assertEqual(field.palette().color(QPalette.ColorRole.WindowText), QColor(color))
+                        self.window._chat_held = True
+                        self.window._on_conn({"state": "connecting"})
+                        self.assertEqual(label.text(), i18n.tr(9))
         finally:
             i18n.use("English")
+
+    def test_reconnect_notifications_update_the_banner_until_the_room_is_joined(self):
+        self.app.bridge = Bridge(Path(self.temp.name))
+        ui = PlayerUI(self.app.bridge)
+        def message(key, *args, state):
+            ui.showMessage(getMessage(key).format(*args))
+            self.window._read_events()
+            self.assertEqual(self.window._connected, state == "connected")
+            self.assertEqual(ui._connected, state == "connected")
+            self.assertEqual(self.window._connecting, state == "connecting")
+        message("connection-attempt-notification", "example.test", 8999, state="connecting")
+        message("reachout-successful-notification", "example.test", "127.0.0.1", state="connecting")
+        message("connected-successful-notification", state="connected")
+        from syncplay.client import SyncplayClient
+        client = MagicMock(ui=ui)
+        for _ in range(2):
+            SyncplayClient._performRetryStateReset(client)
+            self.window._read_events()
+            self.assertFalse(ui._connected)
+            self.assertFalse(self.window._connected)
+            self.assertTrue(self.window._connecting)
+            self.assertEqual(self.window.banner_text.text(), i18n.tr(9))
+        message("connected-successful-notification", state="connected")
+        message("disconnection-notification", state="failed")
+        self.assertEqual(self.window.banner_text.text(), i18n.tr(7))
+        ui.showErrorMessage(getMessage("wrong-password-server-error"))
+        self.window._read_events()
+        specific = self.window.status.text()
+        message("disconnection-notification", state="failed")
+        self.assertEqual(self.window.status.text(), specific)
+        message("connection-attempt-notification", "example.test", 8999, state="connecting")
+        self.assertFalse(self.window.status.text())
+        self.assertIsNone(ui._fail_text)
+        message("connected-successful-notification", state="connected")
+        ui.showMessage("<friend> " + getMessage("reconnection-attempt-notification"))
+        self.window._read_events()
+        self.assertTrue(self.window._connected)
 
     def test_space_repeats_and_chat_do_not_toggle_playback(self):
         self.window.ready.setChecked(True)

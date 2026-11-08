@@ -58,7 +58,6 @@ class App(object):
                 "openPanel": True,
             })
             return
-        self.bridge.emit({"e": "conn", "state": "connecting", "text": tr(9)})
         submit_login(self.client, host, port, name, room, password)
 
     def on_command(self, command):
