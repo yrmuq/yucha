@@ -16,7 +16,11 @@
 > [!NOTE]
 > **Active Beta Development:** `yucha` is currently in active beta development. Pre-release `x86_64` `AppImage` builds are available on the [Releases](https://github.com/yrmuq/yucha/releases) page.
 >
-> **After Updates:** `yucha` changes frequently, and saved settings may become outdated. If you experience problems after an update, try `Settings` → `Other` → `Reset`, then click `OK` to save the reset. Your `Room` connection and `Dev` settings are kept.
+> **After Updates:** `yucha` changes frequently, and saved settings may become outdated. If you experience problems after an update, try `Settings` → `Other` → `Reset`. This restores `Theme` and `Other` defaults, clears `Dev` overrides, and hides the `Dev` tab. Your `Room` connection is kept.
+>
+> **Reset Behavior:** Both `Reset` buttons apply and save immediately. You do not need to click `OK`, and `Cancel` does not undo a reset. `Dev` → `Reset` clears only `Dev` overrides, preserving ordinary settings.
+>
+> **Dev Settings:** Opening or enabling `Dev` does not save its default values. Only changed values are saved as overrides; returning a value to its default removes that override.
 >
 > **Independent Project:** `yucha` is an independent project and is not affiliated with or endorsed by `mpv` or `Syncplay`.
 
