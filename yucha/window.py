@@ -32,6 +32,7 @@ from PySide6.QtGui import (
     QShortcut,
 )
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -804,6 +805,7 @@ class NoticeBoard(QWidget):
         self.repaint_frame = None
         self.bar_h = BAR_HEIGHT
         self.force = None
+        self.repeat = 0
         self._timer = QTimer(self)
         self._timer.setInterval(16)
         self._timer.timeout.connect(self._tick)
@@ -854,6 +856,10 @@ class NoticeBoard(QWidget):
         now = time.monotonic()
         y = 16
         left_w = 0
+        if self.repeat:
+            self._paint_repeat(painter, 16, y)
+            y += 56
+            left_w = 64
         if self.notices:
             text_w = max(metrics.horizontalAdvance(line) for line in self.notices)
             box_w = text_w + pad * 2
@@ -917,6 +923,35 @@ class NoticeBoard(QWidget):
                     cursor += metrics.horizontalAdvance(piece["v"])
                 text_y += row_h
             y += box_h + 6
+
+    def _paint_repeat(self, painter, x, y):
+        painter.save()
+        painter.translate(x + 24, y + 24)
+        painter.setPen(QPen(QColor(self.page["border"]), 1, Qt.PenStyle.SolidLine,
+                            Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        painter.setBrush(QColor(self.page["accent"]))
+        arrow = QPainterPath()
+        arrow.arcMoveTo(QRectF(-18, -18, 36, 36), 155)
+        arrow.arcTo(QRectF(-18, -18, 36, 36), 155, -130)
+        for radius, angle in ((23, 25), (15.5, -10), (8, 25), (13, 25)):
+            radians = math.radians(angle)
+            arrow.lineTo(radius * math.cos(radians), -radius * math.sin(radians))
+        arrow.arcTo(QRectF(-13, -13, 26, 26), 25, 130)
+        arrow.closeSubpath()
+        painter.drawPath(arrow)
+        painter.rotate(180)
+        painter.drawPath(arrow)
+        painter.rotate(180)
+        if self.repeat == 1:
+            font = QFont(self.font())
+            font.setPixelSize(18)
+            font.setBold(True)
+            digit = QPainterPath()
+            digit.addText(0, 0, font, "1")
+            center = digit.boundingRect().center()
+            digit.translate(-center.x(), -center.y())
+            painter.drawPath(digit)
+        painter.restore()
 
     def _box(self, painter, x, y, w, h):
         painter.setPen(Qt.PenStyle.NoPen)
@@ -998,6 +1033,7 @@ class FileList(QListWidget):
     def __init__(self):
         super().__init__()
         self.setSelectionMode(QListWidget.SelectionMode.NoSelection)
+        self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerItem)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setItemDelegate(FileDelegate(self))
         self._press_item = None
@@ -1018,11 +1054,11 @@ class FileList(QListWidget):
         super().paintEvent(event)
         painter = QPainter(self.viewport())
         painter.setPen(QPen(self._border, 1))
-        for index in range(max(2, self.count()) - 1):
-            if self.count():
+        for index in range(max(3, self.count()) - 1):
+            if index < self.count():
                 y = self.visualItemRect(self.item(index)).bottom()
             else:
-                y = max(24, QFontMetrics(self.font()).height() + 12) - 1
+                y = (index + 1) * max(24, QFontMetrics(self.font()).height() + 12) - 1
             painter.drawLine(6, y, self.viewport().width() - 6, y)
         painter.end()
 
@@ -3346,6 +3382,8 @@ class MainWindow(QMainWindow):
         self._paused = True
         self._playlist = []
         self._current_path = ""
+        self._listed_path = ""
+        self._repeat = 0
         self._eof_seen = False
         self._volume_until = 0
         self._hold_pause = None
@@ -3548,6 +3586,7 @@ class MainWindow(QMainWindow):
         self.panel.setObjectName("panel")
         self._overlay(self.panel)
         side = QVBoxLayout(self.panel)
+        side.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
         side.setContentsMargins(16, 16, 16, 16)
         side.setSpacing(8)
 
@@ -3707,6 +3746,7 @@ class MainWindow(QMainWindow):
             self.panel.show()
         else:
             self.panel.hide()
+        self._fit_playlist()
         box_w = max(1, int(round(width * 0.2)))
         box_h = 44
         if self._chat_open:
@@ -4491,11 +4531,16 @@ class MainWindow(QMainWindow):
             if not event.isAutoRepeat():
                 self._toggle_pause()
             return True
-        # XKB uses Linux KEY_M (50) plus its eight-key offset.
-        physical_m = event.nativeScanCode() == 58 and QGuiApplication.platformName() in ("xcb", "wayland", "wayland-egl")
-        if key == int(Qt.Key.Key_M) or physical_m:
+        # XKB adds eight to Linux key codes, independently of the layout.
+        physical = event.nativeScanCode() if QGuiApplication.platformName() in ("xcb", "wayland", "wayland-egl") else 0
+        if key == int(Qt.Key.Key_M) or physical == 58:
             if not event.isAutoRepeat():
                 self._toggle_mute()
+            return True
+        if key == int(Qt.Key.Key_R) or physical == 27:
+            if not event.isAutoRepeat():
+                self._repeat = (self._repeat + 1) % 3
+                self._refresh_osd()
             return True
         if key in (int(Qt.Key.Key_Return), int(Qt.Key.Key_Enter)):
             if not event.isAutoRepeat():
@@ -4591,7 +4636,6 @@ class MainWindow(QMainWindow):
             known.add(path)
         batch.sort(key=lambda item: _natural(item["name"]))
         fresh = not self._playlist
-        staying = bool(self._playlist) and self._current_path == self._playlist[0]["path"]
         self._playlist.extend(batch)
         if not batch:
             self._refresh_files()
@@ -4600,10 +4644,7 @@ class MainWindow(QMainWindow):
             # Open paused so the room sees the file. Do not start playback.
             self._play_path(batch[0]["path"], start=False)
             return
-        if staying:
-            self._refresh_files()
-            return
-        self._play_path(batch[0]["path"], start=True)
+        self._refresh_files()
 
     def _play_path(self, path, start=False):
         self._current_path = path
@@ -4653,13 +4694,16 @@ class MainWindow(QMainWindow):
         self._refresh_files()
 
     def _advance(self):
-        if len(self._playlist) <= 1:
-            return
         index = next((i for i, item in enumerate(self._playlist) if item["path"] == self._current_path), -1)
-        if index < 0 or index + 1 >= len(self._playlist):
+        if index < 0:
             return
-        auto = bool(self.app.store.data["appearance"].get("autoplayNext"))
-        self._play_path(self._playlist[index + 1]["path"], start=auto)
+        next_index = index if self._repeat == 1 else index + 1
+        if next_index >= len(self._playlist):
+            if self._repeat != 2:
+                return
+            next_index = 0
+        auto = bool(self._repeat or self.app.store.data["appearance"].get("autoplayNext"))
+        self._play_path(self._playlist[next_index]["path"], start=auto)
 
     def _refresh_files(self):
         if not hasattr(self, "files"):
@@ -4669,6 +4713,7 @@ class MainWindow(QMainWindow):
         pal = _palette(theme, appearance.get("accentColor"))
         pal.update(self._face_paint(theme))
         row_h = max(24, QFontMetrics(self.files.font()).height() + 12)
+        scroll = self.files.verticalScrollBar().value()
         self.files.clear()
         for index, item in enumerate(self._playlist, start=1):
             row = QListWidgetItem("{}. {}".format(index, item["name"]))
@@ -4679,8 +4724,12 @@ class MainWindow(QMainWindow):
                 row.setForeground(QColor(pal["on_fg"]))
             self.files.addItem(row)
         self.files.set_mark(pal["accent"], pal["border"])
-        rows = max(2, self.files.count())
-        self.files.setFixedHeight(rows * row_h + 2 * self.files.frameWidth())
+        resized = self._fit_playlist()
+        if self._listed_path != self._current_path:
+            self._center_current_file()
+        elif not resized:
+            self.files.verticalScrollBar().setValue(scroll)
+        self._listed_path = self._current_path
         has_files = bool(self._playlist)
         self.tracks_btn.setEnabled(has_files)
         if not has_files and self._tracks_open:
@@ -4688,6 +4737,42 @@ class MainWindow(QMainWindow):
             self.tracks_btn.setChecked(False)
             self.tracks_pop.hide()
         self._place_edge_scrolls()
+
+    def _fit_playlist(self):
+        if not hasattr(self, "chat"):
+            return False
+        layout = self.panel.layout()
+        margins = layout.contentsMargins()
+        visible = [layout.itemAt(index) for index in range(layout.count()) if not layout.itemAt(index).isEmpty()]
+        fixed = 0
+        width = max(1, self.panel.width() - margins.left() - margins.right())
+        for item in visible:
+            if item.widget() in (self.files, self.chat):
+                continue
+            fixed += max(item.minimumSize().height(), item.heightForWidth(width) if item.hasHeightForWidth() else 0)
+        available = self.panel.height() - margins.top() - margins.bottom() - fixed - layout.spacing() * max(0, len(visible) - 1)
+        chat_min = max(self.chat.minimumSizeHint().height(), QFontMetrics(self.chat.font()).lineSpacing() * 3 + 12)
+        row_h = max(24, QFontMetrics(self.files.font()).height() + 12)
+        frame = self.files.frameWidth() * 2
+        rows = min(12, max(3, self.files.count()), max(0, (available - chat_min - frame) // row_h))
+        height = rows * row_h + frame
+        changed = self.files.height() != height
+        self.files.setFixedHeight(height)
+        layout.activate()
+        if changed:
+            self._center_current_file()
+        return changed
+
+    def _center_current_file(self):
+        self.files.doItemsLayout()
+        if self.files.verticalScrollBar().maximum() <= 0:
+            return
+        for index in range(self.files.count()):
+            item = self.files.item(index)
+            if item.data(Qt.ItemDataRole.UserRole) == self._current_path:
+                rows = max(1, self.files.viewport().height() // max(1, item.sizeHint().height()))
+                self.files.verticalScrollBar().setValue(index - (rows - 1) // 2)
+                break
 
     def _toggle_ready(self):
         client = getattr(self.app, "client", None)
@@ -4883,6 +4968,7 @@ class MainWindow(QMainWindow):
     def _set_status(self, text):
         self.status.setText(text or "")
         self.status.setVisible(bool(text))
+        self._fit_playlist()
 
     def _configured(self):
         conn = self.app.store.data["connection"]
@@ -4916,6 +5002,7 @@ class MainWindow(QMainWindow):
             self.banner_text.setStyleSheet("")
         self.banner_dot.setStyleSheet("color: {}; background: transparent;".format(color))
         self.reconnect.setVisible(bool(self._failed and self._configured()))
+        self._fit_playlist()
 
     def _on_users(self, event):
         now = time.monotonic()
@@ -4994,6 +5081,7 @@ class MainWindow(QMainWindow):
         pal = _palette(theme, appearance.get("accentColor"))
         pal.update(self._face_paint(theme))
         self.room_users.set_people(self._users, me, mine, other, pal["border"])
+        self._fit_playlist()
         me = str(self.app.store.data["connection"].get("name") or "")
         mine = next((person for person in self._users if person["name"] == me), None)
         if mine is not None and hasattr(self, "ready"):
@@ -5164,6 +5252,8 @@ class MainWindow(QMainWindow):
         point = max(1, min(96, point))
         self.board.bar_h = self._bar_height() + (FLOAT_GAP if self._is_modern() else 0)
         page = _palette(theme, appearance.get("accentColor"))
+        page["border"] = self._face_paint(theme).get("border", page["border"])
+        self.board.repeat = self._repeat
         ink = _dev_ink(osd, theme) if osd else ""
         if ink:
             page = dict(page)

@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "third_party" / "syncplay"))
 
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, Signal
-from PySide6.QtGui import QColor, QKeyEvent, QPalette
+from PySide6.QtGui import QColor, QFontMetrics, QImage, QKeyEvent, QPainter, QPalette
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QFormLayout, QLabel, QWidget
 
@@ -38,6 +38,7 @@ class PictureStub(QWidget):
     def __init__(self, runtime):
         super().__init__()
         self.error = None
+        self.mpv = None
         self.redraw = Mock()
         self.shutdown = Mock()
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -154,6 +155,165 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(self.window.ctl.calls.count(("cycle", "pause")), 1)
         self.window._toggle_ready.assert_not_called()
 
+    def test_playlist_height_adapts_without_covering_chat(self):
+        window = self.window
+        window.set_panel(True)
+        for count in (0, 1, 30):
+            window._playlist = [{"path": f"/tmp/{i}.mkv", "name": f"Episode {i + 1}.mkv"} for i in range(count)]
+            window._refresh_files()
+            for height in (520, 720, 1080):
+                with self.subTest(count=count, height=height):
+                    window.resize(1280, height)
+                    self.qt.processEvents()
+                    window._place_overlays()
+                    row_h = max(24, QFontMetrics(window.files.font()).height() + 12)
+                    rows = window.files.viewport().height() // row_h
+                    self.assertEqual(window.files.count(), count)
+                    self.assertGreaterEqual(rows, 1)
+                    self.assertLessEqual(rows, 12)
+                    if count < 3 and height >= 720:
+                        self.assertEqual(rows, 3)
+                    if count == 30 and height == 1080:
+                        self.assertEqual(rows, 12)
+                        self.assertGreater(window.files.verticalScrollBar().maximum(), 0)
+                    self.assertLess(window.files.geometry().bottom(), window.chat.y())
+                    self.assertGreaterEqual(window.chat.height(), window.chat.minimumSizeHint().height())
+                    self.assertLess(window.chat.geometry().bottom(), window.panel.height())
+        window._users = [{"name": str(i), "file": "Episode.mkv", "size": 10000000, "ready": True} for i in range(4)]
+        window.resize(1280, 520)
+        window._paint_users()
+        self.qt.processEvents()
+        window._place_overlays()
+        rows = window.files.viewport().height() // row_h
+        self.assertGreaterEqual(rows, 1)
+        self.assertLess(rows, 3)
+        self.assertGreaterEqual(window.chat.height(), window.chat.minimumSizeHint().height())
+
+    def test_playlist_centers_playing_episode_and_preserves_manual_scroll(self):
+        window = self.window
+        window.resize(1280, 520)
+        window.set_panel(True)
+        window._playlist = [{"path": f"/tmp/{i}.mkv", "name": f"Episode {i + 1}.mkv"} for i in range(6)]
+        window._refresh_files()
+        self.qt.processEvents()
+        window.video.setFocus()
+        focus = QApplication.focusWidget()
+        row_h = window.files.item(0).sizeHint().height()
+        self.assertEqual(window.files.viewport().height() // row_h, 3)
+        for index, visible in ((1, [0, 1, 2]), (3, [2, 3, 4]), (5, [3, 4, 5])):
+            window._play_path(f"/tmp/{index}.mkv", start=True)
+            self.qt.processEvents()
+            shown = [window.files.indexAt(QPoint(10, row_h * row + 1)).row() for row in range(3)]
+            self.assertEqual(shown, visible)
+            self.assertIs(QApplication.focusWidget(), focus)
+        window.files.verticalScrollBar().setValue(0)
+        window._add_dropped(["/tmp/extra.mkv"])
+        self.assertEqual(window.files.verticalScrollBar().value(), 0)
+        window.resize(1280, 1080)
+        self.qt.processEvents()
+        self.assertEqual(window.files.verticalScrollBar().maximum(), 0)
+        window._play_path("/tmp/3.mkv", start=True)
+        self.assertEqual(window.files.verticalScrollBar().value(), 0)
+
+    def test_drops_append_without_replacing_an_open_episode(self):
+        window = self.window
+        window._playlist = [{"path": "/tmp/first.mkv", "name": "first.mkv"},
+                            {"path": "/tmp/current.mkv", "name": "current.mkv"}]
+        window._current_path = "/tmp/current.mkv"
+        with patch.object(window, "_play_path") as play:
+            for paused in (False, True):
+                window._paused = paused
+                window._add_dropped([f"/tmp/new-{paused}.mkv", "/tmp/current.mkv"])
+                self.assertEqual(window._current_path, "/tmp/current.mkv")
+                self.assertEqual(window._paused, paused)
+                play.assert_not_called()
+            self.assertEqual(len(window._playlist), 4)
+            window._playlist = []
+            window._add_dropped(["/tmp/episode10.mkv", "/tmp/episode2.mkv"])
+            play.assert_called_once_with("/tmp/episode2.mkv", start=False)
+
+    def test_repeat_key_uses_the_physical_r_and_resets_on_restart(self):
+        before = copy.deepcopy(self.store.data)
+        for platform in ("wayland", "xcb"):
+            with patch("yucha.window.QGuiApplication.platformName", return_value=platform):
+                for text in ("r", "к", "ρ"):
+                    for mode in (1, 2, 0):
+                        event = QKeyEvent(QEvent.Type.KeyPress, ord(text.upper()), Qt.KeyboardModifier.NoModifier,
+                                          27, 0, 0, text)
+                        QApplication.sendEvent(self.window.video, event)
+                        self.assertEqual(self.window._repeat, mode)
+                        self.assertEqual(self.window.board.repeat, mode)
+                        repeat = QKeyEvent(QEvent.Type.KeyPress, ord(text.upper()), Qt.KeyboardModifier.NoModifier,
+                                           27, 0, 0, text, True)
+                        QApplication.sendEvent(self.window.video, repeat)
+                        self.assertEqual(self.window._repeat, mode)
+                self.window._open_chat_field()
+                self.qt.processEvents()
+                text_key = QKeyEvent(QEvent.Type.KeyPress, ord("К"), Qt.KeyboardModifier.NoModifier, 27, 0, 0, "к")
+                QApplication.sendEvent(self.window.bar_message, text_key)
+                self.assertTrue(self.window.bar_message.text().endswith("к"))
+                self.assertEqual(self.window._repeat, 0)
+                self.window._close_chat_field()
+        QTest.keyClick(self.window.video, Qt.Key.Key_R)
+        self.assertEqual(self.window._repeat, 1)
+        self.assertEqual(self.store.data, before)
+        restarted = self.make_window()
+        self.assertEqual(restarted._repeat, 0)
+        self.assertEqual(restarted.board.repeat, 0)
+
+    def test_repeat_end_of_file_restarts_wraps_and_stops_correctly(self):
+        window = self.window
+        window._playlist = [{"path": f"/tmp/{i}.mkv", "name": str(i)} for i in range(3)]
+        self.store.data["appearance"]["autoplayNext"] = False
+        with patch.object(window, "_play_path", wraps=window._play_path) as play:
+            for mode, current, expected, start in ((1, 1, 1, True), (2, 2, 0, True), (0, 1, 2, False)):
+                window._repeat = mode
+                window._current_path = f"/tmp/{current}.mkv"
+                window.ctl.properties.update({"path": window._current_path, "eof-reached": False})
+                window._refresh_transport()
+                play.reset_mock()
+                window.ctl.properties["eof-reached"] = True
+                window._refresh_transport()
+                play.assert_called_once_with(f"/tmp/{expected}.mkv", start=start)
+                window._refresh_transport()
+                self.assertEqual(play.call_count, 1)
+            window._repeat = 0
+            window._current_path = "/tmp/2.mkv"
+            window._eof_seen = False
+            play.reset_mock()
+            window._refresh_transport()
+            play.assert_not_called()
+            window._playlist = window._playlist[:1]
+            window._current_path = "/tmp/0.mkv"
+            for mode in (1, 2):
+                window._repeat = mode
+                window._advance()
+                self.assertEqual(window._current_path, "/tmp/0.mkv")
+
+    def test_repeat_indicator_has_accent_fill_and_themed_outlines(self):
+        self.window._users = []
+        for theme in ("dark", "light"):
+            self.store.data["appearance"].update({"theme": theme, "accentColor": "#CC3355"})
+            self.window._dev.setdefault("face", {})["border"] = {theme: "#2244AA"}
+            for mode in (0, 1, 2):
+                self.window._repeat = mode
+                self.window._refresh_osd()
+                image = QImage(120, 120, QImage.Format.Format_ARGB32)
+                image.fill(Qt.GlobalColor.transparent)
+                painter = QPainter(image)
+                self.window.board.paint_on(painter, 120, 120)
+                painter.end()
+                colors = [image.pixelColor(x, y) for x in range(120) for y in range(120)]
+                center = [image.pixelColor(x, y) for x in range(36, 45) for y in range(34, 47)]
+                self.assertEqual(any(color.alpha() for color in center), mode == 1)
+                if mode:
+                    self.assertIn(QColor("#CC3355"), colors)
+                    self.assertTrue(any(color.alpha() and color.blue() > color.red() for color in colors))
+                    if mode == 1:
+                        self.assertTrue(any(color.alpha() and color.blue() > color.red() for color in center))
+                else:
+                    self.assertFalse(any(color.alpha() for color in colors))
+
     def test_mute_uses_the_physical_m_key_without_intercepting_text(self):
         for platform in ("wayland", "xcb"):
             with patch("yucha.window.QGuiApplication.platformName", return_value=platform):
@@ -202,9 +362,9 @@ class WindowTests(unittest.TestCase):
                     files = self.window.files
                     self.assertEqual(files.count(), count)
                     image = files.viewport().grab().toImage()
-                    for index in range(max(2, count) - 1):
-                        y = (files.visualItemRect(files.item(index)).bottom() if count
-                             else files.viewport().height() // 2 - 1)
+                    for index in range(max(3, count) - 1):
+                        y = (files.visualItemRect(files.item(index)).bottom() if index < count
+                             else (index + 1) * max(24, QFontMetrics(files.font()).height() + 12) - 1)
                         self.assertEqual(image.pixelColor(10, y), QColor(border))
                     users = self.window.room_users
                     self.assertEqual(len(users._full_names), count)
