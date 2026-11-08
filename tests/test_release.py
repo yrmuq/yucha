@@ -39,6 +39,70 @@ diff --git a/packaging/appimage/build.sh b/packaging/appimage/build.sh
 
 
 class ReleaseNotes(unittest.TestCase):
+    def test_published_release_sync_preserves_dev_and_stops_on_conflicts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work = root / "work"
+            work.mkdir()
+            remote = root / "origin.git"
+
+            def git(*args):
+                return subprocess.check_output(["git", *args], cwd=work, text=True,
+                                               stderr=subprocess.STDOUT).strip()
+
+            git("init", "--bare", str(remote))
+            git("init", "-b", "main")
+            git("config", "user.name", "Release Test")
+            git("config", "user.email", "release@example.test")
+            (work / "packaging/release").mkdir(parents=True)
+            shutil.copy(NOTES.parent / "sync-dev.sh", work / "packaging/release/sync-dev.sh")
+            version = work / "version"
+            version.write_text("0.6.0\n")
+            git("add", ".")
+            git("commit", "-m", "Add initial release.")
+            git("branch", "dev")
+            git("tag", "dev")
+            git("remote", "add", "origin", str(remote))
+            git("push", "origin", "main", "refs/heads/dev", "refs/tags/dev")
+            version.write_text("0.7.0\n")
+            git("commit", "-am", "Version 0.7.0.")
+            published = git("rev-parse", "HEAD")
+            git("push", "origin", "main")
+            git("checkout", "dev")
+            (work / "feature").write_text("unreleased work\n")
+            git("add", "feature")
+            git("commit", "-m", "Add the next feature.", "-m", "[draft]")
+            pending = git("rev-parse", "HEAD")
+            git("push", "origin", "HEAD:refs/heads/dev")
+            git("checkout", "--detach", published)
+            subprocess.check_output(["bash", "packaging/release/sync-dev.sh"], cwd=work,
+                                    text=True, stderr=subprocess.STDOUT)
+            synced = git("rev-parse", "origin/dev")
+            self.assertEqual(git("show", "origin/dev:version"), "0.7.0")
+            self.assertEqual(git("show", "origin/dev:feature"), "unreleased work")
+            self.assertEqual(git("rev-parse", "HEAD^1"), pending)
+            self.assertEqual(git("rev-parse", "HEAD^2"), published)
+            self.assertNotIn("[draft]", git("log", "-1", "--format=%B"))
+            self.assertEqual(git("ls-remote", "origin", "refs/heads/main").split()[0], published)
+
+            git("checkout", "--detach", published)
+            subprocess.check_output(["bash", "packaging/release/sync-dev.sh"], cwd=work,
+                                    text=True, stderr=subprocess.STDOUT)
+            self.assertEqual(git("rev-parse", "origin/dev"), synced)
+
+            git("checkout", "--detach", synced)
+            version.write_text("custom dev value\n")
+            git("commit", "-am", "Change the dev setting.")
+            conflicted_dev = git("rev-parse", "HEAD")
+            git("push", "origin", "HEAD:refs/heads/dev")
+            git("checkout", "main")
+            version.write_text("0.8.0\n")
+            git("commit", "-am", "Version 0.8.0.")
+            result = subprocess.run(["bash", "packaging/release/sync-dev.sh"], cwd=work,
+                                    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(git("ls-remote", "origin", "refs/heads/dev").split()[0], conflicted_dev)
+
     def test_refresh_keeps_version_and_the_next_merge_bumps_it(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

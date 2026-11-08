@@ -2,6 +2,7 @@
 
 Reply in Russian, short and plain.
 The default delivery for requested code changes is a tested draft from dev.
+After successful publication, CI merges the published release commit back into `dev` without requesting another draft build. A conflict or rejected push stops synchronization without overwriting `dev`.
 If a user approval is needed, notify in Mattermost immediately so the user can reopen the chat and approve.
 Repository: `https://github.com/yrmuq/yucha`. Commit as `yrmuq <76932153+yrmuq@users.noreply.github.com>`.
 Own code is `yucha/`. Do not patch `third_party/syncplay` or `third_party/mpv`.

@@ -67,3 +67,10 @@ jobs:
             git push origin "refs/tags/v${ver}"
           fi
           bash packaging/release/publish.sh "v${ver}"
+
+      - name: Sync published release into dev
+        if: steps.tag.outputs.version != ''
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          bash packaging/release/sync-dev.sh

@@ -21,11 +21,11 @@ Read only the row the task needs. Do not read `third_party/` or `packaging/appim
 - `packaging/appimage/AppRun` — points `YUCHA_MPV` at that stub and `YUCHA_LIBMPV` at the copied library.
 - `requirements.txt` — `PySide6_Essentials`, Twisted, `python-mpv`.
 - `.github/workflows/appimage.yml` — builds a version tag. `X.Y.0` is a release. Any other `X.Y.Z` is a prerelease.
-- `.github/workflows/release.yml` — a merge from `dev` into `main` raises Y and publishes. An explicit `[refresh-release]` merge replaces the current release once.
+- `.github/workflows/release.yml` — a merge from `dev` into `main` raises Y, publishes, then merges the published commit back into `dev`. An explicit `[refresh-release]` merge replaces the current release once.
 - `.github/workflows/dev.yml` — tests and updates the draft on a manual request or an explicit `[draft]` commit on `dev`. Ordinary pushes skip the build. It does not take a version number.
 - `.github/workflows/deps.yml` — Dependabot prerelease on `deps`. It does not change `main`.
 - `.github/workflows/pins.yml` — `appimagetool` pin, on the 28th. Same prerelease path, not `main`.
-- `packaging/release/` — version bump and notes. Not the player.
+- `packaging/release/` — version bump, notes, and synchronization of the published release into `dev`. Not the player.
 
 ## Libraries
 - `libmpv` — decodes and draws. Ubuntu package copied at build time.
