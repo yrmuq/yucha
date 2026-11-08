@@ -220,6 +220,56 @@ class WindowTests(unittest.TestCase):
                         y = lines.top + 3
                         self.assertEqual(image.pixelColor(x, y), QColor(border))
 
+    def test_user_size_column_gives_its_saved_width_only_to_the_filename(self):
+        self.window.set_panel(True)
+        self.window._users = [{"name": "me", "file": "Episode 1.mkv", "size": 10000000, "ready": True}]
+        self.window._paint_users()
+        for width in (380, 600):
+            with self.subTest(width=width):
+                self.window._panel_width = width
+                self.window._place_overlays()
+                self.qt.processEvents()
+                users = self.window.room_users
+                changed = (users.names.width(), users.files_scroll.width(), users.sizes.width())
+                # Let the previous Qt layout calculate its original column widths.
+                users.names.setMinimumWidth(0)
+                users.names.setMaximumWidth(16777215)
+                users.sizes.setMinimumWidth(users._size_width)
+                users.layout().activate()
+                original = (users.names.width(), users.files_scroll.width(), users.sizes.width())
+                self.assertEqual(changed[0], original[0])
+                self.assertLessEqual(abs(changed[2] - original[2] * 0.85), 1)
+                self.assertEqual(changed[1] - original[1], original[2] - changed[2])
+                self.assertEqual(sum(changed), sum(original))
+                self.window._paint_users()
+                self.qt.processEvents()
+                self.assertEqual((users.names.width(), users.files_scroll.width(), users.sizes.width()), changed)
+
+    def test_connected_banner_is_smaller_and_green_only_when_connected(self):
+        try:
+            for language in ("English", "Russian"):
+                i18n.use(language)
+                for theme in ("dark", "light"):
+                    with self.subTest(language=language, theme=theme):
+                        self.store.data["appearance"]["theme"] = theme
+                        self.window.apply_theme()
+                        self.window._connected = True
+                        self.window._refresh_banner()
+                        label = self.window.banner_text
+                        self.assertEqual(label.text(), i18n.tr(6))
+                        self.assertEqual(label.font().pointSize(), self.window.font().pointSize() - 1)
+                        self.assertEqual(label.palette().color(QPalette.ColorRole.WindowText), QColor("#3EAD62"))
+                        self.window._connected = False
+                        for failed, held, message in ((False, False, 9), (True, False, 8), (False, True, 7)):
+                            self.window._failed = failed
+                            self.window._chat_held = held
+                            self.window._refresh_banner()
+                            self.assertEqual(label.text(), i18n.tr(message))
+                            self.assertEqual(label.font().pointSize(), self.window.font().pointSize())
+                            self.assertEqual(label.palette().color(QPalette.ColorRole.WindowText), QColor(_palette(theme)["fg"]))
+        finally:
+            i18n.use("English")
+
     def test_space_repeats_and_chat_do_not_toggle_playback(self):
         self.window.ready.setChecked(True)
         self.window.video.setFocus()

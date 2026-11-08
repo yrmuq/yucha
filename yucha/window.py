@@ -1231,6 +1231,7 @@ class UserTable(QWidget):
         row.addWidget(self.files_scroll, 11)
         row.addWidget(self.sizes, 0)
         self._row_h = 0
+        self._size_width = 0
         self._line = QColor("#34363F")
         self._lines = ColumnLines(self)
         self._text_css = ""
@@ -1295,7 +1296,8 @@ class UserTable(QWidget):
         rows = max(2, count)
         content_h = rows * row_h
         self.files_host.setFixedSize(widest, content_h)
-        self.sizes.setMinimumWidth(metrics.horizontalAdvance("0000 MB") + 8)
+        self._size_width = max(metrics.horizontalAdvance("0000 MB") + 8, self.sizes.minimumSizeHint().width())
+        self.sizes.setMinimumWidth(round(self._size_width * 0.85))
         self.setFixedHeight(content_h + margins.top() + margins.bottom())
         self._elide_names()
         self._place_lines()
@@ -1324,6 +1326,10 @@ class UserTable(QWidget):
     def _place_lines(self):
         if not hasattr(self, "_lines"):
             return
+        margins = self.layout().contentsMargins()
+        available = self.width() - margins.left() - margins.right() - 2 * self.layout().spacing() - self._size_width
+        self.names.setFixedWidth(max(self.names.minimumSizeHint().width(), round(available * 4 / 15)))
+        self.layout().activate()
         left = self.names.geometry().right()
         right = self.files_scroll.geometry().left()
         file_right = self.files_scroll.geometry().right()
@@ -1740,7 +1746,7 @@ class IconButton(QPushButton):
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawArc(int(cx + 2), int(cy - 4), 6, 8, -50 * 16, 100 * 16)
             if self._silent:
-                painter.setPen(QPen(QColor("#C4453C"), 1.6))
+                painter.setPen(QPen(QColor("#C4453C"), 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
                 painter.drawLine(QPointF(cx - 6, cy - 6), QPointF(cx + 7, cy + 5))
         elif kind == "tracks":
             painter.drawLine(QPointF(cx - 6, cy - 5), QPointF(cx + 6, cy - 5))
@@ -4902,6 +4908,12 @@ class MainWindow(QMainWindow):
         else:
             text, color = tr(9), "#D6B23A"
         self.banner_text.setText(text)
+        if self._connected and self._configured():
+            self.banner_text.setStyleSheet("color: {}; font-size: {}pt; background: transparent;".format(
+                color, max(1, self.font().pointSize() - 1)
+            ))
+        else:
+            self.banner_text.setStyleSheet("")
         self.banner_dot.setStyleSheet("color: {}; background: transparent;".format(color))
         self.reconnect.setVisible(bool(self._failed and self._configured()))
 
