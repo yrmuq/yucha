@@ -5,6 +5,8 @@ import os
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import Mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,6 +14,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "third_party" / "syncplay"))
 
 from yucha import i18n
+from yucha.app import App
 from yucha.bridge import Bridge
 from yucha.configstore import ConfigStore, dev_settings, port_number
 from yucha.session import load_client_tls
@@ -19,7 +22,8 @@ from yucha.session import load_client_tls
 
 class Guards(unittest.TestCase):
     def test_dev_config_clamps_sizes_and_ignores_malformed_rows(self):
-        result = dev_settings({"bar": 500, "settings_w": "bad", "panel_alpha": -2, "gamma": 900, "chat_max": 9000,
+        result = dev_settings({"bar": 500, "settings_w": "bad", "panel_alpha": -2, "gamma": 900, "chat_max": 9000, "bar_min": 9000,
+                               "panel_center": True, "panel_drag": "false",
                                "alfa": {"size": 900, "family": "  Demo Sans  ", "dark": "invalid"},
                                "sub": "bad", "face": {"bg": []},
                                "bar_buttons": {"volume": False, "tracks": "false"}})
@@ -28,6 +32,9 @@ class Guards(unittest.TestCase):
         self.assertEqual(result["panel_alpha"], 0)
         self.assertEqual(result["gamma"], 96)
         self.assertEqual(result["chat_max"], 2160)
+        self.assertEqual(result["bar_min"], 3840)
+        self.assertTrue(result["panel_center"])
+        self.assertNotIn("panel_drag", result)
         self.assertEqual(result["alfa"], {"size": 96, "family": "Demo Sans"})
         self.assertNotIn("sub", result)
         self.assertEqual(result["bar_buttons"], {"volume": False})
@@ -48,7 +55,7 @@ class Guards(unittest.TestCase):
             self.assertEqual(original.strip(), shown.strip())
             self.assertNotIn(number.strip(), seen)
             seen.add(number.strip())
-        self.assertEqual(len(seen), 110)
+        self.assertEqual(len(seen), 117)
 
     def test_russian_keeps_the_same_ids(self):
         def rows(name):
@@ -101,6 +108,18 @@ class Guards(unittest.TestCase):
             i18n.FOLDER = previous
             i18n.use("English")
 
+    def test_room_only_change_does_not_report_a_network_reconnection(self):
+        client = Mock()
+        client._running = True
+        client._config = {"host": "example.test", "port": 8999}
+        client.getUsername.return_value = "me"
+        client._serverPassword = None
+        app = SimpleNamespace(client=client, bridge=Mock())
+        App._connect(app, "example.test", 8999, "me", "new-room", "")
+        app.bridge.emit.assert_not_called()
+        client.sendRoom.assert_called_once()
+        client.stop.assert_not_called()
+
     def test_port(self):
         self.assertIsNone(port_number("abc"))
         self.assertEqual(port_number("8999"), 8999)
@@ -116,12 +135,13 @@ class Guards(unittest.TestCase):
             folder = Path(tmp) / "yucha"
             folder.mkdir()
             (folder / "config.json").write_text(
-                '{"appearance": {"uiFontSize": "large", "chatFontSize": 99}}',
+                '{"appearance": {"uiFontSize": "large", "chatFontSize": 99, "mainPanel": "invalid"}}',
                 encoding="utf-8",
             )
             store = ConfigStore()
             self.assertEqual(store.data["appearance"]["uiFontSize"], 13)
             self.assertEqual(store.data["appearance"]["chatFontSize"], 20)
+            self.assertEqual(store.data["appearance"]["mainPanel"], "right")
         if previous is None:
             os.environ.pop("XDG_CONFIG_HOME", None)
         else:

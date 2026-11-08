@@ -16,7 +16,11 @@
 > [!NOTE]
 > **Active Beta Development:** `yucha` is currently in active beta development. Pre-release `x86_64` `AppImage` builds are available on the [Releases](https://github.com/yrmuq/yucha/releases) page.
 >
-> **After Updates:** `yucha` changes frequently, and saved settings may become outdated. If you experience problems after an update, try `Settings` → `Other` → `Reset`, then click `OK` to save the reset. Your `Room` connection and `Dev` settings are kept.
+> **After Updates:** `yucha` changes frequently, and saved settings may become outdated. If you experience problems after an update, try `Settings` → `Other` → `Reset`. This restores `Theme` and `Other` defaults, clears `Dev` overrides, and hides the `Dev` tab. Your `Room` connection is kept.
+>
+> **Reset Behavior:** Both `Reset` buttons apply and save immediately. You do not need to click `OK`, and `Cancel` does not undo a reset. `Dev` → `Reset` clears only `Dev` overrides, preserving ordinary settings.
+>
+> **Dev Settings:** Opening or enabling `Dev` does not save its default values. Only changed values are saved as overrides; returning a value to its default removes that override.
 >
 > **Independent Project:** `yucha` is an independent project and is not affiliated with or endorsed by `mpv` or `Syncplay`.
 
@@ -43,6 +47,10 @@
 | `Open With` | Add the opened video to the playlist. A window that is already open receives it. |
 | `Right Click` / `Space` | Toggle Play / Pause. |
 | `Double Click` | Toggle Fullscreen. |
+| `Left Click` (left or right screen edge, fullscreen) | Toggle the side panel. |
+| `Drag` (bottom edge of side panel) | Resize the chat height and save its maximum height. |
+| `Drag` (side panel background, headings, or banner) | Move the panel when `Dev` → `Drag side panel` is enabled. |
+| `Arrow` button (after moving the side panel) | Restore the panel to the side selected in `Other` → `Main panel`, respecting vertical centering if enabled. |
 | `Left` / `Right` | Seek backward / forward (`5s`). |
 | `Up` / `Down` / `Mouse Wheel` | Adjust volume (`10%` steps via keys, up to `130%` max). |
 | `Enter` | Open the message field. Enter again sends the text and closes the field. |

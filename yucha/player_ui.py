@@ -138,6 +138,11 @@ class PlayerUI(object):
             self.bridge.emit({"e": "conn", "state": "connected", "text": "connected"})
         elif text.startswith(failed) or text.startswith(dropped):
             self._fail(text)
+        elif (text == getMessage("reconnection-attempt-notification") or
+              text.startswith(getMessage("connection-attempt-notification").split("{", 1)[0])):
+            self._connected = False
+            self._fail_text = None
+            self.bridge.emit({"e": "conn", "state": "connecting", "text": text})
 
     def showErrorMessage(self, message, criticalerror=False):
         text = "" if message is None else str(message)

@@ -68,12 +68,12 @@ def dev_settings(value):
         "settings_h": (375, 240, 900), "settings_w": (450, 360, 1100),
         "settings_pad": (23, 0, 160), "settings_top": (23, 0, 160),
         "gamma": (10, 1, 96),
-        "chat_max": (0, 0, 2160),
+        "chat_max": (340, 0, 2160), "bar_min": (0, 0, 3840),
     }
     for key, limits in ranges.items():
         if key in value:
             result[key] = bounded_int(value[key], *limits)
-    for key in ("slider_numbers", "bold_names"):
+    for key in ("slider_numbers", "bold_names", "panel_center", "panel_drag"):
         if isinstance(value.get(key), bool):
             result[key] = value[key]
     for key in ("ui", "alfa", "titles", "osd", "sub"):
@@ -188,6 +188,7 @@ DEFAULTS = {
         "slowOnDesync": True,
         "volumeMax": 100,
         "volumeOverlay": "horizontal",
+        "mainPanel": "right",
         "language": "English",
         "subFont": "sans-serif",
         "subFontSize": 55,
@@ -229,6 +230,8 @@ class ConfigStore(object):
         look["panelWidth"] = bounded_int(look.get("panelWidth"), 380, 240, 900)
         look["devTab"] = bool(look.get("devTab", False))
         look["dev"] = dev_settings(look.get("dev"))
+        if look.get("mainPanel") not in ("right", "left"):
+            look["mainPanel"] = "right"
         if look.get("style") not in ("classic", "modern"):
             look["style"] = "modern"
         if look.get("theme") not in ("auto", "dark", "light"):

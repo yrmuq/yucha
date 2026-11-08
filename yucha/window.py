@@ -118,6 +118,88 @@ def _dev_ink(row, theme):
     return str(picked)
 
 
+def _dev_values(appearance, overrides=None):
+    family = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont).family() or "sans-serif"
+    dark = _palette("dark")["fg"]
+    light = _palette("light")["fg"]
+    white = "#FFFFFF"
+    dark_pal = _palette("dark")
+    light_pal = _palette("light")
+    face = {}
+    for key in ("bg", "field", "border", "button", "button_fg"):
+        face[key] = {"dark": dark_pal[key], "light": light_pal[key]}
+    face["ready"] = {"dark": "#3EAD62", "light": "#3EAD62"}
+    face["away"] = {"dark": "#C4453C", "light": "#C4453C"}
+    face["locked"] = {"dark": "#2A2D36", "light": "#E4E0D8"}
+    values = {
+        "ui": {"size": 13, "bold": False, "family": family, "dark": dark, "light": light},
+        "alfa": {"size": 10, "bold": False, "family": family, "dark": dark, "light": light},
+        "osd": {"size": 17, "bold": False, "family": family, "dark": dark, "light": light},
+        "sub": {"size": 55, "bold": False, "family": "sans-serif", "dark": white, "light": white},
+        "titles": {"size": 11, "bold": True, "family": family, "dark": dark, "light": light},
+        "gamma": 10,
+        "chat_max": 340,
+        "panel_center": True,
+        "panel_drag": True,
+        "bar_min": 0,
+        "face": face,
+        "panel": PANEL_WIDTH,
+        "bar": BAR_HEIGHT,
+        "bar_alpha": 90,
+        "panel_alpha": 90,
+        "osd_alpha": 90,
+        "bar_inset": 30,
+        "settings_h": 375,
+        "settings_w": 450,
+        "settings_pad": 23,
+        "settings_top": 23,
+        "slider_numbers": False,
+        "bold_names": False,
+        "bar_buttons": {
+            "play": True,
+            "ready": True,
+            "volume": True,
+            "tracks": True,
+            "chat": True,
+            "room": True,
+        },
+    }
+    values["ui"]["size"] = int(appearance.get("uiFontSize") or 13)
+    values["osd"]["size"] = int(appearance.get("chatFontSize") or 17)
+    values["sub"].update(size=int(appearance.get("subFontSize") or 55),
+                         family=font_name(appearance.get("subFont")))
+    color = hex_color(appearance.get("subColor"), "#FFFFFF")
+    values["sub"].update(dark=color, light=color)
+    values["panel"] = bounded_panel(appearance.get("panelWidth"))
+    return _merge_dev(values, overrides or {})
+
+
+def _merge_dev(base, overrides):
+    for key, value in overrides.items():
+        if isinstance(value, dict):
+            _merge_dev(base[key], value)
+        else:
+            base[key] = value
+    return base
+
+
+def _dev_edits(before, after, saved, defaults):
+    result = deepcopy(saved)
+    for key, value in after.items():
+        if isinstance(value, dict):
+            branch = _dev_edits(before.get(key, {}), value, result.get(key, {}), defaults[key])
+            if branch:
+                result[key] = branch
+            else:
+                result.pop(key, None)
+        else:
+            if value != before.get(key):
+                result[key] = value
+            if result.get(key) == defaults[key]:
+                result.pop(key, None)
+    return result
+
+
 def _font_families():
     cached = getattr(_font_families, "names", None)
     if cached is not None:
@@ -1770,6 +1852,11 @@ class IconButton(QPushButton):
             painter.drawLine(QPointF(cx + 3, cy - 7), QPointF(cx + 3, cy + 7))
         elif kind == "send":
             return
+        elif kind in ("arrow_right", "arrow_left"):
+            direction = 1 if kind == "arrow_right" else -1
+            painter.drawLine(QPointF(cx - 8, cy), QPointF(cx + 8, cy))
+            painter.drawLine(QPointF(cx + 8 * direction, cy), QPointF(cx + 2 * direction, cy - 6))
+            painter.drawLine(QPointF(cx + 8 * direction, cy), QPointF(cx + 2 * direction, cy + 6))
         elif kind == "gear":
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(color)
@@ -2091,9 +2178,9 @@ class SettingsDialog(QDialog):
         self._theme_before = deepcopy(appearance)
         self._dev_before = deepcopy(parent._dev)
         self._panel_before = parent._panel_width
+        self._position_before = deepcopy(parent._panel_pos)
         self._saved_dev = deepcopy(parent._dev)
         self._dev_loading = False
-        self._standard_reset = False
         self._side_layouts = []
         self._name_forms = []
         self._checking = False
@@ -2270,6 +2357,11 @@ class SettingsDialog(QDialog):
         self.overlay.addItem(tr(37), "vertical")
         overlay = appearance.get("volumeOverlay") or "horizontal"
         self.overlay.setCurrentIndex(1 if overlay == "vertical" else 0)
+        self.main_panel = QComboBox()
+        self.main_panel.addItem(tr(116), "right")
+        self.main_panel.addItem(tr(117), "left")
+        self.main_panel.setCurrentIndex(1 if appearance.get("mainPanel") == "left" else 0)
+        self.main_panel.currentIndexChanged.connect(lambda _index: self._preview_theme())
         stepper = QWidget()
         stepper_row = QHBoxLayout(stepper)
         stepper_row.setContentsMargins(0, 0, 0, 0)
@@ -2288,6 +2380,7 @@ class SettingsDialog(QDialog):
         self.volume_max = _volume_limit(appearance.get("volumeMax"))
         self._show_volume_max()
         other_form.addRow(tr(38), self.language)
+        other_form.addRow(tr(115), self.main_panel)
         other_form.addRow(tr(35), self.overlay)
         other_form.addRow(tr(34), stepper)
         self.autoplay = BoxCheck()
@@ -2524,76 +2617,14 @@ class SettingsDialog(QDialog):
         self._dev_button.show()
 
     def _dev_defaults(self):
-        family = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont).family() or "sans-serif"
-        dark = _palette("dark")["fg"]
-        light = _palette("light")["fg"]
-        white = "#FFFFFF"
-        dark_pal = _palette("dark")
-        light_pal = _palette("light")
-        face = {}
-        for key in ("bg", "field", "border", "button", "button_fg"):
-            face[key] = {"dark": dark_pal[key], "light": light_pal[key]}
-        face["ready"] = {"dark": "#3EAD62", "light": "#3EAD62"}
-        face["away"] = {"dark": "#C4453C", "light": "#C4453C"}
-        face["locked"] = {"dark": "#2A2D36", "light": "#E4E0D8"}
-        return {
-            "ui": {"size": 13, "bold": False, "family": family, "dark": dark, "light": light},
-            "alfa": {"size": 10, "bold": False, "family": family, "dark": dark, "light": light},
-            "osd": {"size": 17, "bold": False, "family": family, "dark": dark, "light": light},
-            "sub": {"size": 55, "bold": False, "family": "sans-serif", "dark": white, "light": white},
-            "titles": {"size": 11, "bold": True, "family": family, "dark": dark, "light": light},
-            "gamma": 10,
-            "chat_max": 0,
-            "face": face,
-            "panel": PANEL_WIDTH,
-            "bar": BAR_HEIGHT,
-            "bar_alpha": 90,
-            "panel_alpha": 90,
-            "osd_alpha": 90,
-            "bar_inset": 30,
-            "settings_h": 375,
-            "settings_w": 450,
-            "settings_pad": 23,
-            "settings_top": 23,
-            "slider_numbers": False,
-            "bold_names": False,
-            "bar_buttons": {
-                "play": True,
-                "ready": True,
-                "volume": True,
-                "tracks": True,
-                "chat": True,
-                "room": True,
-            },
-        }
+        return _dev_values(DEFAULTS["appearance"])
 
     def _dev_seed(self):
         window = self.parent()
-        current = getattr(window, "_dev", None) if window is not None else None
-        if current:
-            merged = self._dev_defaults()
-            for key, value in current.items():
-                if isinstance(value, dict):
-                    merged[key].update(deepcopy(value))
-                else:
-                    merged[key] = value
-            return merged
-        base = self._dev_defaults()
-        if window is None:
-            return base
-        look = window.app.store.data["appearance"]
-        base["ui"]["size"] = int(look.get("uiFontSize") or 13)
-        base["osd"]["size"] = int(look.get("chatFontSize") or 17)
-        base["sub"]["size"] = int(look.get("subFontSize") or 55)
-        base["sub"]["family"] = font_name(look.get("subFont"))
-        sub = hex_color(look.get("subColor"), "#FFFFFF")
-        base["sub"]["dark"] = sub
-        base["sub"]["light"] = sub
-        base["panel"] = int(getattr(window, "_panel_width", PANEL_WIDTH) or PANEL_WIDTH)
-        base["bar"] = int(getattr(window, "_bar_h", BAR_HEIGHT) or BAR_HEIGHT)
-        return base
+        return _dev_values(window.app.store.data["appearance"], window._dev)
 
     def _build_dev_page(self):
+        self._dev_loading = True
         seed = self._dev_seed()
         page = QWidget()
         form = QFormLayout(page)
@@ -2655,10 +2686,26 @@ class SettingsDialog(QDialog):
         self._chat_max.setRange(0, 2160)
         self._chat_max.setSuffix(" px")
         self._chat_max.setSpecialValueText(tr(109))
-        self._chat_max.setValue(int(seed.get("chat_max", 0)))
+        self._chat_max.setValue(int(seed.get("chat_max", 340)))
         self._chat_max.valueChanged.connect(lambda _value: self._push_dev())
         form.addRow(tr(108), self._chat_max)
+        self._panel_flags = {}
+        look = _palette(self._look_theme, self._look_accent)
+        for key, number in (("panel_center", 111), ("panel_drag", 112)):
+            box = BoxCheck()
+            box.setChecked(bool(seed[key]))
+            box.set_colors(look["field"], look["border"], look["on_fg"], look["accent"])
+            box.toggled.connect(lambda _value: self._push_dev())
+            self._panel_flags[key] = box
+            form.addRow(tr(number), box)
         form.addRow(tr(91), self._dev_bar)
+        self._bar_min = QuietSpin()
+        self._bar_min.setRange(0, 3840)
+        self._bar_min.setSuffix(" px")
+        self._bar_min.setSpecialValueText(tr(57))
+        self._bar_min.setValue(int(seed["bar_min"]))
+        self._bar_min.valueChanged.connect(lambda _value: self._push_dev())
+        form.addRow(tr(113), self._bar_min)
         self._bar_inset = QuietSpin()
         self._bar_inset.setRange(0, 40)
         self._bar_inset.setSuffix("%")
@@ -2733,8 +2780,10 @@ class SettingsDialog(QDialog):
             button_row.addWidget(QLabel(title))
         button_row.addStretch(1)
         form.addRow(tr(104), buttons)
-        if getattr(self, "_scrolls", None):
-            self._set_settings_pad(self._settings_pad.value())
+        self._dev_last = self._dev_spec()
+        self._dev_loading = False
+        if self._scrolls:
+            self._apply_settings_edges()
         return page
 
     def _dev_font_row(self, key, seed):
@@ -2812,6 +2861,7 @@ class SettingsDialog(QDialog):
             self._dev_panel,
             self._dev_bar,
             self._chat_max,
+            self._bar_min,
             self._bar_inset,
             self._bar_alpha,
             self._panel_alpha,
@@ -2825,6 +2875,7 @@ class SettingsDialog(QDialog):
             self.gamma_size,
         ]
         widgets.extend(self._bar_buttons.values())
+        widgets.extend(self._panel_flags.values())
         for row in self._dev_rows.values():
             widgets.extend((row["size"], row["bold"], row["family"]))
         for widget in widgets:
@@ -2843,7 +2894,10 @@ class SettingsDialog(QDialog):
             row["light"].set_color(hex_color(item.get("light"), "#FFFFFF"))
         self._dev_panel.setValue(int(seed["panel"]))
         self._dev_bar.setValue(int(seed["bar"]))
-        self._chat_max.setValue(int(seed.get("chat_max", 0)))
+        self._chat_max.setValue(int(seed.get("chat_max", 340)))
+        self._bar_min.setValue(int(seed["bar_min"]))
+        for key, box in self._panel_flags.items():
+            box.setChecked(bool(seed[key]))
         self._bar_inset.setValue(int(seed.get("bar_inset", 30)))
         self._bar_alpha.setValue(int(seed.get("bar_alpha", 90)))
         self._panel_alpha.setValue(int(seed.get("panel_alpha", 90)))
@@ -2866,17 +2920,43 @@ class SettingsDialog(QDialog):
             self._apply_settings_edges()
         self._show_slider_numbers()
         self._apply_label_weight()
+        self._dev_last = self._dev_spec()
         self._dev_loading = False
 
+    def _persist_reset(self, appearance):
+        window = self.parent()
+        store = window.app.store
+        live = store.data["appearance"]
+        try:
+            store.data["appearance"] = deepcopy(appearance)
+            window.app.on_command({"c": "appearance", **appearance})
+            self._theme_before = deepcopy(store.data["appearance"])
+        finally:
+            store.data["appearance"] = live
+        self._dev_before = deepcopy(self._theme_before["dev"])
+        self._saved_dev = deepcopy(self._dev_before)
+        self._panel_before = _dev_values(self._theme_before, self._dev_before)["panel"]
+        self._position_before = None
+
     def _reset_dev(self):
-        self._fill_dev(self._dev_defaults())
-        self._push_dev()
+        window = self.parent()
+        saved = deepcopy(self._theme_before)
+        saved.update(dev={}, devTab=bool(window.app.store.data["appearance"].get("devTab")))
+        self._persist_reset(saved)
+        window.app.store.data["appearance"]["dev"] = {}
+        window.apply_dev({})
+        window._reset_panel_position()
+        self._fill_dev(self._dev_seed())
+        self._apply_room_lock()
+        self._apply_settings_font()
 
     def _dev_spec(self):
         spec = {
             "panel": self._dev_panel.value(),
             "bar": self._dev_bar.value(),
             "chat_max": self._chat_max.value(),
+            "bar_min": self._bar_min.value(),
+            **{key: box.isChecked() for key, box in self._panel_flags.items()},
             "bar_alpha": self._bar_alpha.value(),
             "panel_alpha": self._panel_alpha.value(),
             "osd_alpha": self._osd_alpha.value(),
@@ -2910,13 +2990,22 @@ class SettingsDialog(QDialog):
         window = self.parent()
         if window is None or self._dev_loading or not hasattr(self, "_bar_buttons"):
             return
-        window.apply_dev(self._dev_spec())
+        spec = self._dev_spec()
+        defaults = _dev_values(window.app.store.data["appearance"])
+        window.apply_dev(_dev_edits(self._dev_last, spec, window._dev, defaults))
+        self._dev_last = spec
         self._apply_room_lock()
         self._apply_label_weight()
         self._apply_settings_font()
 
     def _set_gamma_size(self, size):
-        self.parent()._dev["gamma"] = int(size)
+        if self._dev_loading:
+            return
+        if size == 10:
+            self.parent()._dev.pop("gamma", None)
+        else:
+            self.parent()._dev["gamma"] = int(size)
+        self._dev_last["gamma"] = int(size)
         self._apply_settings_font()
 
     def _apply_settings_font(self):
@@ -2937,11 +3026,12 @@ class SettingsDialog(QDialog):
         self._fit_settings_pages()
 
     def _reset_standard(self):
-        defaults = DEFAULTS["appearance"]
+        defaults = deepcopy(DEFAULTS["appearance"])
+        defaults["language"] = system_language()
         self._theme_timer.stop()
         combos = ((self.theme, "theme"), (self.style_pick, "style"),
                   (self.sub_font, "subFont"), (self.language, "language"),
-                  (self.overlay, "volumeOverlay"))
+                  (self.overlay, "volumeOverlay"), (self.main_panel, "mainPanel"))
         scales = ((self.chat_size, "chatFontSize"), (self.ui_size, "uiFontSize"),
                   (self.sub_size, "subFontSize"))
         boxes = ((self.autoplay, "autoplayNext"), (self.fastforward, "fastforwardOnDesync"),
@@ -2962,8 +3052,27 @@ class SettingsDialog(QDialog):
         self._kept_chat = defaults["chatColor"]
         self.volume_max = defaults["volumeMax"]
         self._show_volume_max()
-        self._standard_reset = True
-        self._push_theme(False, sync_dev=False)
+        window = self.parent()
+        window.app.store.data["appearance"] = defaults
+        self._persist_reset(defaults)
+        window.apply_dev({})
+        window._reset_panel_position()
+        if hasattr(self, "_dev_rows"):
+            self._fill_dev(self._dev_seed())
+        else:
+            self._dev_loading = True
+            self._set_settings_height(375)
+            self._set_settings_width(450)
+            self._dev_loading = False
+            self._apply_settings_edges()
+        if self._dev_page is not None:
+            self.tabs.removeTab(self.tabs.indexOf(self._dev_page))
+            self._dev_page = None
+            self._dev_button.hide()
+        window._apply_volume_max()
+        window._retranslate()
+        self._apply_room_lock()
+        self._apply_settings_font()
         self._sync_update_row()
 
     def _export_dev(self):
@@ -2982,6 +3091,9 @@ class SettingsDialog(QDialog):
             lines.append("face.{}.light={}".format(key, row["light"]))
         lines.append("panel.width={}".format(spec["panel"]))
         lines.append("chat.max-height={}".format(spec["chat_max"]))
+        lines.append("panel.center={}".format("yes" if spec["panel_center"] else "no"))
+        lines.append("panel.drag={}".format("yes" if spec["panel_drag"] else "no"))
+        lines.append("bar.min-width={}".format(spec["bar_min"]))
         lines.append("bar.height={}".format(spec["bar"]))
         lines.append("bar.alpha={}".format(spec["bar_alpha"]))
         lines.append("panel.alpha={}".format(spec["panel_alpha"]))
@@ -3080,6 +3192,10 @@ class SettingsDialog(QDialog):
         if self._theme_timer.isActive():
             self._theme_timer.stop()
             self._flush_theme()
+        if hasattr(self, "_dev_rows"):
+            window = self.parent()
+            window._dev = _dev_edits(self._dev_last, self._dev_spec(), window._dev,
+                                     _dev_values(window.app.store.data["appearance"]))
         color = self._kept_chat
         accent = hex_color(self.accent._color.name(), "#9A3A52")
         accent2 = hex_color(self.accent2._color.name(), "#1F6A8A")
@@ -3098,14 +3214,13 @@ class SettingsDialog(QDialog):
             "slowOnDesync": self.slowdown.isChecked(),
             "volumeMax": self.volume_max,
             "volumeOverlay": self.overlay.currentData() or "horizontal",
+            "mainPanel": self.main_panel.currentData() or "right",
             "language": self.language.currentData() or "English",
             "checkUpdates": self.check_updates.isChecked(),
             "style": self.style_pick.currentData() or "modern",
             "dev": deepcopy(self.parent()._dev),
             "devTab": bool(self.parent().app.store.data["appearance"].get("devTab")),
         }
-        if self._standard_reset:
-            self.appearance["panelWidth"] = DEFAULTS["appearance"]["panelWidth"]
         self.connection = {
             "host": self.host.text(),
             "port": self.port.text(),
@@ -3199,7 +3314,7 @@ class SettingsDialog(QDialog):
         window = self.parent()
         if window is not None:
             theme = _shown_theme(window.app.store.data["appearance"].get("theme"))
-        row = {}
+        row = (window._dev.get("face") or {}).get("locked", {}) if window is not None else {}
         if hasattr(self, "_face_rows"):
             picked = self._face_rows.get("locked")
             if picked:
@@ -3268,6 +3383,9 @@ class SettingsDialog(QDialog):
             return
         look = window.app.store.data["appearance"]
         before = dict(look)
+        look["mainPanel"] = self.main_panel.currentData() or "right"
+        if before.get("mainPanel", "right") != look["mainPanel"]:
+            window._panel_pos = None
         look["theme"] = self.theme.currentData()
         look["style"] = self.style_pick.currentData() or "modern"
         look["accentColor"] = hex_color(self.accent._color.name(), "#9A3A52")
@@ -3277,29 +3395,19 @@ class SettingsDialog(QDialog):
         look["subFont"] = font_name(self.sub_font.currentData())
         look["subFontSize"] = self.sub_size.value()
         look["subColor"] = hex_color(self.sub_color._color.name(), "#FFFFFF")
-        # Ordinary size controls and the development tab edit the same sizes.
-        for key, setting in (("ui", "uiFontSize"), ("osd", "chatFontSize"), ("sub", "subFontSize")):
-            if sync_dev and before.get(setting) != look[setting] and window._dev:
-                window._dev.setdefault(key, {})["size"] = look[setting]
-                if hasattr(self, "_dev_rows"):
-                    spin = self._dev_rows[key]["size"]
-                    spin.blockSignals(True)
-                    spin.setValue(look[setting])
-                    spin.blockSignals(False)
-        if sync_dev and window._dev:
-            sub = window._dev.setdefault("sub", {})
-            if before.get("subFont") != look["subFont"]:
-                sub["family"] = look["subFont"]
-            if before.get("subColor") != look["subColor"]:
-                sub.update(dark=look["subColor"], light=look["subColor"])
+        if sync_dev:
+            changed = (("ui", "uiFontSize", ("size",)), ("osd", "chatFontSize", ("size",)),
+                       ("sub", "subFontSize", ("size",)), ("sub", "subFont", ("family",)),
+                       ("sub", "subColor", ("dark", "light")))
+            for key, setting, fields in changed:
+                if before.get(setting) != look[setting]:
+                    row = window._dev.get(key, {})
+                    for field in fields:
+                        row.pop(field, None)
+                    if not row:
+                        window._dev.pop(key, None)
             if hasattr(self, "_dev_rows"):
-                row = self._dev_rows["sub"]
-                row["family"].blockSignals(True)
-                row["family"].setCurrentFont(QFont(sub.get("family", look["subFont"])))
-                row["family"].blockSignals(False)
-                for shade in ("dark", "light"):
-                    if shade in sub:
-                        row[shade].set_color(sub[shade])
+                self._fill_dev(self._dev_seed())
         self._theme_dirty = True
         window.apply_theme()
         self._apply_settings_font()
@@ -3312,7 +3420,9 @@ class SettingsDialog(QDialog):
             window._dev = deepcopy(self._dev_before)
             window._bar_h = int(window._dev.get("bar", BAR_HEIGHT))
             window._panel_width = self._panel_before
+            window._panel_pos = deepcopy(self._position_before)
             window.apply_theme()
+            window._place_overlays()
         super().reject()
 
     def _color_row(self, value, default, title):
@@ -3392,6 +3502,7 @@ class MainWindow(QMainWindow):
         self._bridge_pos = 0
         self._osd = []
         self._connected = False
+        self._connecting = False
         self._failed = False
         self._chat_open = False
         self._duration = 0
@@ -3430,6 +3541,7 @@ class MainWindow(QMainWindow):
         self._chat_held = False
         self._known_names = None
         self._dev = dev_settings(app.store.data["appearance"].get("dev"))
+        self._panel_pos = None
         self._bar_h = int(self._dev.get("bar", BAR_HEIGHT))
         self._awake = SleepInhibit()
         icon = Path(__file__).resolve().parent / "icon.png"
@@ -3621,6 +3733,7 @@ class MainWindow(QMainWindow):
         side.setSpacing(8)
 
         banner_row = QHBoxLayout()
+        self._banner_row = banner_row
         banner_row.setSpacing(8)
         self.banner = ClickBox()
         self.banner.setObjectName("banner")
@@ -3628,6 +3741,7 @@ class MainWindow(QMainWindow):
         self.banner.setAutoFillBackground(True)
         self.banner.setFixedHeight(44)
         self.banner.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.banner.setAttribute(Qt.WidgetAttribute.WA_NoMousePropagation, True)
         self.banner.clicked.connect(lambda: self._open_settings(0))
         inside = QHBoxLayout(self.banner)
         inside.setContentsMargins(14, 0, 14, 0)
@@ -3641,8 +3755,15 @@ class MainWindow(QMainWindow):
         self.gear = IconButton("gear")
         self.gear.setObjectName("panelicon")
         self.gear.clicked.connect(lambda: self._open_settings(1))
+        self.panel_home = IconButton("arrow_right")
+        self.panel_home.setObjectName("panelicon")
+        self.panel_home.setToolTip(tr(114))
+        self.panel_home.setAccessibleName(tr(114))
+        self.panel_home.clicked.connect(self._reset_panel_position)
+        self.panel_home.hide()
         banner_row.addWidget(self.banner, 1)
         banner_row.addWidget(self.gear)
+        banner_row.addWidget(self.panel_home)
         side.addLayout(banner_row)
 
         self.reconnect = QPushButton()
@@ -3726,6 +3847,10 @@ class MainWindow(QMainWindow):
         kind = event.type()
         if kind == QEvent.Type.KeyPress and self._player_key(event):
             return True
+        if self._grip is not None and (
+                kind == QEvent.Type.UngrabMouse and watched is self.panel or
+                kind == QEvent.Type.WindowDeactivate and watched is self):
+            self._release_grip(False)
         if kind == QEvent.Type.MouseButtonPress and self._press_edge(event):
             return True
         if kind == QEvent.Type.MouseButtonPress and self._press_grip(watched, event):
@@ -3735,9 +3860,8 @@ class MainWindow(QMainWindow):
         if self._grip is not None and kind == QEvent.Type.MouseMove:
             self._drag_grip(event)
             return True
-        if self._grip is not None and kind == QEvent.Type.MouseButtonRelease:
-            self._grip = None
-            self._save_panel_width()
+        if self._grip is not None and kind == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
+            self._release_grip()
             return True
         if kind == QEvent.Type.MouseMove and watched is self.panel:
             self._grip_cursor(event)
@@ -4038,8 +4162,9 @@ class MainWindow(QMainWindow):
 
     def apply_dev(self, spec):
         self._dev = dev_settings(spec)
-        self._bar_h = int(spec["bar"])
-        self._panel_width = bounded_panel(spec["panel"])
+        values = _dev_values(self.app.store.data["appearance"], self._dev)
+        self._bar_h = values["bar"]
+        self._panel_width = values["panel"]
         self.apply_theme()
 
     def _fill_from_store(self):
@@ -4050,13 +4175,21 @@ class MainWindow(QMainWindow):
         theme = _shown_theme(appearance.get("theme"))
         state = (theme, {key: appearance.get(key) for key in (
             "accentColor", "accentColor2", "uiFontSize", "chatFontSize",
-            "subFont", "subFontSize", "subColor", "style")}, deepcopy(self._dev))
+            "subFont", "subFontSize", "subColor", "style", "panelWidth", "mainPanel")}, deepcopy(self._dev))
         if state == getattr(self, "_theme_state", None):
             return
         self._theme_state = state
+        self._banner_row.setDirection(QHBoxLayout.Direction.RightToLeft if self._panel_left() else
+                                      QHBoxLayout.Direction.LeftToRight)
+        self.panel_home.set_kind("arrow_left" if self._panel_left() else "arrow_right")
+        if not self._dev.get("panel_drag", True):
+            self._panel_pos = None
+        for widget in (self.banner, self.users_title, self.playlist_title, self.chat_title):
+            widget.setMouseTracking(True)
+            widget.setCursor(Qt.CursorShape.PointingHandCursor if widget is self.banner else Qt.CursorShape.ArrowCursor)
         accent = appearance.get("accentColor")
         self.setStyleSheet(_stylesheet(theme, accent, self._face_paint(theme)) + self._chrome_css(theme))
-        dev = self._dev or {}
+        dev = _dev_values(appearance, self._dev)
         ui = dev.get("ui") or {}
         ui_point = max(1, min(96, int(ui.get("size") or appearance.get("uiFontSize") or 13)))
         font = QFont()
@@ -4141,7 +4274,7 @@ class MainWindow(QMainWindow):
         self._apply_subtitles()
         self._refresh_osd()
         pal = _palette(theme, appearance.get("accentColor"))
-        for button in (self.play, self.ready, self.chat_btn, self.room, self.gear, self.bar_send, self.volume_btn, self.tracks_btn, self.mute_h, self.mute_v):
+        for button in (self.play, self.ready, self.chat_btn, self.room, self.gear, self.panel_home, self.bar_send, self.volume_btn, self.tracks_btn, self.mute_h, self.mute_v):
             button.set_ink(pal["button_fg"], pal["on_fg"], pal["accent"])
         self._refresh_banner()
         self._refresh_files()
@@ -4255,7 +4388,7 @@ class MainWindow(QMainWindow):
             self.board.plate_alpha = max(0, min(255, int(round(percent / 100.0 * 255))))
 
     def _style_titles(self):
-        spec = (self._dev or {}).get("titles") or {}
+        spec = _dev_values(self.app.store.data["appearance"], self._dev)["titles"]
         theme = _shown_theme(self.app.store.data["appearance"].get("theme"))
         ink = _dev_ink(spec, theme)
         css = "background: transparent; font-size: {}pt; font-weight: {};".format(
@@ -4280,17 +4413,11 @@ class MainWindow(QMainWindow):
             return
         look = self.app.store.data["appearance"]
         theme = _shown_theme(look.get("theme"))
-        dev = (self._dev or {}).get("sub")
-        if dev:
-            family = font_name(dev.get("family"))
-            size = int(dev.get("size") or 55)
-            color = hex_color(_dev_ink(dev, theme), "#FFFFFF")
-            bold = "yes" if dev.get("bold") else "no"
-        else:
-            family = font_name(look.get("subFont"))
-            size = int(look.get("subFontSize") or 55)
-            color = hex_color(look.get("subColor"), "#FFFFFF")
-            bold = "no"
+        dev = _dev_values(look, self._dev)["sub"]
+        family = font_name(dev["family"])
+        size = dev["size"]
+        color = hex_color(_dev_ink(dev, theme), "#FFFFFF")
+        bold = "yes" if dev["bold"] else "no"
         self._set("sub-font", family)
         self._set("sub-font-size", size)
         self._set("sub-bold", bold)
@@ -4323,9 +4450,12 @@ class MainWindow(QMainWindow):
         gap = FLOAT_GAP if self._is_modern() else 0
         side = max(gap, int(round(width * self._bar_cut() / 100.0)))
         # Fixed-size controls must fit even when the floating bar is narrow.
-        minimum = self.bar.layout().minimumSize().width()
+        minimum = max(self.bar.layout().minimumSize().width(), int(self._dev.get("bar_min", 0)))
         side = max(0, min(side, (width - minimum) // 2))
         return QRect(side, max(0, height - inset - gap), max(1, width - side * 2), inset)
+
+    def _panel_left(self):
+        return self.app.store.data["appearance"].get("mainPanel") == "left"
 
     def _panel_rect(self):
         width = self.stage.width()
@@ -4335,7 +4465,8 @@ class MainWindow(QMainWindow):
         lift = POP_GAP if gap else 0
         panel_width = self._panel_span(width)
         panel_height = max(0, height - inset - gap - lift - gap)
-        return QRect(max(0, width - panel_width - gap), gap, panel_width, panel_height)
+        x = gap if self._panel_left() else max(0, width - panel_width - gap)
+        return QRect(x, gap, panel_width, panel_height)
 
     def _slide_panel(self, animate):
         end = self._panel_rect()
@@ -4361,38 +4492,105 @@ class MainWindow(QMainWindow):
         screen = self.screen()
         if screen is None:
             return False
-        if event.globalPosition().x() < screen.geometry().right() - (EDGE_PX - 1):
+        x = event.globalPosition().x()
+        if screen.geometry().left() + EDGE_PX <= x < screen.geometry().right() - (EDGE_PX - 1):
             return False
         self.set_panel(not self._panel_open)
         return True
 
     def _press_grip(self, watched, event):
-        if watched is not self.panel or not self._panel_open:
+        if not self._panel_open:
             return False
         if event.button() != Qt.MouseButton.LeftButton:
             return False
         local = self.panel.mapFromGlobal(event.globalPosition().toPoint())
-        if local.x() > GRIP_PX or local.y() < 0 or local.y() > self.panel.height():
+        origin = event.globalPosition().toPoint()
+        if watched is self.panel and self.panel.height() - GRIP_PX <= local.y() < self.panel.height():
+            self._grip = ("height", origin, self.chat.height())
+        elif watched is self.panel and self._width_grip(local):
+            self._grip = ("width", origin, self._panel_width)
+        elif self._dev.get("panel_drag", True) and watched in (self.panel, self.banner, self.users_title, self.playlist_title, self.chat_title):
+            self._grip = ("move", origin, self.panel.pos(), watched)
+        else:
             return False
-        self._grip = (event.globalPosition().x(), self._panel_width)
+        self._grip_moved = False
+        self.panel.grabMouse()
         return True
 
     def _drag_grip(self, event):
-        start_x, start_w = self._grip
-        delta = start_x - event.globalPosition().x()
-        self._panel_width = bounded_panel(start_w + delta)
+        mode, origin, initial, *_ = self._grip
+        delta = event.globalPosition().toPoint() - origin
+        if not self._grip_moved and delta.manhattanLength() < QApplication.startDragDistance():
+            return
+        self._grip_moved = True
+        if mode == "width":
+            delta_x = delta.x() if self._panel_left() else -delta.x()
+            self._panel_width = bounded_panel(initial + delta_x)
+        elif mode == "height":
+            cap = max(1, min(2160, initial + delta.y()))
+            if cap == 340:
+                self._dev.pop("chat_max", None)
+            else:
+                self._dev["chat_max"] = cap
+        else:
+            self._panel_pos = initial + delta
+            self.panel.setCursor(Qt.CursorShape.ArrowCursor)
         self._place_overlays()
+
+    def _release_grip(self, click_banner=True):
+        grip = self._grip
+        self._grip = None
+        self.panel.releaseMouse()
+        self.panel.unsetCursor()
+        if self._grip_moved:
+            if grip[0] == "width":
+                self._save_panel_width()
+            elif grip[0] == "height":
+                self.app.store.data["appearance"]["dev"] = deepcopy(self._dev)
+                self.app.store.save()
+        elif click_banner and grip[0] == "move" and grip[3] is self.banner:
+            self.banner.clicked.emit()
+
+    def _reset_panel_position(self):
+        self._panel_pos = None
+        self._place_overlays()
+
+    def _position_panel(self):
+        bounds = self._panel_rect()
+        x = bounds.x()
+        y = bounds.y()
+        if self._dev.get("panel_center", True):
+            y += max(0, (bounds.height() - self.panel.height()) // 2)
+        home = QPoint(x, y)
+        manual = self._dev.get("panel_drag", True) and self._panel_pos is not None
+        if manual:
+            x, y = self._panel_pos.x(), self._panel_pos.y()
+        gap = FLOAT_GAP if self._is_modern() else 0
+        x = max(gap, min(x, self.stage.width() - self.panel.width() - gap))
+        y = max(bounds.y(), min(y, bounds.bottom() + 1 - self.panel.height()))
+        self.panel.move(x, y)
+        moved = manual and self.panel.pos() != home
+        if not moved:
+            self._panel_pos = None
+        if self.panel_home.isHidden() == moved:
+            self.panel_home.setVisible(moved)
+            self.panel.layout().activate()
 
     def _save_panel_width(self):
         self.app.store.data["appearance"]["panelWidth"] = bounded_panel(self._panel_width)
-        if self._dev:
-            self._dev["panel"] = bounded_panel(self._panel_width)
-            self.app.store.data["appearance"]["dev"] = deepcopy(self._dev)
+        self._dev.pop("panel", None)
+        self.app.store.data["appearance"]["dev"] = deepcopy(self._dev)
         self.app.store.save()
+
+    def _width_grip(self, point):
+        distance = self.panel.width() - 1 - point.x() if self._panel_left() else point.x()
+        return 0 <= distance <= GRIP_PX
 
     def _grip_cursor(self, event):
         local = self.panel.mapFromGlobal(event.globalPosition().toPoint())
-        if 0 <= local.x() <= GRIP_PX:
+        if self.panel.height() - GRIP_PX <= local.y() < self.panel.height():
+            self.panel.setCursor(Qt.CursorShape.SizeVerCursor)
+        elif self._width_grip(local):
             self.panel.setCursor(Qt.CursorShape.SizeHorCursor)
         else:
             self.panel.unsetCursor()
@@ -4782,7 +4980,7 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "chat"):
             return False
         layout = self.panel.layout()
-        chat_max = int(self._dev.get("chat_max") or 16777215)
+        chat_max = int(self._dev.get("chat_max", 340) or 16777215)
         self.chat.setMaximumHeight(chat_max)
         margins = layout.contentsMargins()
         visible = [layout.itemAt(index) for index in range(layout.count()) if not layout.itemAt(index).isEmpty()]
@@ -4804,6 +5002,7 @@ class MainWindow(QMainWindow):
         unused = max(0, available - height - chat_max)
         self.panel.resize(self.panel.width(), panel_height - unused)
         layout.activate()
+        self._position_panel()
         if changed:
             self._center_current_file()
         return changed
@@ -4866,6 +5065,8 @@ class MainWindow(QMainWindow):
             widget.setText(shown)
 
     def _retranslate(self):
+        self.panel_home.setToolTip(tr(114))
+        self.panel_home.setAccessibleName(tr(114))
         for widget in self.findChildren(QWidget):
             number = widget.property("phrase")
             if number:
@@ -4888,7 +5089,7 @@ class MainWindow(QMainWindow):
         after = self.app.store.data["appearance"]
         if any(before.get(key) != after.get(key) for key in (
                 "theme", "style", "accentColor", "accentColor2", "uiFontSize",
-                "chatFontSize", "subFont", "subFontSize", "subColor")):
+                "chatFontSize", "subFont", "subFontSize", "subColor", "mainPanel")):
             self.apply_theme()
         if before.get("volumeMax") != after.get("volumeMax"):
             self._apply_volume_max()
@@ -4999,6 +5200,7 @@ class MainWindow(QMainWindow):
         state = event.get("state") or ""
         was = self._connected
         self._connected = state == "connected"
+        self._connecting = state == "connecting"
         if not self._connected:
             self._alone_pending = False
             self._alone_until = 0.0
@@ -5011,7 +5213,7 @@ class MainWindow(QMainWindow):
         self._failed = state == "failed"
         if state == "failed":
             self._set_status(event.get("text") or "")
-        if state == "connected":
+        elif state in ("connected", "connecting", "disconnected"):
             self._set_status("")
         if self._connected and not was:
             self._notify_background("yucha", tr(6))
@@ -5035,25 +5237,20 @@ class MainWindow(QMainWindow):
     def _refresh_banner(self):
         if not hasattr(self, "banner_text"):
             return
-        pal = _palette(_shown_theme(self.app.store.data["appearance"].get("theme")))
         if not self._configured():
             text, color = tr(5), "#D6B23A"
         elif self._connected:
             self._chat_held = False
             text, color = tr(6), "#3EAD62"
-        elif self._chat_held:
-            text, color = tr(7), "#D6B23A"
-        elif self._failed:
-            text, color = tr(8), pal["bad"]
-        else:
+        elif self._connecting:
             text, color = tr(9), "#D6B23A"
-        self.banner_text.setText(text)
-        if self._connected and self._configured():
-            self.banner_text.setStyleSheet("color: {}; font-size: {}pt; background: transparent;".format(
-                color, max(1, self.font().pointSize() - 1)
-            ))
         else:
-            self.banner_text.setStyleSheet("")
+            text, color = tr(7), "#C4453C"
+        self.banner_text.setText(text)
+        size = self.font().pointSize() - (1 if self._connected and self._configured() else 0)
+        self.banner_text.setStyleSheet("color: {}; font-size: {}pt; background: transparent;".format(
+            color, max(1, size)
+        ))
         self.banner_dot.setStyleSheet("color: {}; background: transparent;".format(color))
         self.reconnect.setVisible(bool(self._failed and self._configured()))
         self._fit_playlist()
@@ -5314,14 +5511,9 @@ class MainWindow(QMainWindow):
         self._osd = kept
         appearance = self.app.store.data["appearance"]
         theme = _shown_theme(appearance.get("theme"))
-        point = int(appearance.get("chatFontSize") or 17)
-        osd = (getattr(self, "_dev", None) or {}).get("osd")
-        if osd:
-            self.board.force = osd
-            point = int(osd.get("size") or point)
-        else:
-            self.board.force = None
-        point = max(1, min(96, point))
+        osd = _dev_values(appearance, self._dev)["osd"]
+        self.board.force = osd
+        point = max(1, min(96, int(osd["size"])))
         self.board.bar_h = self._bar_height() + (FLOAT_GAP if self._is_modern() else 0)
         page = _palette(theme, appearance.get("accentColor"))
         page["border"] = self._face_paint(theme).get("border", page["border"])

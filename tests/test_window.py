@@ -10,19 +10,22 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "third_party" / "syncplay"))
 
-from PySide6.QtCore import QEvent, QObject, QPoint, Qt, Signal
-from PySide6.QtGui import QColor, QFontMetrics, QImage, QKeyEvent, QPainter, QPalette
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, Qt, Signal
+from PySide6.QtGui import QColor, QFontMetrics, QImage, QKeyEvent, QMouseEvent, QPainter, QPalette
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QFormLayout, QLabel, QWidget
 
+from syncplay.messages import getMessage
 from yucha.app import App
+from yucha.bridge import Bridge
+from yucha.player_ui import PlayerUI
 from yucha.configstore import DEFAULTS, ConfigStore
 from yucha import __version__, i18n
 from yucha.i18n import system_language
@@ -144,6 +147,17 @@ class WindowTests(unittest.TestCase):
         target = self.window.childAt(self.window.mapFromGlobal(global_point))
         self.assertIsNotNone(target)
         QTest.mouseClick(target, Qt.MouseButton.LeftButton, pos=target.mapFromGlobal(global_point))
+        self.qt.processEvents()
+
+    def drag(self, widget, point, delta):
+        destination = widget.mapToGlobal(point) + delta
+        QTest.mousePress(widget, Qt.MouseButton.LeftButton, pos=point)
+        self.qt.sendEvent(widget, QMouseEvent(QEvent.Type.MouseMove,
+            QPointF(widget.mapFromGlobal(destination)), QPointF(destination),
+            Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+        self.qt.sendEvent(widget, QMouseEvent(QEvent.Type.MouseButtonRelease,
+            QPointF(widget.mapFromGlobal(destination)), QPointF(destination),
+            Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier))
         self.qt.processEvents()
 
     def test_space_pauses_once_when_ready_and_playing(self):
@@ -415,6 +429,7 @@ class WindowTests(unittest.TestCase):
 
     def test_panel_bottom_follows_chat_limit_with_unchanged_padding_and_top(self):
         window = self.window
+        window._dev["panel_center"] = False
         window.set_panel(True)
         for style in ("classic", "modern"):
             self.store.data["appearance"]["style"] = style
@@ -450,7 +465,7 @@ class WindowTests(unittest.TestCase):
     def test_chat_maximum_height_previews_and_dev_reset_and_cancel_restore_it(self):
         self.window.set_panel(True)
         dialog = self.dialog()
-        self.assertEqual(dialog._chat_max.value(), 0)
+        self.assertEqual(dialog._chat_max.value(), 340)
         self.assertEqual(dialog._chat_max.specialValueText(), i18n.tr(109))
         form = dialog._chat_max.parentWidget().layout()
         self.assertEqual(form.labelForField(dialog._chat_max).text(), i18n.tr(108))
@@ -460,7 +475,7 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(self.window.chat.height(), 150)
         dialog._reset_dev()
         self.qt.processEvents()
-        self.assertEqual(dialog._chat_max.value(), 0)
+        self.assertEqual(dialog._chat_max.value(), 340)
         self.assertGreater(self.window.chat.height(), 150)
         dialog.reject()
         self.assertNotIn("chat_max", self.window._dev)
@@ -580,7 +595,7 @@ class WindowTests(unittest.TestCase):
                 self.qt.processEvents()
                 self.assertEqual((users.names.width(), users.files_scroll.width(), users.sizes.width()), changed)
 
-    def test_connected_banner_is_smaller_and_green_only_when_connected(self):
+    def test_connection_banner_uses_matching_text_and_dot_colors(self):
         try:
             for language in ("English", "Russian"):
                 i18n.use(language)
@@ -588,22 +603,58 @@ class WindowTests(unittest.TestCase):
                     with self.subTest(language=language, theme=theme):
                         self.store.data["appearance"]["theme"] = theme
                         self.window.apply_theme()
-                        self.window._connected = True
-                        self.window._refresh_banner()
-                        label = self.window.banner_text
-                        self.assertEqual(label.text(), i18n.tr(6))
-                        self.assertEqual(label.font().pointSize(), self.window.font().pointSize() - 1)
-                        self.assertEqual(label.palette().color(QPalette.ColorRole.WindowText), QColor("#3EAD62"))
-                        self.window._connected = False
-                        for failed, held, message in ((False, False, 9), (True, False, 8), (False, True, 7)):
-                            self.window._failed = failed
-                            self.window._chat_held = held
-                            self.window._refresh_banner()
+                        for state, message, color in (("connected", 6, "#3EAD62"),
+                                ("disconnected", 7, "#C4453C"), ("connecting", 9, "#D6B23A"),
+                                ("failed", 7, "#C4453C")):
+                            self.window._on_conn({"state": state})
+                            label = self.window.banner_text
                             self.assertEqual(label.text(), i18n.tr(message))
-                            self.assertEqual(label.font().pointSize(), self.window.font().pointSize())
-                            self.assertEqual(label.palette().color(QPalette.ColorRole.WindowText), QColor(_palette(theme)["fg"]))
+                            size = self.window.font().pointSize() - (1 if state == "connected" else 0)
+                            self.assertEqual(label.font().pointSize(), size)
+                            for field in (label, self.window.banner_dot):
+                                self.assertEqual(field.palette().color(QPalette.ColorRole.WindowText), QColor(color))
+                        self.window._chat_held = True
+                        self.window._on_conn({"state": "connecting"})
+                        self.assertEqual(label.text(), i18n.tr(9))
         finally:
             i18n.use("English")
+
+    def test_reconnect_notifications_update_the_banner_until_the_room_is_joined(self):
+        self.app.bridge = Bridge(Path(self.temp.name))
+        ui = PlayerUI(self.app.bridge)
+        def message(key, *args, state):
+            ui.showMessage(getMessage(key).format(*args))
+            self.window._read_events()
+            self.assertEqual(self.window._connected, state == "connected")
+            self.assertEqual(ui._connected, state == "connected")
+            self.assertEqual(self.window._connecting, state == "connecting")
+        message("connection-attempt-notification", "example.test", 8999, state="connecting")
+        message("reachout-successful-notification", "example.test", "127.0.0.1", state="connecting")
+        message("connected-successful-notification", state="connected")
+        from syncplay.client import SyncplayClient
+        client = MagicMock(ui=ui)
+        for _ in range(2):
+            SyncplayClient._performRetryStateReset(client)
+            self.window._read_events()
+            self.assertFalse(ui._connected)
+            self.assertFalse(self.window._connected)
+            self.assertTrue(self.window._connecting)
+            self.assertEqual(self.window.banner_text.text(), i18n.tr(9))
+        message("connected-successful-notification", state="connected")
+        message("disconnection-notification", state="failed")
+        self.assertEqual(self.window.banner_text.text(), i18n.tr(7))
+        ui.showErrorMessage(getMessage("wrong-password-server-error"))
+        self.window._read_events()
+        specific = self.window.status.text()
+        message("disconnection-notification", state="failed")
+        self.assertEqual(self.window.status.text(), specific)
+        message("connection-attempt-notification", "example.test", 8999, state="connecting")
+        self.assertFalse(self.window.status.text())
+        self.assertIsNone(ui._fail_text)
+        message("connected-successful-notification", state="connected")
+        ui.showMessage("<friend> " + getMessage("reconnection-attempt-notification"))
+        self.window._read_events()
+        self.assertTrue(self.window._connected)
 
     def test_space_repeats_and_chat_do_not_toggle_playback(self):
         self.window.ready.setChecked(True)
@@ -707,6 +758,268 @@ class WindowTests(unittest.TestCase):
         self.qt.processEvents()
         self.click_at(self.window.panel, QPoint(self.window.panel.width() - 2, 5))
         self.assertTrue(self.window._panel_open)
+
+    def test_panel_bottom_drag_saves_chat_height_without_changing_the_padding(self):
+        window = self.window
+        window.resize(1280, 1100)
+        window.set_panel(True)
+        self.qt.processEvents()
+        self.assertEqual(window.chat.height(), 340)
+        original = window.panel.height()
+        self.drag(window.panel, QPoint(window.panel.width() // 2, original - 2), QPoint(0, -80))
+        self.assertEqual(window.chat.height(), 260)
+        self.assertEqual(window.panel.height(), original - 80)
+        self.assertEqual(window.panel.height() - window.chat.y() - window.chat.height(), 16)
+        self.assertEqual(ConfigStore().data["appearance"]["dev"], {"chat_max": 260})
+        dialog = self.dialog()
+        self.assertEqual(dialog._chat_max.value(), 260)
+        dialog.reject()
+        self.drag(window.panel, QPoint(window.panel.width() // 2, window.panel.height() - 2), QPoint(0, 80))
+        self.assertEqual(window.chat.height(), 340)
+        self.assertEqual(ConfigStore().data["appearance"]["dev"], {})
+        # The original width grip still persists the ordinary panel width.
+        self.drag(window.panel, QPoint(2, 80), QPoint(-60, 0))
+        self.assertEqual(ConfigStore().data["appearance"]["panelWidth"], 440)
+        self.assertEqual(ConfigStore().data["appearance"]["dev"], {})
+
+    def test_panel_center_drag_and_home_stay_above_the_bar(self):
+        window = self.window
+        window.resize(1280, 1100)
+        window.set_panel(True)
+        window.apply_dev({})
+        self.qt.processEvents()
+        for field in (window.users_title, window.playlist_title, window.chat_title):
+            self.assertEqual(field.cursor().shape(), Qt.CursorShape.ArrowCursor)
+        for field in (window.gear, window.panel_home, window.banner):
+            self.assertEqual(field.cursor().shape(), Qt.CursorShape.PointingHandCursor)
+        for point, cursor in ((QPoint(2, 80), Qt.CursorShape.SizeHorCursor),
+                (QPoint(window.panel.width() // 2, window.panel.height() - 2), Qt.CursorShape.SizeVerCursor),
+                (QPoint(window.panel.width() - 2, 10), Qt.CursorShape.ArrowCursor)):
+            QTest.mouseMove(window.panel, point)
+            self.assertEqual(window.panel.cursor().shape(), cursor)
+        bounds = window._panel_rect()
+        expected = QPoint(bounds.x(), bounds.y() + (bounds.height() - window.panel.height()) // 2)
+        self.assertEqual(window.panel.pos(), expected)
+        self.assertTrue(window.panel_home.isHidden())
+        window._open_settings = Mock()
+        self.drag(window.banner, window.banner.rect().center(), QPoint(60, 0))
+        self.assertEqual(window.panel.pos(), expected)
+        self.assertIsNone(window._panel_pos)
+        self.assertTrue(window.panel_home.isHidden())
+        self.drag(window.banner, window.banner.rect().center(), QPoint(-400, -80))
+        self.assertEqual(window.panel.pos(), expected + QPoint(-400, -80))
+        self.assertTrue(window.panel_home.isVisible())
+        window._open_settings.assert_not_called()
+        for delta in (QPoint(-10000, -10000), QPoint(10000, 10000)):
+            self.drag(window.banner, window.banner.rect().center(), delta)
+            self.assertGreaterEqual(window.panel.x(), 12)
+            self.assertGreaterEqual(window.panel.y(), bounds.y())
+            self.assertLessEqual(window.panel.geometry().right(), window.stage.width() - 13)
+            self.assertLessEqual(window.panel.geometry().bottom(), window._bar_rect().top() - 9)
+        window.resize(900, 600)
+        self.qt.processEvents()
+        self.assertLessEqual(window.panel.geometry().right(), window.stage.width() - 13)
+        self.assertLessEqual(window.panel.geometry().bottom(), window._bar_rect().top() - 9)
+        window.resize(1280, 1100)
+        self.qt.processEvents()
+        window.panel_home.click()
+        self.assertEqual(window.panel.pos(), expected)
+        self.assertTrue(window.panel_home.isHidden())
+        QTest.mouseClick(window.banner, Qt.MouseButton.LeftButton)
+        window._open_settings.assert_called_once_with(0)
+        self.drag(window.banner, window.banner.rect().center(), QPoint(-100, -30))
+        manual = window.panel.pos()
+        dialog = self.dialog()
+        dialog._panel_flags["panel_drag"].setChecked(False)
+        self.assertIsNone(window._panel_pos)
+        dialog.reject()
+        self.assertEqual(window.panel.pos(), manual)
+        self.assertTrue(window.panel_home.isVisible())
+        window._open_settings.reset_mock()
+        QTest.mousePress(window.banner, Qt.MouseButton.LeftButton)
+        self.qt.sendEvent(window.banner, QEvent(QEvent.Type.UngrabMouse))
+        self.assertIsNotNone(window._grip)
+        self.qt.sendEvent(window.panel, QEvent(QEvent.Type.UngrabMouse))
+        self.assertIsNone(window._grip)
+        QTest.mouseRelease(window.panel, Qt.MouseButton.LeftButton)
+        window._open_settings.assert_not_called()
+        window.apply_dev({"panel_drag": False})
+        self.assertEqual(window.panel.pos(), expected)
+        self.assertIsNone(window._panel_pos)
+        self.assertTrue(window.panel_home.isHidden())
+        window.apply_dev({"panel_center": False})
+        self.assertEqual(window.panel.y(), bounds.y())
+
+    def test_panel_options_and_minimum_bar_width_preview_save_and_reset(self):
+        dialog = self.dialog()
+        self.assertEqual(dialog._chat_max.value(), 340)
+        self.assertTrue(dialog._panel_flags["panel_center"].isChecked())
+        self.assertTrue(dialog._panel_flags["panel_drag"].isChecked())
+        self.assertEqual(dialog._bar_min.value(), 0)
+        dialog._panel_flags["panel_center"].setChecked(False)
+        dialog._panel_flags["panel_drag"].setChecked(False)
+        dialog._bar_min.setValue(1000)
+        self.assertEqual(self.window._bar_rect().width(), 1000)
+        dialog._accept()
+        self.app.on_command({"c": "appearance", **dialog.appearance})
+        self.app.store = ConfigStore()
+        restarted = self.make_window()
+        self.assertFalse(restarted._dev["panel_center"])
+        self.assertFalse(restarted._dev["panel_drag"])
+        self.assertFalse(restarted.panel_home.isVisible())
+        restarted.set_panel(True)
+        self.assertTrue(restarted.panel_home.isHidden())
+        self.assertEqual(restarted._bar_rect().width(), 1000)
+        restarted.resize(900, 600)
+        self.qt.processEvents()
+        self.assertEqual(restarted._bar_rect().width(), restarted.stage.width())
+        self.app.store = self.store
+        dialog = self.dialog()
+        dialog._panel_flags["panel_drag"].setChecked(True)
+        dialog._bar_min.setValue(300)
+        dialog.reject()
+        self.assertFalse(self.window._dev["panel_drag"])
+        self.assertEqual(self.window._dev["bar_min"], 1000)
+        dialog = self.dialog()
+        dialog._reset_dev()
+        self.assertEqual(self.window._dev, {})
+        self.assertTrue(self.window.panel_home.isHidden())
+        self.assertTrue(dialog._panel_flags["panel_center"].isChecked())
+        self.assertTrue(dialog._panel_flags["panel_drag"].isChecked())
+        self.assertEqual(ConfigStore().data["appearance"]["dev"], {})
+        dialog.reject()
+
+    def test_both_fullscreen_edges_toggle_the_panel_without_affecting_windowed_clicks(self):
+        window = self.window
+        self.assertFalse(window._panel_open)
+        self.click_at(window.stage, QPoint(1, 1))
+        self.assertFalse(window._panel_open)
+        window.showFullScreen()
+        self.qt.processEvents()
+        for point in (QPoint(1, 1), QPoint(window.stage.width() - 1, 1)):
+            self.click_at(window.stage, point)
+            self.assertTrue(window._panel_open)
+            window.set_panel(False)
+
+    def test_banner_hover_keeps_the_pointing_cursor_and_room_click(self):
+        window = self.window
+        window.set_panel(True)
+        self.qt.processEvents()
+        window._grip_cursor = Mock(wraps=window._grip_cursor)
+        for field in (window.banner, window.banner_text, window.banner_dot):
+            QTest.mouseMove(window.video, window.video.rect().center())
+            window._grip_cursor.reset_mock()
+            point = field.mapTo(window.banner, field.rect().center())
+            QTest.mouseMove(window.banner, point)
+            self.qt.processEvents()
+            window._grip_cursor.assert_not_called()
+            self.assertEqual(window.banner.cursor().shape(), Qt.CursorShape.PointingHandCursor)
+        window._open_settings = Mock()
+        QTest.mouseClick(window.banner, Qt.MouseButton.LeftButton)
+        window._open_settings.assert_called_once_with(0)
+
+    def test_left_panel_mirrors_controls_geometry_and_the_width_grip(self):
+        window = self.window
+        window.resize(1280, 1100)
+        window.set_panel(True)
+        for style in ("modern", "classic"):
+            with self.subTest(style=style):
+                look = self.store.data["appearance"]
+                look.update(style=style, mainPanel="right")
+                window.apply_dev({})
+                window._reset_panel_position()
+                self.qt.processEvents()
+                right = window.panel.geometry()
+                look["mainPanel"] = "left"
+                window.apply_theme()
+                self.qt.processEvents()
+                left = window.panel.geometry()
+                gap = 12 if style == "modern" else 0
+                self.assertEqual(left.x(), gap)
+                self.assertEqual(right.x(), window.stage.width() - left.width() - gap)
+                self.assertEqual(left.size(), right.size())
+                self.assertEqual(left.y(), right.y())
+                self.assertEqual(window.panel_home.kind, "arrow_left")
+                self.assertTrue(window.panel_home.isHidden())
+                self.drag(window.banner, window.banner.rect().center(), QPoint(400, 40))
+                self.assertNotEqual(window.panel.pos(), left.topLeft())
+                self.assertTrue(window.panel_home.isVisible())
+                self.assertLess(window.panel_home.x(), window.gear.x())
+                self.assertLess(window.gear.x(), window.banner.x())
+                self.assertLess(window.panel.geometry().bottom(), window._bar_rect().top() - (8 if gap else 0))
+                window.panel_home.click()
+                self.assertEqual(window.panel.geometry(), left)
+                self.assertTrue(window.panel_home.isHidden())
+                self.drag(window.panel, QPoint(window.panel.width() - 2, 80), QPoint(60, 0))
+                self.assertEqual(window.panel.width(), left.width() + 60)
+                self.assertEqual(window.panel.x(), gap)
+                self.assertTrue(window.panel_home.isHidden())
+                window.apply_dev({"panel_drag": False})
+                self.assertTrue(window.panel_home.isHidden())
+                self.assertLess(window.gear.x(), window.banner.x())
+                look["mainPanel"] = "right"
+                window.apply_dev({})
+                self.qt.processEvents()
+                self.assertEqual(window.panel_home.kind, "arrow_right")
+                self.assertTrue(window.panel_home.isHidden())
+                self.drag(window.banner, window.banner.rect().center(), QPoint(-60, 0))
+                self.assertTrue(window.panel_home.isVisible())
+                self.assertLess(window.banner.x(), window.gear.x())
+                self.assertLess(window.gear.x(), window.panel_home.x())
+
+    def test_panel_side_preview_cancel_save_and_resets(self):
+        window = self.window
+        window.resize(1280, 1100)
+        window.set_panel(True)
+        self.qt.processEvents()
+        try:
+            for language, choices in (("English", ["Right", "Left"]), ("Russian", ["Справа", "Слева"])):
+                i18n.use(language)
+                dialog = self.dialog()
+                self.assertEqual([dialog.main_panel.itemText(i) for i in range(2)], choices)
+                dialog.reject()
+        finally:
+            i18n.use("English")
+        window._panel_pos = QPoint(200, 100)
+        window._place_overlays()
+        before = window.panel.pos()
+        dialog = self.dialog()
+        self.assertEqual(dialog.main_panel.currentData(), "right")
+        dialog.main_panel.setCurrentIndex(1)
+        self.assertEqual(window.panel.x(), 12)
+        self.assertEqual(ConfigStore().data["appearance"]["mainPanel"], "right")
+        dialog.main_panel.setCurrentIndex(0)
+        dialog.reject()
+        self.assertEqual(window.panel.pos(), before)
+        room = copy.deepcopy(self.store.data["connection"])
+        def edit(dialog):
+            dialog.main_panel.setCurrentIndex(1)
+            dialog._accept()
+            return QDialog.DialogCode.Accepted
+        with patch.object(SettingsDialog, "exec", edit):
+            window._open_settings()
+        self.app.store = ConfigStore()
+        restarted = self.make_window()
+        restarted.set_panel(True)
+        self.assertEqual(restarted.panel.x(), 12)
+        self.assertEqual(restarted.panel_home.kind, "arrow_left")
+        self.assertEqual(self.app.store.data["connection"], room)
+        self.app.store = self.store
+        window._panel_pos = QPoint(200, 100)
+        window._place_overlays()
+        dialog = self.dialog()
+        dialog._reset_dev()
+        self.assertEqual(window.panel.x(), 12)
+        self.assertEqual(ConfigStore().data["appearance"]["mainPanel"], "left")
+        dialog.reject()
+        dialog = self.dialog()
+        dialog._reset_standard()
+        self.assertEqual(dialog.main_panel.currentData(), "right")
+        self.assertEqual(window.panel_home.kind, "arrow_right")
+        self.assertEqual(window.panel.x(), window.stage.width() - window.panel.width() - 12)
+        self.assertEqual(ConfigStore().data["appearance"]["mainPanel"], "right")
+        self.assertEqual(ConfigStore().data["connection"], room)
+        dialog.reject()
 
     def test_horizontal_volume_number_has_the_same_background_as_panel(self):
         self.window.video.setStyleSheet("background: #325FC0;")
@@ -815,29 +1128,77 @@ class WindowTests(unittest.TestCase):
         self.assertTrue(dialog.ui_size._numbers)
         dialog.reject()
 
-    def test_reset_restores_all_dev_defaults_and_is_saved(self):
+    def test_dev_activation_does_not_save_values_and_edits_are_sparse(self):
+        self.store.data["appearance"]["devTab"] = False
+        dialog = self.dialog()
+        for _ in range(5):
+            dialog._logo_pressed()
+        self.assertEqual(self.window._dev, {})
+        dialog._accept()
+        self.app.on_command({"c": "appearance", **dialog.appearance})
+        self.assertEqual(ConfigStore().data["appearance"]["dev"], {})
+        dialog = self.dialog()
+        dialog.gamma_size.setValue(18)
+        dialog._dev_rows["alfa"]["bold"].setChecked(True)
+        dialog._face_rows["border"]["dark"].set_color("#123456")
+        dialog._push_dev()
+        expected = {"gamma": 18, "alfa": {"bold": True}, "face": {"border": {"dark": "#123456"}}}
+        self.assertEqual(self.window._dev, expected)
+        dialog._accept()
+        self.app.on_command({"c": "appearance", **dialog.appearance})
+        self.assertEqual(ConfigStore().data["appearance"]["dev"], expected)
+        dialog = self.dialog()
+        self.assertEqual(dialog._face_rows["border"]["light"]._color.name().upper(),
+                         dialog._dev_defaults()["face"]["border"]["light"])
+        dialog.gamma_size.setValue(10)
+        self.assertNotIn("gamma", self.window._dev)
+        dialog._accept()
+        self.app.on_command({"c": "appearance", **dialog.appearance})
+        self.assertNotIn("gamma", ConfigStore().data["appearance"]["dev"])
+
+    def test_legacy_dev_defaults_are_not_saved_as_overrides(self):
+        dialog = self.dialog()
+        defaults = dialog._dev_defaults()
+        dialog.reject()
+        self.window._dev = defaults
+        self.window._dev["gamma"] = 18
+        dialog = self.dialog()
+        dialog._accept()
+        self.app.on_command({"c": "appearance", **dialog.appearance})
+        self.assertEqual(ConfigStore().data["appearance"]["dev"], {"gamma": 18})
+
+    def test_dev_reset_is_saved_immediately_without_saving_other_previews(self):
         self.store.data["appearance"].update({"uiFontSize": 16, "chatFontSize": 20,
                                               "subFontSize": 58, "subColor": "#AABBCC"})
-        ordinary = copy.deepcopy(self.store.data["appearance"])
-        def edit(dialog):
-            dialog._dev_rows["alfa"]["size"].setValue(29)
-            dialog._bar_alpha.setValue(12)
-            dialog._bar_buttons["volume"].setChecked(False)
-            dialog._reset_dev()
-            self.expected_defaults = dialog._dev_defaults()
-            self.assertEqual(dialog._dev_spec(), self.expected_defaults)
-            dialog._accept()
-            return QDialog.DialogCode.Accepted
-
-        with patch.object(SettingsDialog, "exec", edit):
-            self.window._open_settings()
+        self.window._dev = {"gamma": 19, "bar": 70}
+        self.store.data["appearance"]["dev"] = copy.deepcopy(self.window._dev)
+        self.store.save()
+        before = copy.deepcopy(self.store.data)
+        dialog = self.dialog()
+        dialog.ui_size.setValue(15)
+        dialog._preview_theme()
+        dialog.host.setText("not-saved.example")
+        dialog._reset_dev()
+        self.assertEqual(self.window._dev, {})
+        self.assertEqual(ConfigStore().data["appearance"]["dev"], {})
+        self.assertEqual(ConfigStore().data["appearance"]["uiFontSize"], 16)
+        self.assertEqual(self.window.font().pointSize(), 15)
+        dialog.gamma_size.setValue(24)
+        dialog.reject()
+        before["appearance"]["dev"] = {}
+        self.assertEqual(self.store.data, before)
+        self.assertEqual(ConfigStore().data, before)
+        self.assertEqual(self.window._dev, {})
+        self.assertEqual(self.window.font().pointSize(), 16)
         self.app.store = ConfigStore()
         restarted = self.make_window()
-        self.assertEqual(restarted._dev, self.expected_defaults)
-        for key in ("uiFontSize", "chatFontSize", "subFontSize", "subColor"):
-            self.assertEqual(self.app.store.data["appearance"][key], ordinary[key])
+        self.assertEqual(restarted._dev, {})
+        self.assertEqual(restarted.font().pointSize(), 16)
+        self.assertEqual(restarted.board.font_px, 20)
+        restarted._apply_subtitles()
+        self.assertEqual(restarted.ctl.properties["sub-font-size"], 58)
 
-    def test_other_reset_saves_defaults_without_changing_room_or_dev(self):
+    def test_other_reset_is_saved_immediately_and_preserves_room(self):
         self.store.data["appearance"].update({
             "theme": "light", "style": "classic", "accentColor": "#123456",
             "accentColor2": "#ABCDEF", "chatColor": "#010203", "uiFontSize": 16,
@@ -845,46 +1206,70 @@ class WindowTests(unittest.TestCase):
             "autoplayNext": True, "fastforwardOnDesync": False, "slowOnDesync": False,
             "panelWidth": 650, "volumeOverlay": "vertical"})
         self.window._dev = {"gamma": 18, "ui": {"size": 15}, "panel": 650,
-                            "osd": {"size": 22}, "sub": {"size": 57}}
-        self.window.apply_theme()
-        dev = copy.deepcopy(self.window._dev)
+                            "osd": {"size": 22}, "sub": {"size": 57}, "settings_h": 500}
+        self.store.data["appearance"]["dev"] = copy.deepcopy(self.window._dev)
+        self.window.apply_dev(self.window._dev)
         room = copy.deepcopy(self.store.data["connection"])
         self.app.on_command = Mock(wraps=self.app.on_command)
-
-        def edit(dialog):
-            fields = tuple(field.text() for field in dialog._room_fields)
-            dialog.reset_other.click()
-            self.assertEqual(tuple(field.text() for field in dialog._room_fields), fields)
-            self.assertEqual(self.window._dev, dev)
-            dialog._accept()
-            return QDialog.DialogCode.Accepted
-
-        with patch.object(SettingsDialog, "exec", edit):
-            self.window._open_settings()
+        dialog = self.dialog()
+        dialog.host.setText("pending.example")
+        fields = tuple(field.text() for field in dialog._room_fields)
+        dialog.reset_other.click()
+        self.assertEqual(tuple(field.text() for field in dialog._room_fields), fields)
+        self.assertEqual(self.window._dev, {})
+        self.assertIsNone(dialog._dev_page)
+        self.assertEqual((dialog._page_w, dialog._page_h), (450, 375))
+        self.assertEqual(self.window._panel_width, 380)
+        self.assertEqual(self.window.ctl.properties["volume-max"], 100)
         saved = ConfigStore().data
         for key, value in DEFAULTS["appearance"].items():
-            if key not in ("dev", "devTab"):
-                self.assertEqual(saved["appearance"][key], system_language() if key == "language" else value, key)
-        self.assertEqual(saved["appearance"]["dev"], dev)
-        self.assertTrue(saved["appearance"]["devTab"])
+            self.assertEqual(saved["appearance"][key], system_language() if key == "language" else value, key)
         self.assertEqual(saved["connection"], room)
         self.assertEqual([call.args[0]["c"] for call in self.app.on_command.call_args_list], ["appearance"])
-        self.assertEqual(self.window.ctl.properties["volume-max"], 100)
+        dialog.ui_size.setValue(16)
+        dialog._preview_theme()
+        dialog.reject()
+        self.assertEqual(self.store.data, saved)
+        self.assertEqual(ConfigStore().data, saved)
 
-    def test_cancel_undoes_both_resets(self):
-        self.store.data["appearance"].update({"style": "classic", "uiFontSize": 16})
-        self.window._dev = {"gamma": 19, "bar": 70}
-        self.window.apply_theme()
-        self.store.data["appearance"]["dev"] = copy.deepcopy(self.window._dev)
-        self.store.save()
-        before = copy.deepcopy(self.store.data)
+    def test_other_reset_restores_defaults_with_dev_hidden(self):
+        self.store.data["appearance"].update(devTab=False, dev={"settings_pad": 40, "settings_w": 600})
+        self.window._dev = copy.deepcopy(self.store.data["appearance"]["dev"])
         dialog = self.dialog()
         dialog._reset_standard()
-        dialog._reset_dev()
+        self.assertEqual(dialog._side_layouts[0][0].contentsMargins().left(), 23)
+        self.assertEqual((dialog._page_w, dialog._page_h), (450, 375))
         dialog.reject()
-        self.assertEqual(self.store.data, before)
-        self.assertEqual(self.window._dev, before["appearance"]["dev"])
-        self.assertEqual(ConfigStore().data, before)
+        self.assertEqual(ConfigStore().data["appearance"]["dev"], {})
+
+    def test_other_reset_restores_panel_geometry_and_dev_can_be_reopened(self):
+        self.store.data["appearance"]["panelWidth"] = 650
+        self.window._panel_width = 650
+        self.window.set_panel(True)
+        self.window.apply_theme()
+        self.qt.processEvents()
+        self.assertEqual(self.window.panel.width(), 650)
+        dialog = self.dialog()
+        dialog._reset_standard()
+        self.qt.processEvents()
+        self.assertEqual(self.window.panel.width(), 380)
+        for _ in range(5):
+            dialog._logo_pressed()
+        self.assertIsNotNone(dialog._dev_page)
+        self.assertEqual(self.window._dev, {})
+        dialog.gamma_size.setValue(18)
+        dialog._accept()
+        self.app.on_command({"c": "appearance", **dialog.appearance})
+        self.assertEqual(ConfigStore().data["appearance"]["dev"], {"gamma": 18})
+
+    def test_standard_font_controls_do_not_create_dev_overrides(self):
+        self.window._dev = {"gamma": 18, "ui": {"size": 20, "bold": True}}
+        dialog = self.dialog()
+        dialog.ui_size.setValue(15)
+        dialog._preview_theme()
+        self.assertEqual(self.window._dev, {"gamma": 18, "ui": {"bold": True}})
+        self.assertEqual(dialog._dev_rows["ui"]["size"].value(), 15)
+        dialog.reject()
 
     def test_gamma_changes_only_settings_and_survives_reopening(self):
         ordinary = copy.deepcopy(self.store.data["appearance"])
