@@ -12,7 +12,7 @@ import threading
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QBrush,
     QColor,
@@ -32,6 +32,7 @@ from PySide6.QtGui import (
     QShortcut,
 )
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -54,7 +55,6 @@ from PySide6.QtWidgets import (
     QSlider,
     QSpinBox,
     QStyledItemDelegate,
-    QTabBar,
     QTabWidget,
     QTextEdit,
     QVBoxLayout,
@@ -208,6 +208,9 @@ def _stylesheet(theme, accent=None, paint=None):
         border: 1px solid {border};
         padding: 6px;
         selection-background-color: {accent};
+    }}
+    StepScale, TickSlider, QPushButton#swatch {{
+        color: {fg};
     }}
     QComboBox QAbstractItemView {{
         background: {field};
@@ -373,22 +376,16 @@ def _stylesheet(theme, accent=None, paint=None):
         background: {bg};
         border: none;
     }}
-    QTabBar::tab {{
+    QTabBar::tab, QPushButton#devtab {{
         background: {field};
         color: {fg};
         padding: 2px 12px;
         margin: 0px;
         border: 1px solid {border};
     }}
-    QTabBar::tab:selected {{
+    QTabBar::tab:selected, QPushButton#devtab:checked {{
         background: {accent};
         color: {on_fg};
-    }}
-    QTabBar::tab:disabled {{
-        background: transparent;
-        border: none;
-        padding: 0px;
-        margin: 0px;
     }}
     QListWidget {{
         background: {field};
@@ -568,6 +565,7 @@ def _n(value):
 
 
 _TIME = r"\d+:\d+(?::\d+)?"
+_PLAYING_LINE = re.compile(r"^(.+?) is playing '(.+?)' \([^)]*\)(?: in room: '.*')?$")
 
 
 def _ease(done):
@@ -636,7 +634,7 @@ def _status_spans(text):
         (r"^Reverting speed back to normal$", lambda m: (
             ("text", "1× " + tr(60)),
         )),
-        (r"^(.+?) is playing '(.+?)' \([^)]*\)(?: in room: '.*')?$", lambda m: (
+        (_PLAYING_LINE, lambda m: (
             ("nick", m.group(1)),
             ("text", ": "),
             ("mark", "play"),
@@ -661,7 +659,8 @@ def _spans_html(spans, me, mine, other, bad="#E07474"):
             bits.append('<span style="color: {};">{}</span>'.format(bad, safe))
         elif span["k"] == "mark":
             glyph = html.escape(_MARK_GLYPH.get(span["v"], ""), quote=False)
-            bits.append('<span style="font-size: 0.5em; vertical-align: middle;">{}</span>'.format(glyph))
+            style = "font-size: 1em; font-weight: 700;" if span["v"] == "pause" else "font-size: 0.5em;"
+            bits.append('<span style="{} vertical-align: middle;">{}</span>'.format(style, glyph))
         else:
             bits.append(safe)
     return "".join(bits)
@@ -807,6 +806,9 @@ class NoticeBoard(QWidget):
         self.repaint_frame = None
         self.bar_h = BAR_HEIGHT
         self.force = None
+        self.repeat = 0
+        self._repeat_key = None
+        self._repeat_image = None
         self._timer = QTimer(self)
         self._timer.setInterval(16)
         self._timer.timeout.connect(self._tick)
@@ -857,6 +859,10 @@ class NoticeBoard(QWidget):
         now = time.monotonic()
         y = 16
         left_w = 0
+        if self.repeat:
+            self._paint_repeat(painter, 16, y)
+            y += 56
+            left_w = 64
         if self.notices:
             text_w = max(metrics.horizontalAdvance(line) for line in self.notices)
             box_w = text_w + pad * 2
@@ -920,6 +926,47 @@ class NoticeBoard(QWidget):
                     cursor += metrics.horizontalAdvance(piece["v"])
                 text_y += row_h
             y += box_h + 6
+
+    def _paint_repeat(self, target, x, y):
+        size = max(1, round(48 * target.device().devicePixelRatioF()))
+        key = (self.repeat, self.page["accent"], self.page["border"], self.font().key(), size)
+        if key != self._repeat_key:
+            image = QImage(size * 4, size * 4, QImage.Format.Format_ARGB32_Premultiplied)
+            image.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(image)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+            painter.scale(size * 4 / 48, size * 4 / 48)
+            painter.translate(24, 24)
+            painter.setPen(QPen(QColor(self.page["border"]), 1, Qt.PenStyle.SolidLine,
+                                Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+            painter.setBrush(QColor(self.page["accent"]))
+            arrow = QPainterPath()
+            arrow.arcMoveTo(QRectF(-18, -18, 36, 36), 155)
+            arrow.arcTo(QRectF(-18, -18, 36, 36), 155, -130)
+            for radius, angle in ((23, 25), (15.5, -10), (8, 25), (13, 25)):
+                radians = math.radians(angle)
+                arrow.lineTo(radius * math.cos(radians), -radius * math.sin(radians))
+            arrow.arcTo(QRectF(-13, -13, 26, 26), 25, 130)
+            arrow.closeSubpath()
+            painter.drawPath(arrow)
+            painter.rotate(180)
+            painter.drawPath(arrow)
+            painter.rotate(180)
+            if self.repeat == 1:
+                font = QFont(self.font())
+                font.setPixelSize(18)
+                font.setBold(True)
+                digit = QPainterPath()
+                digit.addText(0, 0, font, "1")
+                center = digit.boundingRect().center()
+                digit.translate(-center.x(), -center.y())
+                painter.drawPath(digit)
+            painter.end()
+            self._repeat_image = image.scaled(size, size, Qt.AspectRatioMode.IgnoreAspectRatio,
+                                              Qt.TransformationMode.SmoothTransformation)
+            self._repeat_key = key
+        target.drawImage(QRectF(x, y, 48, 48), self._repeat_image)
 
     def _box(self, painter, x, y, w, h):
         painter.setPen(Qt.PenStyle.NoPen)
@@ -1001,6 +1048,7 @@ class FileList(QListWidget):
     def __init__(self):
         super().__init__()
         self.setSelectionMode(QListWidget.SelectionMode.NoSelection)
+        self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerItem)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setItemDelegate(FileDelegate(self))
         self._press_item = None
@@ -1010,10 +1058,24 @@ class FileList(QListWidget):
         self._line = QWidget(self.viewport())
         self._line.setFixedHeight(2)
         self._line.hide()
-        self.set_mark("#F4F1EA")
+        self.set_mark("#F4F1EA", "#34363F")
 
-    def set_mark(self, color):
+    def set_mark(self, color, border):
         self._line.setStyleSheet("background: {}; border: none;".format(color))
+        self._border = QColor(border)
+        self.viewport().update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self.viewport())
+        painter.setPen(QPen(self._border, 1))
+        for index in range(max(3, self.count()) - 1):
+            if index < self.count():
+                y = self.visualItemRect(self.item(index)).bottom()
+            else:
+                y = (index + 1) * max(24, QFontMetrics(self.font()).height() + 12) - 1
+            painter.drawLine(6, y, self.viewport().width() - 6, y)
+        painter.end()
 
     def mousePressEvent(self, event):
         item = self.itemAt(event.position().toPoint())
@@ -1193,6 +1255,7 @@ class UserTable(QWidget):
         self.names_col = QVBoxLayout(self.names)
         self.names_col.setContentsMargins(0, 0, 0, 0)
         self.names_col.setSpacing(0)
+        self.names_col.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.files_scroll = QScrollArea()
         self.files_scroll.setObjectName("userfiles")
         self.files_scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -1203,6 +1266,7 @@ class UserTable(QWidget):
         self.files_col = QVBoxLayout(self.files_host)
         self.files_col.setContentsMargins(0, 0, 0, 0)
         self.files_col.setSpacing(0)
+        self.files_col.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.files_scroll.viewport().setAutoFillBackground(False)
         self.files_scroll.setWidget(self.files_host)
         self.files_scroll.viewport().installEventFilter(self)
@@ -1212,11 +1276,13 @@ class UserTable(QWidget):
         self.sizes_col = QVBoxLayout(self.sizes)
         self.sizes_col.setContentsMargins(0, 0, 0, 0)
         self.sizes_col.setSpacing(0)
+        self.sizes_col.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.sizes.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         row.addWidget(self.names, 4)
         row.addWidget(self.files_scroll, 11)
         row.addWidget(self.sizes, 0)
         self._row_h = 0
+        self._size_width = 0
         self._line = QColor("#34363F")
         self._lines = ColumnLines(self)
         self._text_css = ""
@@ -1229,9 +1295,7 @@ class UserTable(QWidget):
         metrics = QFontMetrics(self.font())
         row_h = metrics.height() + 8
         self._row_h = row_h
-        faded = QColor(line)
-        faded.setAlpha(56)
-        self._line = faded
+        self._line = QColor(line)
         margins = self.layout().contentsMargins()
         self.names.show()
         self.files_scroll.show()
@@ -1283,7 +1347,8 @@ class UserTable(QWidget):
         rows = max(2, count)
         content_h = rows * row_h
         self.files_host.setFixedSize(widest, content_h)
-        self.sizes.setMinimumWidth(metrics.horizontalAdvance("0000 MB") + 8)
+        self._size_width = max(metrics.horizontalAdvance("0000 MB") + 8, self.sizes.minimumSizeHint().width())
+        self.sizes.setMinimumWidth(round(self._size_width * 0.85))
         self.setFixedHeight(content_h + margins.top() + margins.bottom())
         self._elide_names()
         self._place_lines()
@@ -1312,11 +1377,15 @@ class UserTable(QWidget):
     def _place_lines(self):
         if not hasattr(self, "_lines"):
             return
+        margins = self.layout().contentsMargins()
+        available = self.width() - margins.left() - margins.right() - 2 * self.layout().spacing() - self._size_width
+        self.names.setFixedWidth(max(self.names.minimumSizeHint().width(), round(available * 4 / 15)))
+        self.layout().activate()
         left = self.names.geometry().right()
         right = self.files_scroll.geometry().left()
         file_right = self.files_scroll.geometry().right()
         size_left = self.sizes.geometry().left()
-        self._lines.rows = len(self._full_names)
+        self._lines.rows = max(2, len(self._full_names))
         self._lines.row_h = self._row_h
         self._lines.top = self.layout().contentsMargins().top()
         self._lines.split_x = int((left + right) / 2) if right > left else left
@@ -1728,7 +1797,7 @@ class IconButton(QPushButton):
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawArc(int(cx + 2), int(cy - 4), 6, 8, -50 * 16, 100 * 16)
             if self._silent:
-                painter.setPen(QPen(color, 1.6))
+                painter.setPen(QPen(QColor("#C4453C"), 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
                 painter.drawLine(QPointF(cx - 6, cy - 6), QPointF(cx + 7, cy + 5))
         elif kind == "tracks":
             painter.drawLine(QPointF(cx - 6, cy - 5), QPointF(cx + 6, cy - 5))
@@ -1934,7 +2003,7 @@ class RoundSwatch(QPushButton):
     def paintEvent(self, _event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        painter.setPen(QPen(QColor("#5C584F"), 1))
+        painter.setPen(QPen(self.palette().color(QPalette.ColorRole.ButtonText), 1))
         painter.setBrush(self._color)
         painter.drawEllipse(QRectF(1, 1, self.width() - 2, self.height() - 2))
         painter.end()
@@ -1967,27 +2036,6 @@ class PencilButton(QPushButton):
         tip.closeSubpath()
         painter.drawPath(tip)
         painter.end()
-
-
-class EdgeTabBar(QTabBar):
-    """The empty tab before dev is only a gap, so dev sits just to the right of About."""
-
-    def __init__(self):
-        super().__init__()
-        self.setExpanding(False)
-        self.spacer = -1
-
-    def tabSizeHint(self, index):
-        hint = super().tabSizeHint(index)
-        if index == self.spacer and self.spacer >= 0:
-            hint.setWidth(36)
-        return hint
-
-    def minimumTabSizeHint(self, index):
-        hint = super().minimumTabSizeHint(index)
-        if index == self.spacer and self.spacer >= 0:
-            hint.setWidth(36)
-        return hint
 
 
 class StarPassword(QLineEdit):
@@ -2060,9 +2108,18 @@ class SettingsDialog(QDialog):
         self._theme_timer.setInterval(40)
         self._theme_timer.timeout.connect(self._flush_theme)
         root = QVBoxLayout(self)
+        self._dev_page = None
         self.tabs = QTabWidget()
-        self._tabbar = EdgeTabBar()
-        self.tabs.setTabBar(self._tabbar)
+        self.tabs.tabBar().setExpanding(False)
+        self._dev_button = QPushButton(tr(77))
+        self._dev_button.setObjectName("devtab")
+        self._dev_button.setCheckable(True)
+        self._dev_button.clicked.connect(self._open_dev)
+        self.tabs.setCornerWidget(self._dev_button, Qt.Corner.TopRightCorner)
+        self._dev_button.hide()
+        self.tabs.currentChanged.connect(
+            lambda _index: self._dev_button.setChecked(self.tabs.currentWidget() is self._dev_page)
+        )
         root.addWidget(self.tabs)
 
         theme_page = QWidget()
@@ -2084,13 +2141,11 @@ class SettingsDialog(QDialog):
         self.theme.setCurrentIndex(max(0, self.theme.findData(current)))
         self._look_theme = _shown_theme(current)
         self._look_accent = appearance.get("accentColor")
-        self._style_popup(self.theme)
         self.style_pick = QComboBox()
         self.style_pick.addItem(tr(72), "classic")
         self.style_pick.addItem(tr(73), "modern")
         picked_style = appearance.get("style") or "modern"
         self.style_pick.setCurrentIndex(1 if picked_style == "modern" else 0)
-        self._style_popup(self.style_pick)
         self._kept_chat = hex_color(appearance.get("chatColor"), "#F4F1EA")
         self.accent = self._swatch(appearance.get("accentColor"), "#9A3A52")
         self.accent2 = self._swatch(appearance.get("accentColor2"), "#1F6A8A")
@@ -2123,7 +2178,6 @@ class SettingsDialog(QDialog):
         for name in families:
             self.sub_font.addItem(name, name)
         self.sub_font.setCurrentIndex(max(0, self.sub_font.findData(chosen_font)))
-        self._style_popup(self.sub_font)
         self.sub_color = self._swatch(appearance.get("subColor"), "#FFFFFF")
         subtitles = QWidget()
         sub_row = QHBoxLayout(subtitles)
@@ -2198,6 +2252,7 @@ class SettingsDialog(QDialog):
         other_form = QFormLayout(other)
         other_form.setContentsMargins(23, 23, 23, 12)
         other_form.setVerticalSpacing(7)
+        room_box.setSpacing(other_form.verticalSpacing())
         self._keep_side(other_form)
         self._name_forms.append(other_form)
         self.language = QComboBox()
@@ -2209,14 +2264,12 @@ class SettingsDialog(QDialog):
         if index < 0:
             index = max(0, self.language.findData("English"))
         self.language.setCurrentIndex(index)
-        self._style_popup(self.language)
         row_h = self.language.sizeHint().height()
         self.overlay = QComboBox()
         self.overlay.addItem(tr(36), "horizontal")
         self.overlay.addItem(tr(37), "vertical")
         overlay = appearance.get("volumeOverlay") or "horizontal"
         self.overlay.setCurrentIndex(1 if overlay == "vertical" else 0)
-        self._style_popup(self.overlay)
         stepper = QWidget()
         stepper_row = QHBoxLayout(stepper)
         stepper_row.setContentsMargins(0, 0, 0, 0)
@@ -2318,7 +2371,6 @@ class SettingsDialog(QDialog):
         about_layout.addWidget(thanks, 0, Qt.AlignmentFlag.AlignLeft)
         self.tabs.addTab(about, tr(39))
         self._dev_page = None
-        self._dev_gap = None
         if bool(appearance.get("devTab")):
             self._insert_dev_tab()
         window = self.parent()
@@ -2356,14 +2408,7 @@ class SettingsDialog(QDialog):
             kept.append((self.tabs.tabText(index), self.tabs.widget(index), self.tabs.isTabEnabled(index)))
         while self.tabs.count():
             self.tabs.removeTab(0)
-        self._tabbar.spacer = -1
         for title, page, enabled in kept:
-            if page is self._dev_gap:
-                self.tabs.addTab(page, "")
-                gap = self.tabs.count() - 1
-                self.tabs.setTabEnabled(gap, False)
-                self._tabbar.spacer = gap
-                continue
             area = self._scroll_page(page)
             self.tabs.addTab(area, title)
             if not enabled:
@@ -2372,6 +2417,7 @@ class SettingsDialog(QDialog):
                 self._about_page = area
             if page is self._dev_page:
                 self._dev_page = area
+                self.tabs.setTabVisible(self.tabs.indexOf(area), False)
         self.tabs.setCurrentIndex(self._open_page if 0 <= self._open_page < self.tabs.count() else 0)
         root.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
         self._apply_settings_edges()
@@ -2450,15 +2496,11 @@ class SettingsDialog(QDialog):
             self.tabs.setCurrentWidget(self._dev_page)
         else:
             dev = self.tabs.indexOf(self._dev_page)
-            gap = self.tabs.indexOf(self._dev_gap)
-            self._tabbar.spacer = -1
             self.tabs.setCurrentWidget(self._about_page)
             if dev >= 0:
                 self.tabs.removeTab(dev)
-            if gap >= 0:
-                self.tabs.removeTab(self.tabs.indexOf(self._dev_gap))
             self._dev_page = None
-            self._dev_gap = None
+            self._dev_button.hide()
 
     def _store_dev_tab(self, enabled):
         window = self.parent()
@@ -2466,20 +2508,20 @@ class SettingsDialog(QDialog):
             return
         window.app.store.data["appearance"]["devTab"] = bool(enabled)
 
+    def _open_dev(self):
+        self.tabs.setCurrentWidget(self._dev_page)
+        self._dev_button.setChecked(True)
+
     def _insert_dev_tab(self):
         if self._dev_page is not None:
             return
         page = self._build_dev_page()
-        self._dev_gap = QWidget()
-        self.tabs.addTab(self._dev_gap, "")
-        gap = self.tabs.indexOf(self._dev_gap)
-        self.tabs.setTabEnabled(gap, False)
-        self._tabbar.spacer = gap
         if self._page_h:
             page = self._scroll_page(page)
         self._dev_page = page
         self.tabs.addTab(self._dev_page, tr(77))
-        self._tabbar.updateGeometry()
+        self.tabs.setTabVisible(self.tabs.indexOf(self._dev_page), False)
+        self._dev_button.show()
 
     def _dev_defaults(self):
         family = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont).family() or "sans-serif"
@@ -2496,11 +2538,12 @@ class SettingsDialog(QDialog):
         face["locked"] = {"dark": "#2A2D36", "light": "#E4E0D8"}
         return {
             "ui": {"size": 13, "bold": False, "family": family, "dark": dark, "light": light},
-            "alfa": {"size": 11, "bold": False, "family": family, "dark": dark, "light": light},
+            "alfa": {"size": 10, "bold": False, "family": family, "dark": dark, "light": light},
             "osd": {"size": 17, "bold": False, "family": family, "dark": dark, "light": light},
             "sub": {"size": 55, "bold": False, "family": "sans-serif", "dark": white, "light": white},
             "titles": {"size": 11, "bold": True, "family": family, "dark": dark, "light": light},
-            "gamma": 12,
+            "gamma": 10,
+            "chat_max": 0,
             "face": face,
             "panel": PANEL_WIDTH,
             "bar": BAR_HEIGHT,
@@ -2561,6 +2604,16 @@ class SettingsDialog(QDialog):
         form.setVerticalSpacing(12)
         self._keep_side(form)
         self._name_forms.append(form)
+        reset = QPushButton(tr(70))
+        export = QPushButton(tr(69))
+        reset.clicked.connect(self._reset_dev)
+        export.clicked.connect(self._export_dev)
+        actions = QWidget()
+        action_row = QHBoxLayout(actions)
+        action_row.setContentsMargins(0, 0, 0, 0)
+        action_row.addWidget(reset, 1)
+        action_row.addWidget(export, 1)
+        form.addRow(actions)
         self._dev_rows = {}
         for key, title in (
             ("ui", tr(78)),
@@ -2573,7 +2626,7 @@ class SettingsDialog(QDialog):
             if key == "titles":
                 self.gamma_size = QuietSpin()
                 self.gamma_size.setRange(1, 96)
-                self.gamma_size.setValue(int(seed.get("gamma", 12)))
+                self.gamma_size.setValue(int(seed.get("gamma", 10)))
                 self.gamma_size.valueChanged.connect(self._set_gamma_size)
                 form.addRow(tr(81), self.gamma_size)
         self._face_rows = {}
@@ -2598,6 +2651,13 @@ class SettingsDialog(QDialog):
         self._dev_bar.setValue(int(seed["bar"]))
         self._dev_bar.valueChanged.connect(lambda _value: self._push_dev())
         form.addRow(tr(90), self._dev_panel)
+        self._chat_max = QuietSpin()
+        self._chat_max.setRange(0, 2160)
+        self._chat_max.setSuffix(" px")
+        self._chat_max.setSpecialValueText(tr(109))
+        self._chat_max.setValue(int(seed.get("chat_max", 0)))
+        self._chat_max.valueChanged.connect(lambda _value: self._push_dev())
+        form.addRow(tr(108), self._chat_max)
         form.addRow(tr(91), self._dev_bar)
         self._bar_inset = QuietSpin()
         self._bar_inset.setRange(0, 40)
@@ -2673,17 +2733,6 @@ class SettingsDialog(QDialog):
             button_row.addWidget(QLabel(title))
         button_row.addStretch(1)
         form.addRow(tr(104), buttons)
-        reset = QPushButton(tr(70))
-        export = QPushButton(tr(69))
-        reset.clicked.connect(self._reset_dev)
-        export.clicked.connect(self._export_dev)
-        actions = QWidget()
-        action_row = QHBoxLayout(actions)
-        action_row.setContentsMargins(0, 0, 0, 0)
-        action_row.addWidget(reset)
-        action_row.addWidget(export)
-        action_row.addStretch(1)
-        form.addRow("", actions)
         if getattr(self, "_scrolls", None):
             self._set_settings_pad(self._settings_pad.value())
         return page
@@ -2762,6 +2811,7 @@ class SettingsDialog(QDialog):
         widgets = [
             self._dev_panel,
             self._dev_bar,
+            self._chat_max,
             self._bar_inset,
             self._bar_alpha,
             self._panel_alpha,
@@ -2793,6 +2843,7 @@ class SettingsDialog(QDialog):
             row["light"].set_color(hex_color(item.get("light"), "#FFFFFF"))
         self._dev_panel.setValue(int(seed["panel"]))
         self._dev_bar.setValue(int(seed["bar"]))
+        self._chat_max.setValue(int(seed.get("chat_max", 0)))
         self._bar_inset.setValue(int(seed.get("bar_inset", 30)))
         self._bar_alpha.setValue(int(seed.get("bar_alpha", 90)))
         self._panel_alpha.setValue(int(seed.get("panel_alpha", 90)))
@@ -2803,7 +2854,7 @@ class SettingsDialog(QDialog):
         self._settings_top.setValue(int(seed.get("settings_top", 23)))
         self._slider_numbers.setChecked(bool(seed.get("slider_numbers", False)))
         self._label_bold.setChecked(bool(seed.get("bold_names", False)))
-        self.gamma_size.setValue(int(seed.get("gamma", 12)))
+        self.gamma_size.setValue(int(seed.get("gamma", 10)))
         flags = seed.get("bar_buttons") or {}
         for key, box in self._bar_buttons.items():
             box.setChecked(bool(flags.get(key, True)))
@@ -2825,6 +2876,7 @@ class SettingsDialog(QDialog):
         spec = {
             "panel": self._dev_panel.value(),
             "bar": self._dev_bar.value(),
+            "chat_max": self._chat_max.value(),
             "bar_alpha": self._bar_alpha.value(),
             "panel_alpha": self._panel_alpha.value(),
             "osd_alpha": self._osd_alpha.value(),
@@ -2868,12 +2920,14 @@ class SettingsDialog(QDialog):
         self._apply_settings_font()
 
     def _apply_settings_font(self):
-        size = int(self.parent()._dev.get("gamma", 12))
+        size = int(self.parent()._dev.get("gamma", 10))
         font = self.font()
         font.setPointSize(size)
         self.setFont(font)
         self.setStyleSheet("QDialog#settings, QDialog#settings QWidget { font-size: %dpt; }" % size)
         self.ensurePolished()
+        for combo in self.findChildren(QComboBox):
+            self._style_popup(combo)
         row_h = max(self.theme.sizeHint().height(), QFontMetrics(font).height() + 14)
         for field in self._theme_fields:
             field.setFixedHeight(row_h)
@@ -2927,6 +2981,7 @@ class SettingsDialog(QDialog):
             lines.append("face.{}.dark={}".format(key, row["dark"]))
             lines.append("face.{}.light={}".format(key, row["light"]))
         lines.append("panel.width={}".format(spec["panel"]))
+        lines.append("chat.max-height={}".format(spec["chat_max"]))
         lines.append("bar.height={}".format(spec["bar"]))
         lines.append("bar.alpha={}".format(spec["bar_alpha"]))
         lines.append("panel.alpha={}".format(spec["panel_alpha"]))
@@ -3293,21 +3348,29 @@ class SettingsDialog(QDialog):
         form.addRow(text, host)
 
     def _style_popup(self, combo):
-        page = _palette(self._look_theme, self._look_accent)
+        window = self.parent()
+        look = window.app.store.data["appearance"]
+        theme = _shown_theme(look.get("theme"))
+        page = _palette(theme, look.get("accentColor"))
+        page.update(window._face_paint(theme))
         view = combo.view()
         palette = view.palette()
-        palette.setColor(QPalette.ColorRole.Base, QColor(page["field"]))
-        palette.setColor(QPalette.ColorRole.Text, QColor(page["fg"]))
-        palette.setColor(QPalette.ColorRole.Window, QColor(page["field"]))
-        palette.setColor(QPalette.ColorRole.WindowText, QColor(page["fg"]))
-        palette.setColor(QPalette.ColorRole.Highlight, QColor(page["accent"]))
-        palette.setColor(QPalette.ColorRole.HighlightedText, QColor(page["on_fg"]))
+        for role, key in ((QPalette.ColorRole.Window, "field"),
+                          (QPalette.ColorRole.Base, "field"),
+                          (QPalette.ColorRole.WindowText, "fg"),
+                          (QPalette.ColorRole.Text, "fg"),
+                          (QPalette.ColorRole.Highlight, "accent"),
+                          (QPalette.ColorRole.HighlightedText, "on_fg")):
+            palette.setColor(role, QColor(page[key]))
+        # The popup frame paints the margins above and below the item view.
+        popup = view.window()
+        popup.setPalette(palette)
+        popup.setObjectName("settingspopup")
+        popup.setStyleSheet("QFrame#settingspopup {{ background: {}; border: 1px solid {}; }}".format(
+            page["field"], page["border"]
+        ))
+        popup.setAutoFillBackground(True)
         view.setPalette(palette)
-        view.setStyleSheet(
-            "background: {}; color: {}; selection-background-color: {}; selection-color: {};".format(
-                page["field"], page["fg"], page["accent"], page["on_fg"]
-            )
-        )
 
     def _nudge_volume_max(self, delta):
         self.volume_max = _volume_limit(self.volume_max + int(delta))
@@ -3346,6 +3409,11 @@ class MainWindow(QMainWindow):
         self._paused = True
         self._playlist = []
         self._current_path = ""
+        self._listed_path = ""
+        self._repeat = 0
+        self._alone_pending = False
+        self._alone_until = 0.0
+        self._alone_users_received = False
         self._eof_seen = False
         self._volume_until = 0
         self._hold_pause = None
@@ -3525,7 +3593,7 @@ class MainWindow(QMainWindow):
         self.volume_slider.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.volume_slider.setFixedHeight(120)
         self.volume_slider.valueChanged.connect(self._on_vertical_volume)
-        volume_pop_col.addWidget(self.volume_readout)
+        volume_pop_col.addWidget(self.volume_readout, 0, Qt.AlignmentFlag.AlignHCenter)
         volume_pop_col.addWidget(self.volume_slider, 1, Qt.AlignmentFlag.AlignHCenter)
         self.mute_v = IconButton("mute")
         self.mute_v.setParent(self.volume_pop)
@@ -3548,6 +3616,7 @@ class MainWindow(QMainWindow):
         self.panel.setObjectName("panel")
         self._overlay(self.panel)
         side = QVBoxLayout(self.panel)
+        side.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
         side.setContentsMargins(16, 16, 16, 16)
         side.setSpacing(8)
 
@@ -3694,19 +3763,16 @@ class MainWindow(QMainWindow):
         height = self.stage.height()
         inset = self._bar_height()
         gap = FLOAT_GAP if self._is_modern() else 0
-        lift = POP_GAP if gap else 0
         bar_rect = self._bar_rect()
         if self._bar_open:
             self.bar.setGeometry(bar_rect)
             self.bar.layout().activate()
-        panel_width = self._panel_span(width) if self._panel_open else 0
-        panel_height = max(0, height - inset - gap - lift - gap)
-        panel_rect = QRect(max(0, width - panel_width - gap), gap, panel_width, panel_height)
         if self._panel_open:
-            self.panel.setGeometry(panel_rect)
+            self.panel.setGeometry(self._panel_rect())
             self.panel.show()
         else:
             self.panel.hide()
+        self._fit_playlist()
         box_w = max(1, int(round(width * 0.2)))
         box_h = 44
         if self._chat_open:
@@ -4002,7 +4068,7 @@ class MainWindow(QMainWindow):
             QApplication.instance().setFont(font)
         self.setFont(font)
         alfa_spec = dev.get("alfa") or {}
-        alfa = max(1, min(96, int(alfa_spec.get("size") or ui_point)))
+        alfa = max(1, min(96, int(alfa_spec.get("size") or 10)))
         block = QFont(font)
         if alfa_spec.get("family"):
             block.setFamily(alfa_spec["family"])
@@ -4491,9 +4557,16 @@ class MainWindow(QMainWindow):
             if not event.isAutoRepeat():
                 self._toggle_pause()
             return True
-        if key == int(Qt.Key.Key_M):
+        # XKB adds eight to Linux key codes, independently of the layout.
+        physical = event.nativeScanCode() if QGuiApplication.platformName() in ("xcb", "wayland", "wayland-egl") else 0
+        if key == int(Qt.Key.Key_M) or physical == 58:
             if not event.isAutoRepeat():
                 self._toggle_mute()
+            return True
+        if key == int(Qt.Key.Key_R) or physical == 27:
+            if not event.isAutoRepeat():
+                self._repeat = (self._repeat + 1) % 3
+                self._refresh_osd()
             return True
         if key in (int(Qt.Key.Key_Return), int(Qt.Key.Key_Enter)):
             if not event.isAutoRepeat():
@@ -4570,14 +4643,19 @@ class MainWindow(QMainWindow):
         self._hold_pause = None
         eof = self._get("eof-reached")
         if eof in (True, "yes", "true", 1) and len(self._playlist) == 1:
-            self._cmd("seek", "0", "absolute")
-            self._set("pause", "no")
-            self._paused = False
-            self._pos_at = 0
-            self._pos_when = time.monotonic()
-            self._eof_seen = True
+            self._restart_current()
             return
         self._cmd("cycle", "pause")
+
+    def _restart_current(self):
+        self._arm_play = None
+        self._hold_pause = None
+        self._cmd("seek", "0", "absolute")
+        self._set("pause", "no")
+        self._paused = False
+        self._pos_at = 0
+        self._pos_when = time.monotonic()
+        self._eof_seen = True
 
     def _add_dropped(self, paths):
         batch = []
@@ -4589,7 +4667,6 @@ class MainWindow(QMainWindow):
             known.add(path)
         batch.sort(key=lambda item: _natural(item["name"]))
         fresh = not self._playlist
-        staying = bool(self._playlist) and self._current_path == self._playlist[0]["path"]
         self._playlist.extend(batch)
         if not batch:
             self._refresh_files()
@@ -4598,10 +4675,7 @@ class MainWindow(QMainWindow):
             # Open paused so the room sees the file. Do not start playback.
             self._play_path(batch[0]["path"], start=False)
             return
-        if staying:
-            self._refresh_files()
-            return
-        self._play_path(batch[0]["path"], start=True)
+        self._refresh_files()
 
     def _play_path(self, path, start=False):
         self._current_path = path
@@ -4651,31 +4725,51 @@ class MainWindow(QMainWindow):
         self._refresh_files()
 
     def _advance(self):
-        if len(self._playlist) <= 1:
-            return
         index = next((i for i, item in enumerate(self._playlist) if item["path"] == self._current_path), -1)
-        if index < 0 or index + 1 >= len(self._playlist):
+        if index < 0:
             return
-        auto = bool(self.app.store.data["appearance"].get("autoplayNext"))
-        self._play_path(self._playlist[index + 1]["path"], start=auto)
+        next_index = index if self._repeat == 1 else index + 1
+        if next_index >= len(self._playlist):
+            if self._repeat != 2:
+                return
+            next_index = 0
+        auto = bool(self._repeat or self.app.store.data["appearance"].get("autoplayNext"))
+        path = self._playlist[next_index]["path"]
+        if path == self._current_path:
+            self._restart_current()
+        else:
+            client = getattr(self.app, "client", None)
+            if auto and getattr(client, "_player", None) is not None:
+                from twisted.internet import reactor
+                # Match Syncplay's advance marker so its rewind guard does not re-pause playback.
+                reactor.callFromThread(setattr, client, "lastAdvanceTime", time.time())
+            self._play_path(path, start=auto)
 
     def _refresh_files(self):
         if not hasattr(self, "files"):
             return
         appearance = self.app.store.data["appearance"]
-        pal = _palette(_shown_theme(appearance.get("theme")), appearance.get("accentColor"))
+        theme = _shown_theme(appearance.get("theme"))
+        pal = _palette(theme, appearance.get("accentColor"))
+        pal.update(self._face_paint(theme))
+        row_h = max(24, QFontMetrics(self.files.font()).height() + 12)
+        scroll = self.files.verticalScrollBar().value()
         self.files.clear()
         for index, item in enumerate(self._playlist, start=1):
             row = QListWidgetItem("{}. {}".format(index, item["name"]))
+            row.setSizeHint(QSize(0, row_h))
             row.setData(Qt.ItemDataRole.UserRole, item["path"])
             if item["path"] == self._current_path:
                 row.setBackground(QColor(pal["accent"]))
                 row.setForeground(QColor(pal["on_fg"]))
             self.files.addItem(row)
-        self.files.set_mark(pal["accent"])
-        row_h = max(24, QFontMetrics(self.files.font()).height() + 12)
-        rows = max(2, self.files.count())
-        self.files.setFixedHeight(rows * row_h + 2 * self.files.frameWidth())
+        self.files.set_mark(pal["accent"], pal["border"])
+        resized = self._fit_playlist()
+        if self._listed_path != self._current_path:
+            self._center_current_file()
+        elif not resized:
+            self.files.verticalScrollBar().setValue(scroll)
+        self._listed_path = self._current_path
         has_files = bool(self._playlist)
         self.tracks_btn.setEnabled(has_files)
         if not has_files and self._tracks_open:
@@ -4683,6 +4777,47 @@ class MainWindow(QMainWindow):
             self.tracks_btn.setChecked(False)
             self.tracks_pop.hide()
         self._place_edge_scrolls()
+
+    def _fit_playlist(self):
+        if not hasattr(self, "chat"):
+            return False
+        layout = self.panel.layout()
+        chat_max = int(self._dev.get("chat_max") or 16777215)
+        self.chat.setMaximumHeight(chat_max)
+        margins = layout.contentsMargins()
+        visible = [layout.itemAt(index) for index in range(layout.count()) if not layout.itemAt(index).isEmpty()]
+        fixed = 0
+        width = max(1, self.panel.width() - margins.left() - margins.right())
+        for item in visible:
+            if item.widget() in (self.files, self.chat):
+                continue
+            fixed += max(item.minimumSize().height(), item.heightForWidth(width) if item.hasHeightForWidth() else 0)
+        panel_height = self._panel_rect().height()
+        available = panel_height - margins.top() - margins.bottom() - fixed - layout.spacing() * max(0, len(visible) - 1)
+        chat_min = min(chat_max, max(self.chat.minimumSizeHint().height(), QFontMetrics(self.chat.font()).lineSpacing() * 3 + 12))
+        row_h = max(24, QFontMetrics(self.files.font()).height() + 12)
+        frame = self.files.frameWidth() * 2
+        rows = min(12, max(3, self.files.count()), max(0, (available - chat_min - frame) // row_h))
+        height = rows * row_h + frame
+        changed = self.files.height() != height
+        self.files.setFixedHeight(height)
+        unused = max(0, available - height - chat_max)
+        self.panel.resize(self.panel.width(), panel_height - unused)
+        layout.activate()
+        if changed:
+            self._center_current_file()
+        return changed
+
+    def _center_current_file(self):
+        self.files.doItemsLayout()
+        if self.files.verticalScrollBar().maximum() <= 0:
+            return
+        for index in range(self.files.count()):
+            item = self.files.item(index)
+            if item.data(Qt.ItemDataRole.UserRole) == self._current_path:
+                rows = max(1, self.files.viewport().height() // max(1, item.sizeHint().height()))
+                self.files.verticalScrollBar().setValue(index - (rows - 1) // 2)
+                break
 
     def _toggle_ready(self):
         client = getattr(self.app, "client", None)
@@ -4864,6 +4999,15 @@ class MainWindow(QMainWindow):
         state = event.get("state") or ""
         was = self._connected
         self._connected = state == "connected"
+        if not self._connected:
+            self._alone_pending = False
+            self._alone_until = 0.0
+            self._alone_users_received = False
+        elif not was:
+            self._alone_pending = True
+            self._alone_until = 0.0
+            if self._alone_users_received:
+                self._check_alone_on_entry()
         self._failed = state == "failed"
         if state == "failed":
             self._set_status(event.get("text") or "")
@@ -4878,6 +5022,7 @@ class MainWindow(QMainWindow):
     def _set_status(self, text):
         self.status.setText(text or "")
         self.status.setVisible(bool(text))
+        self._fit_playlist()
 
     def _configured(self):
         conn = self.app.store.data["connection"]
@@ -4903,8 +5048,15 @@ class MainWindow(QMainWindow):
         else:
             text, color = tr(9), "#D6B23A"
         self.banner_text.setText(text)
+        if self._connected and self._configured():
+            self.banner_text.setStyleSheet("color: {}; font-size: {}pt; background: transparent;".format(
+                color, max(1, self.font().pointSize() - 1)
+            ))
+        else:
+            self.banner_text.setStyleSheet("")
         self.banner_dot.setStyleSheet("color: {}; background: transparent;".format(color))
         self.reconnect.setVisible(bool(self._failed and self._configured()))
+        self._fit_playlist()
 
     def _on_users(self, event):
         now = time.monotonic()
@@ -4932,6 +5084,8 @@ class MainWindow(QMainWindow):
             if name not in ready_names:
                 self._ready_until.pop(name, None)
         self._users = people
+        self._alone_users_received = True
+        self._check_alone_on_entry()
         me = str(self.app.store.data["connection"].get("name") or "")
         self._known_names, joined = people_joined(self._known_names, [person["name"] for person in people], me)
         line = join_line(joined)
@@ -4939,6 +5093,16 @@ class MainWindow(QMainWindow):
             self._notify_background("yucha", line)
         self._paint_users()
         self._start_when_everyone_ready(people)
+
+    def _check_alone_on_entry(self):
+        if not self._alone_users_received:
+            return
+        if len(self._users) != 1:
+            self._alone_until = 0.0
+        if self._alone_pending and self._connected and self._users:
+            self._alone_pending = False
+            if len(self._users) == 1:
+                self._alone_until = time.monotonic() + CHAT_LIFE
 
     def _start_when_everyone_ready(self, people):
         names = {person["name"] for person in people}
@@ -4979,8 +5143,11 @@ class MainWindow(QMainWindow):
             return
         me, mine, other = self._nick_colors()
         appearance = self.app.store.data["appearance"]
-        border = _palette(_shown_theme(appearance.get("theme")), appearance.get("accentColor"))["border"]
-        self.room_users.set_people(self._users, me, mine, other, border)
+        theme = _shown_theme(appearance.get("theme"))
+        pal = _palette(theme, appearance.get("accentColor"))
+        pal.update(self._face_paint(theme))
+        self.room_users.set_people(self._users, me, mine, other, pal["border"])
+        self._fit_playlist()
         me = str(self.app.store.data["connection"].get("name") or "")
         mine = next((person for person in self._users if person["name"] == me), None)
         if mine is not None and hasattr(self, "ready"):
@@ -5008,10 +5175,14 @@ class MainWindow(QMainWindow):
     def _add_chat(self, user, text):
         if not text or _hidden_line(text):
             return
+        alone = not user and text.strip().rstrip(".!").casefold() in ("you're alone in the room", "you are alone in the room")
         if user:
             spans = [{"k": "nick", "v": user}, {"k": "text", "v": ": " + text}]
         elif re.match(r"^.+ has left\s*$", text):
             spans = [{"k": "leave", "v": text}]
+        elif alone:
+            self._check_alone_on_entry()
+            spans = [{"k": "text", "v": tr(110)}]
         else:
             spans = _status_spans(text) or [{"k": "text", "v": text}]
             if any(span["k"] == "nick" and span["v"] in ("", "None") for span in spans):
@@ -5022,7 +5193,9 @@ class MainWindow(QMainWindow):
             self._paint_chat()
         else:
             self._append_chat_line(spans)
-        if not _startup_line(text):
+        if alone:
+            self._refresh_osd()
+        elif not _startup_line(text) and (user or not _PLAYING_LINE.fullmatch(" ".join(text.split()))):
             now = time.monotonic()
             if not replace_seek_toast(self._osd, spans, now, SLIDE):
                 self._osd.append({"born": now, "fresh": now, "spans": spans, "leave": None})
@@ -5151,6 +5324,8 @@ class MainWindow(QMainWindow):
         point = max(1, min(96, point))
         self.board.bar_h = self._bar_height() + (FLOAT_GAP if self._is_modern() else 0)
         page = _palette(theme, appearance.get("accentColor"))
+        page["border"] = self._face_paint(theme).get("border", page["border"])
+        self.board.repeat = self._repeat
         ink = _dev_ink(osd, theme) if osd else ""
         if ink:
             page = dict(page)
@@ -5166,6 +5341,8 @@ class MainWindow(QMainWindow):
             people.append(person)
         differ, missing = room_file_notes(self._users)
         notices = []
+        if self._connected and now < self._alone_until:
+            notices.append(tr(110))
         if differ:
             notices.append(tr(11))
         notices.extend(trf(58, name) for name in missing)

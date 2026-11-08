@@ -37,14 +37,16 @@
 
 | Input | Action |
 | :--- | :--- |
-| `Drag & Drop` | Add media files to the playlist (sorted alphabetically). |
+| `Drag & Drop` | Append media files to the playlist (sorted alphabetically), keeping the current video. The first file opens paused. |
 | `Open With` | Add the opened video to the playlist. A window that is already open receives it. |
 | `Right Click` / `Space` | Toggle Play / Pause. |
 | `Double Click` | Toggle Fullscreen. |
 | `Left` / `Right` | Seek backward / forward (`5s`). |
 | `Up` / `Down` / `Mouse Wheel` | Adjust volume (`10%` steps via keys, up to `130%` max). |
 | `Enter` | Open the message field. Enter again sends the text and closes the field. |
-| `M` | Toggle Mute. |
+| Physical `M` key (any keyboard layout) | Toggle Mute. |
+| Physical `R` key (any keyboard layout) | Cycle repeat: current episode, whole playlist, off. Resets to off after restart. |
+| `Mouse Wheel` (Playlist) | Scroll through episodes. |
 | `Left Click` (Playlist) | Play selected file from `0:00`. |
 | `Right Click` (Playlist) | Remove file from playlist. |
 
