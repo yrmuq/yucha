@@ -186,8 +186,9 @@ class WindowTests(unittest.TestCase):
 
     def test_sidebar_separators_keep_empty_rows_and_people_at_the_top(self):
         self.window.set_panel(True)
-        for theme in ("dark", "light"):
+        for theme, border in (("dark", "#34363F"), ("light", "#D9D3C7"), ("dark", "#526478")):
             self.store.data["appearance"]["theme"] = theme
+            self.window._dev.setdefault("face", {})["border"] = {theme: border}
             self.window.apply_theme()
             for count in (0, 1, 3):
                 with self.subTest(theme=theme, count=count):
@@ -204,7 +205,7 @@ class WindowTests(unittest.TestCase):
                     for index in range(max(2, count) - 1):
                         y = (files.visualItemRect(files.item(index)).bottom() if count
                              else files.viewport().height() // 2 - 1)
-                        self.assertNotEqual(image.pixelColor(10, y), image.pixelColor(10, y - 1))
+                        self.assertEqual(image.pixelColor(10, y), QColor(border))
                     users = self.window.room_users
                     self.assertEqual(len(users._full_names), count)
                     if count:
@@ -214,15 +215,10 @@ class WindowTests(unittest.TestCase):
                     image = users.grab().toImage()
                     for index in range(1, max(2, count)):
                         y = lines.top + index * lines.row_h
-                        self.assertNotEqual(image.pixelColor(10, y), image.pixelColor(10, y + 2))
+                        self.assertEqual(image.pixelColor(10, y), QColor(border))
                     for x in (lines.split_x, lines.split2_x):
                         y = lines.top + 3
-                        line = image.pixelColor(x, y).lightness()
-                        background = image.pixelColor(x - 2, y).lightness()
-                        if theme == "dark":
-                            self.assertGreater(line, background)
-                        else:
-                            self.assertLess(line, background)
+                        self.assertEqual(image.pixelColor(x, y), QColor(border))
 
     def test_space_repeats_and_chat_do_not_toggle_playback(self):
         self.window.ready.setChecked(True)

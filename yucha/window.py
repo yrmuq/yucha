@@ -1007,17 +1007,17 @@ class FileList(QListWidget):
         self._line = QWidget(self.viewport())
         self._line.setFixedHeight(2)
         self._line.hide()
-        self.set_mark("#F4F1EA")
+        self.set_mark("#F4F1EA", "#34363F")
 
-    def set_mark(self, color):
+    def set_mark(self, color, border):
         self._line.setStyleSheet("background: {}; border: none;".format(color))
+        self._border = QColor(border)
+        self.viewport().update()
 
     def paintEvent(self, event):
         super().paintEvent(event)
-        color = self.palette().color(QPalette.ColorRole.Text)
-        color.setAlpha(100)
         painter = QPainter(self.viewport())
-        painter.setPen(QPen(color, 1))
+        painter.setPen(QPen(self._border, 1))
         for index in range(max(2, self.count()) - 1):
             if self.count():
                 y = self.visualItemRect(self.item(index)).bottom()
@@ -1243,9 +1243,7 @@ class UserTable(QWidget):
         metrics = QFontMetrics(self.font())
         row_h = metrics.height() + 8
         self._row_h = row_h
-        faded = QColor(line)
-        faded.setAlpha(100)
-        self._line = faded
+        self._line = QColor(line)
         margins = self.layout().contentsMargins()
         self.names.show()
         self.files_scroll.show()
@@ -4661,7 +4659,9 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "files"):
             return
         appearance = self.app.store.data["appearance"]
-        pal = _palette(_shown_theme(appearance.get("theme")), appearance.get("accentColor"))
+        theme = _shown_theme(appearance.get("theme"))
+        pal = _palette(theme, appearance.get("accentColor"))
+        pal.update(self._face_paint(theme))
         row_h = max(24, QFontMetrics(self.files.font()).height() + 12)
         self.files.clear()
         for index, item in enumerate(self._playlist, start=1):
@@ -4672,7 +4672,7 @@ class MainWindow(QMainWindow):
                 row.setBackground(QColor(pal["accent"]))
                 row.setForeground(QColor(pal["on_fg"]))
             self.files.addItem(row)
-        self.files.set_mark(pal["accent"])
+        self.files.set_mark(pal["accent"], pal["border"])
         rows = max(2, self.files.count())
         self.files.setFixedHeight(rows * row_h + 2 * self.files.frameWidth())
         has_files = bool(self._playlist)
@@ -4978,8 +4978,10 @@ class MainWindow(QMainWindow):
             return
         me, mine, other = self._nick_colors()
         appearance = self.app.store.data["appearance"]
-        line = _palette(_shown_theme(appearance.get("theme")), appearance.get("accentColor"))["fg"]
-        self.room_users.set_people(self._users, me, mine, other, line)
+        theme = _shown_theme(appearance.get("theme"))
+        pal = _palette(theme, appearance.get("accentColor"))
+        pal.update(self._face_paint(theme))
+        self.room_users.set_people(self._users, me, mine, other, pal["border"])
         me = str(self.app.store.data["connection"].get("name") or "")
         mine = next((person for person in self._users if person["name"] == me), None)
         if mine is not None and hasattr(self, "ready"):
