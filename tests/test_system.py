@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import os
+import subprocess
 import sys
 import tempfile
 import time
@@ -107,6 +108,38 @@ class SystemTests(unittest.TestCase):
         self.assertEqual(got, [(["/tmp/film.mkv"], "token-1")])
         bridge.stop()
         self.assertFalse(handoff(["/tmp/other.mkv"], sock))
+
+    def test_closing_the_window_after_dns_exits_the_process(self):
+        script = """
+from pathlib import Path
+from socket import getaddrinfo
+from unittest.mock import Mock, patch
+
+from PySide6.QtWidgets import QWidget
+from twisted.internet import threads
+
+from yucha import app
+
+
+def make_window(_app):
+    window = QWidget()
+    window.video = Mock()
+    window.set_player = Mock()
+    window.accept_files = Mock()
+    threads.deferToThread(getaddrinfo, "localhost", 8999).addCallback(lambda _: window.close())
+    return window
+
+
+instance = Mock(runtime=Path("."))
+with patch.object(app, "App", return_value=instance), patch.object(app, "launch_player"), \\
+        patch("yucha.window.MainWindow", make_window), patch("yucha.system.FileBridge"), \\
+        patch("yucha.configstore.runtime_dir", return_value=Path(".")):
+    app.main()
+instance.client.stop.assert_called_once_with(True)
+"""
+        result = subprocess.run([sys.executable, "-c", script], cwd=ROOT,
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == "__main__":
