@@ -3411,7 +3411,9 @@ class MainWindow(QMainWindow):
         self._current_path = ""
         self._listed_path = ""
         self._repeat = 0
-        self._alone = False
+        self._alone_pending = False
+        self._alone_until = 0.0
+        self._alone_users_received = False
         self._eof_seen = False
         self._volume_until = 0
         self._hold_pause = None
@@ -3686,7 +3688,6 @@ class MainWindow(QMainWindow):
         self.chat.setReadOnly(True)
         self.chat.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         side.addWidget(self.chat, 1)
-        side.addStretch(0)
         self.user_scroll = EdgeScroll(Qt.Orientation.Horizontal, self.panel)
         self.file_scroll = EdgeScroll(Qt.Orientation.Vertical, self.panel)
         self.chat_scroll = EdgeScroll(Qt.Orientation.Vertical, self.panel)
@@ -3762,16 +3763,12 @@ class MainWindow(QMainWindow):
         height = self.stage.height()
         inset = self._bar_height()
         gap = FLOAT_GAP if self._is_modern() else 0
-        lift = POP_GAP if gap else 0
         bar_rect = self._bar_rect()
         if self._bar_open:
             self.bar.setGeometry(bar_rect)
             self.bar.layout().activate()
-        panel_width = self._panel_span(width) if self._panel_open else 0
-        panel_height = max(0, height - inset - gap - lift - gap)
-        panel_rect = QRect(max(0, width - panel_width - gap), gap, panel_width, panel_height)
         if self._panel_open:
-            self.panel.setGeometry(panel_rect)
+            self.panel.setGeometry(self._panel_rect())
             self.panel.show()
         else:
             self.panel.hide()
@@ -4795,7 +4792,8 @@ class MainWindow(QMainWindow):
             if item.widget() in (self.files, self.chat):
                 continue
             fixed += max(item.minimumSize().height(), item.heightForWidth(width) if item.hasHeightForWidth() else 0)
-        available = self.panel.height() - margins.top() - margins.bottom() - fixed - layout.spacing() * max(0, len(visible) - 1)
+        panel_height = self._panel_rect().height()
+        available = panel_height - margins.top() - margins.bottom() - fixed - layout.spacing() * max(0, len(visible) - 1)
         chat_min = min(chat_max, max(self.chat.minimumSizeHint().height(), QFontMetrics(self.chat.font()).lineSpacing() * 3 + 12))
         row_h = max(24, QFontMetrics(self.files.font()).height() + 12)
         frame = self.files.frameWidth() * 2
@@ -4803,6 +4801,8 @@ class MainWindow(QMainWindow):
         height = rows * row_h + frame
         changed = self.files.height() != height
         self.files.setFixedHeight(height)
+        unused = max(0, available - height - chat_max)
+        self.panel.resize(self.panel.width(), panel_height - unused)
         layout.activate()
         if changed:
             self._center_current_file()
@@ -5000,7 +5000,14 @@ class MainWindow(QMainWindow):
         was = self._connected
         self._connected = state == "connected"
         if not self._connected:
-            self._alone = False
+            self._alone_pending = False
+            self._alone_until = 0.0
+            self._alone_users_received = False
+        elif not was:
+            self._alone_pending = True
+            self._alone_until = 0.0
+            if self._alone_users_received:
+                self._check_alone_on_entry()
         self._failed = state == "failed"
         if state == "failed":
             self._set_status(event.get("text") or "")
@@ -5077,8 +5084,8 @@ class MainWindow(QMainWindow):
             if name not in ready_names:
                 self._ready_until.pop(name, None)
         self._users = people
-        if len(people) != 1:
-            self._alone = False
+        self._alone_users_received = True
+        self._check_alone_on_entry()
         me = str(self.app.store.data["connection"].get("name") or "")
         self._known_names, joined = people_joined(self._known_names, [person["name"] for person in people], me)
         line = join_line(joined)
@@ -5086,6 +5093,16 @@ class MainWindow(QMainWindow):
             self._notify_background("yucha", line)
         self._paint_users()
         self._start_when_everyone_ready(people)
+
+    def _check_alone_on_entry(self):
+        if not self._alone_users_received:
+            return
+        if len(self._users) != 1:
+            self._alone_until = 0.0
+        if self._alone_pending and self._connected and self._users:
+            self._alone_pending = False
+            if len(self._users) == 1:
+                self._alone_until = time.monotonic() + CHAT_LIFE
 
     def _start_when_everyone_ready(self, people):
         names = {person["name"] for person in people}
@@ -5164,7 +5181,7 @@ class MainWindow(QMainWindow):
         elif re.match(r"^.+ has left\s*$", text):
             spans = [{"k": "leave", "v": text}]
         elif alone:
-            self._alone = len(self._users) <= 1
+            self._check_alone_on_entry()
             spans = [{"k": "text", "v": tr(110)}]
         else:
             spans = _status_spans(text) or [{"k": "text", "v": text}]
@@ -5324,7 +5341,7 @@ class MainWindow(QMainWindow):
             people.append(person)
         differ, missing = room_file_notes(self._users)
         notices = []
-        if self._alone and self._connected:
+        if self._connected and now < self._alone_until:
             notices.append(tr(110))
         if differ:
             notices.append(tr(11))

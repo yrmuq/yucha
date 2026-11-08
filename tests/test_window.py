@@ -346,7 +346,9 @@ class WindowTests(unittest.TestCase):
                 window = self.window
                 window._osd = []
                 window._users = [{"name": "me", "ready": False, "file": "Episode.mkv", "size": 10000000, "duration": 120}]
-                window._connected = True
+                window._on_conn({"state": "connecting"})
+                window._on_conn({"state": "connected"})
+                window._on_users({"list": window._users})
                 window._add_chat("", "me is playing 'Episode.mkv' (02:00) in room: 'room'")
                 self.assertIn("Episode.mkv", window.chat.toPlainText())
                 self.assertFalse(window._osd)
@@ -363,6 +365,87 @@ class WindowTests(unittest.TestCase):
                 self.assertNotIn(i18n.tr(110), window.board.notices)
         finally:
             i18n.use("English")
+
+    def test_alone_status_expires_once_per_entry_and_ignores_later_warnings(self):
+        window = self.window
+        me = {"name": "me", "ready": False, "file": "Episode.mkv", "size": 10000000, "duration": 120}
+        other = {**me, "name": "other"}
+        with patch("yucha.window.time.monotonic", return_value=100.0) as clock:
+            window._on_conn({"state": "connecting"})
+            window._on_conn({"state": "connected"})
+            window._on_users({"list": [me]})
+            window._refresh_osd()
+            self.assertIn(i18n.tr(110), window.board.notices)
+            clock.return_value = 104.0
+            window._add_chat("", "You're alone in the room")
+            self.assertIn(i18n.tr(110), window.board.notices)
+            clock.return_value = 106.0
+            window._refresh_osd()
+            self.assertNotIn(i18n.tr(110), window.board.notices)
+            window._add_chat("", "You're alone in the room")
+            window._add_chat("", "me is playing 'Episode.mkv' (02:00)")
+            self.assertNotIn(i18n.tr(110), window.board.notices)
+            window._on_users({"list": [me, other]})
+            window._on_users({"list": [me]})
+            window._add_chat("", "You're alone in the room")
+            self.assertNotIn(i18n.tr(110), window.board.notices)
+
+            window._on_conn({"state": "connecting"})
+            window._on_users({"list": [me, other]})
+            window._on_conn({"state": "connected"})
+            window._on_users({"list": [me]})
+            window._add_chat("", "You're alone in the room")
+            self.assertNotIn(i18n.tr(110), window.board.notices)
+
+            window._on_conn({"state": "connecting"})
+            window._on_users({"list": [me]})
+            window._on_conn({"state": "connected"})
+            window._refresh_osd()
+            self.assertIn(i18n.tr(110), window.board.notices)
+            window._on_users({"list": [me, other]})
+            window._refresh_osd()
+            self.assertNotIn(i18n.tr(110), window.board.notices)
+            window._on_conn({"state": "connecting"})
+            window._on_conn({"state": "connected"})
+            window._add_chat("", "You're alone in the room")
+            self.assertNotIn(i18n.tr(110), window.board.notices)
+            window._on_users({"list": [me]})
+            window._refresh_osd()
+            self.assertIn(i18n.tr(110), window.board.notices)
+
+    def test_panel_bottom_follows_chat_limit_with_unchanged_padding_and_top(self):
+        window = self.window
+        window.set_panel(True)
+        for style in ("classic", "modern"):
+            self.store.data["appearance"]["style"] = style
+            window.apply_theme()
+            for height in (520, 720, 1080):
+                window.resize(1280, height)
+                self.qt.processEvents()
+                window._dev["chat_max"] = 0
+                window._fit_playlist()
+                top = window.panel.y()
+                full_height = window.panel.height()
+                padding = window.panel.layout().contentsMargins().bottom()
+                for cap in (150, 90, 0):
+                    with self.subTest(style=style, height=height, cap=cap):
+                        window._dev["chat_max"] = cap
+                        window._fit_playlist()
+                        self.qt.processEvents()
+                        window._place_overlays()
+                        self.assertEqual(window.panel.y(), top)
+                        self.assertEqual(window.panel.height() - window.chat.y() - window.chat.height(), padding)
+                        if cap:
+                            self.assertLessEqual(window.chat.height(), cap)
+                            self.assertLessEqual(window.panel.height(), full_height)
+                        else:
+                            self.assertEqual(window.panel.height(), full_height)
+                window._dev["chat_max"] = 90
+                window._fit_playlist()
+                short = window.panel.height()
+                window._dev["chat_max"] = 150
+                window._fit_playlist()
+                self.assertGreaterEqual(window.panel.height(), short)
 
     def test_chat_maximum_height_previews_and_dev_reset_and_cancel_restore_it(self):
         self.window.set_panel(True)
