@@ -47,6 +47,10 @@
 | `Open With` | Add the opened video to the playlist. A window that is already open receives it. |
 | `Right Click` / `Space` | Toggle Play / Pause. |
 | `Double Click` | Toggle Fullscreen. |
+| `Left Click` (left or right screen edge, fullscreen) | Toggle the side panel. |
+| `Drag` (bottom edge of side panel) | Resize the chat height and save its maximum height. |
+| `Drag` (side panel background, headings, or banner) | Move the panel when `Dev` → `Drag side panel` is enabled. |
+| `Right Arrow` button (side panel) | Restore the panel position, respecting vertical centering if enabled. |
 | `Left` / `Right` | Seek backward / forward (`5s`). |
 | `Up` / `Down` / `Mouse Wheel` | Adjust volume (`10%` steps via keys, up to `130%` max). |
 | `Enter` | Open the message field. Enter again sends the text and closes the field. |

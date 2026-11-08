@@ -17,8 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "third_party" / "syncplay"))
 
-from PySide6.QtCore import QEvent, QObject, QPoint, Qt, Signal
-from PySide6.QtGui import QColor, QFontMetrics, QImage, QKeyEvent, QPainter, QPalette
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, Qt, Signal
+from PySide6.QtGui import QColor, QFontMetrics, QImage, QKeyEvent, QMouseEvent, QPainter, QPalette
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QFormLayout, QLabel, QWidget
 
@@ -144,6 +144,17 @@ class WindowTests(unittest.TestCase):
         target = self.window.childAt(self.window.mapFromGlobal(global_point))
         self.assertIsNotNone(target)
         QTest.mouseClick(target, Qt.MouseButton.LeftButton, pos=target.mapFromGlobal(global_point))
+        self.qt.processEvents()
+
+    def drag(self, widget, point, delta):
+        destination = widget.mapToGlobal(point) + delta
+        QTest.mousePress(widget, Qt.MouseButton.LeftButton, pos=point)
+        self.qt.sendEvent(widget, QMouseEvent(QEvent.Type.MouseMove,
+            QPointF(widget.mapFromGlobal(destination)), QPointF(destination),
+            Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+        self.qt.sendEvent(widget, QMouseEvent(QEvent.Type.MouseButtonRelease,
+            QPointF(widget.mapFromGlobal(destination)), QPointF(destination),
+            Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier))
         self.qt.processEvents()
 
     def test_space_pauses_once_when_ready_and_playing(self):
@@ -450,7 +461,7 @@ class WindowTests(unittest.TestCase):
     def test_chat_maximum_height_previews_and_dev_reset_and_cancel_restore_it(self):
         self.window.set_panel(True)
         dialog = self.dialog()
-        self.assertEqual(dialog._chat_max.value(), 0)
+        self.assertEqual(dialog._chat_max.value(), 340)
         self.assertEqual(dialog._chat_max.specialValueText(), i18n.tr(109))
         form = dialog._chat_max.parentWidget().layout()
         self.assertEqual(form.labelForField(dialog._chat_max).text(), i18n.tr(108))
@@ -460,7 +471,7 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(self.window.chat.height(), 150)
         dialog._reset_dev()
         self.qt.processEvents()
-        self.assertEqual(dialog._chat_max.value(), 0)
+        self.assertEqual(dialog._chat_max.value(), 340)
         self.assertGreater(self.window.chat.height(), 150)
         dialog.reject()
         self.assertNotIn("chat_max", self.window._dev)
@@ -707,6 +718,131 @@ class WindowTests(unittest.TestCase):
         self.qt.processEvents()
         self.click_at(self.window.panel, QPoint(self.window.panel.width() - 2, 5))
         self.assertTrue(self.window._panel_open)
+
+    def test_panel_bottom_drag_saves_chat_height_without_changing_the_padding(self):
+        window = self.window
+        window.resize(1280, 1100)
+        window.set_panel(True)
+        self.qt.processEvents()
+        self.assertEqual(window.chat.height(), 340)
+        original = window.panel.height()
+        self.drag(window.panel, QPoint(window.panel.width() // 2, original - 2), QPoint(0, -80))
+        self.assertEqual(window.chat.height(), 260)
+        self.assertEqual(window.panel.height(), original - 80)
+        self.assertEqual(window.panel.height() - window.chat.y() - window.chat.height(), 16)
+        self.assertEqual(ConfigStore().data["appearance"]["dev"], {"chat_max": 260})
+        dialog = self.dialog()
+        self.assertEqual(dialog._chat_max.value(), 260)
+        dialog.reject()
+        self.drag(window.panel, QPoint(window.panel.width() // 2, window.panel.height() - 2), QPoint(0, 80))
+        self.assertEqual(window.chat.height(), 340)
+        self.assertEqual(ConfigStore().data["appearance"]["dev"], {})
+        # The original width grip still persists the ordinary panel width.
+        self.drag(window.panel, QPoint(2, 80), QPoint(-60, 0))
+        self.assertEqual(ConfigStore().data["appearance"]["panelWidth"], 440)
+        self.assertEqual(ConfigStore().data["appearance"]["dev"], {})
+
+    def test_panel_center_drag_and_home_stay_above_the_bar(self):
+        window = self.window
+        window.resize(1280, 1100)
+        window.set_panel(True)
+        window.apply_dev({"panel_center": True, "panel_drag": True})
+        self.qt.processEvents()
+        bounds = window._panel_rect()
+        expected = QPoint(bounds.x(), bounds.y() + (bounds.height() - window.panel.height()) // 2)
+        self.assertEqual(window.panel.pos(), expected)
+        self.assertTrue(window.panel_home.isVisible())
+        window._open_settings = Mock()
+        self.drag(window.banner, window.banner.rect().center(), QPoint(-400, -80))
+        self.assertEqual(window.panel.pos(), expected + QPoint(-400, -80))
+        window._open_settings.assert_not_called()
+        for delta in (QPoint(-10000, -10000), QPoint(10000, 10000)):
+            self.drag(window.banner, window.banner.rect().center(), delta)
+            self.assertGreaterEqual(window.panel.x(), 12)
+            self.assertGreaterEqual(window.panel.y(), bounds.y())
+            self.assertLessEqual(window.panel.geometry().right(), window.stage.width() - 13)
+            self.assertLessEqual(window.panel.geometry().bottom(), window._bar_rect().top() - 9)
+        window.resize(900, 600)
+        self.qt.processEvents()
+        self.assertLessEqual(window.panel.geometry().right(), window.stage.width() - 13)
+        self.assertLessEqual(window.panel.geometry().bottom(), window._bar_rect().top() - 9)
+        window.resize(1280, 1100)
+        self.qt.processEvents()
+        window.panel_home.click()
+        self.assertEqual(window.panel.pos(), expected)
+        self.assertTrue(window._dev["panel_drag"])
+        QTest.mouseClick(window.banner, Qt.MouseButton.LeftButton)
+        window._open_settings.assert_called_once_with(0)
+        self.drag(window.banner, window.banner.rect().center(), QPoint(-100, -30))
+        manual = window.panel.pos()
+        dialog = self.dialog()
+        dialog._panel_flags["panel_drag"].setChecked(False)
+        self.assertIsNone(window._panel_pos)
+        dialog.reject()
+        self.assertEqual(window.panel.pos(), manual)
+        window._open_settings.reset_mock()
+        QTest.mousePress(window.banner, Qt.MouseButton.LeftButton)
+        self.qt.sendEvent(window.banner, QEvent(QEvent.Type.UngrabMouse))
+        self.assertIsNotNone(window._grip)
+        self.qt.sendEvent(window.panel, QEvent(QEvent.Type.UngrabMouse))
+        self.assertIsNone(window._grip)
+        QTest.mouseRelease(window.panel, Qt.MouseButton.LeftButton)
+        window._open_settings.assert_not_called()
+        window.apply_dev({"panel_center": True})
+        self.assertEqual(window.panel.pos(), expected)
+        self.assertIsNone(window._panel_pos)
+        self.assertTrue(window.panel_home.isHidden())
+        window.apply_dev({})
+        self.assertEqual(window.panel.y(), bounds.y())
+
+    def test_panel_options_and_minimum_bar_width_preview_save_and_reset(self):
+        dialog = self.dialog()
+        self.assertEqual(dialog._chat_max.value(), 340)
+        self.assertFalse(dialog._panel_flags["panel_center"].isChecked())
+        self.assertFalse(dialog._panel_flags["panel_drag"].isChecked())
+        self.assertEqual(dialog._bar_min.value(), 0)
+        dialog._panel_flags["panel_center"].setChecked(True)
+        dialog._panel_flags["panel_drag"].setChecked(True)
+        dialog._bar_min.setValue(1000)
+        self.assertEqual(self.window._bar_rect().width(), 1000)
+        dialog._accept()
+        self.app.on_command({"c": "appearance", **dialog.appearance})
+        self.app.store = ConfigStore()
+        restarted = self.make_window()
+        self.assertTrue(restarted._dev["panel_center"])
+        self.assertTrue(restarted._dev["panel_drag"])
+        self.assertFalse(restarted.panel_home.isVisible())
+        restarted.set_panel(True)
+        self.assertTrue(restarted.panel_home.isVisible())
+        self.assertEqual(restarted._bar_rect().width(), 1000)
+        restarted.resize(900, 600)
+        self.qt.processEvents()
+        self.assertEqual(restarted._bar_rect().width(), restarted.stage.width())
+        self.app.store = self.store
+        dialog = self.dialog()
+        dialog._panel_flags["panel_drag"].setChecked(False)
+        dialog._bar_min.setValue(300)
+        dialog.reject()
+        self.assertTrue(self.window._dev["panel_drag"])
+        self.assertEqual(self.window._dev["bar_min"], 1000)
+        dialog = self.dialog()
+        dialog._reset_dev()
+        self.assertEqual(self.window._dev, {})
+        self.assertTrue(self.window.panel_home.isHidden())
+        self.assertEqual(ConfigStore().data["appearance"]["dev"], {})
+        dialog.reject()
+
+    def test_both_fullscreen_edges_toggle_the_panel_without_affecting_windowed_clicks(self):
+        window = self.window
+        self.assertFalse(window._panel_open)
+        self.click_at(window.stage, QPoint(1, 1))
+        self.assertFalse(window._panel_open)
+        window.showFullScreen()
+        self.qt.processEvents()
+        for point in (QPoint(1, 1), QPoint(window.stage.width() - 1, 1)):
+            self.click_at(window.stage, point)
+            self.assertTrue(window._panel_open)
+            window.set_panel(False)
 
     def test_horizontal_volume_number_has_the_same_background_as_panel(self):
         self.window.video.setStyleSheet("background: #325FC0;")

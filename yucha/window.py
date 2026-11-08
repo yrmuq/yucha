@@ -138,7 +138,10 @@ def _dev_values(appearance, overrides=None):
         "sub": {"size": 55, "bold": False, "family": "sans-serif", "dark": white, "light": white},
         "titles": {"size": 11, "bold": True, "family": family, "dark": dark, "light": light},
         "gamma": 10,
-        "chat_max": 0,
+        "chat_max": 340,
+        "panel_center": False,
+        "panel_drag": False,
+        "bar_min": 0,
         "face": face,
         "panel": PANEL_WIDTH,
         "bar": BAR_HEIGHT,
@@ -1849,6 +1852,10 @@ class IconButton(QPushButton):
             painter.drawLine(QPointF(cx + 3, cy - 7), QPointF(cx + 3, cy + 7))
         elif kind == "send":
             return
+        elif kind == "arrow_right":
+            painter.drawLine(QPointF(cx - 8, cy), QPointF(cx + 8, cy))
+            painter.drawLine(QPointF(cx + 8, cy), QPointF(cx + 2, cy - 6))
+            painter.drawLine(QPointF(cx + 8, cy), QPointF(cx + 2, cy + 6))
         elif kind == "gear":
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(color)
@@ -2170,6 +2177,7 @@ class SettingsDialog(QDialog):
         self._theme_before = deepcopy(appearance)
         self._dev_before = deepcopy(parent._dev)
         self._panel_before = parent._panel_width
+        self._position_before = deepcopy(parent._panel_pos)
         self._saved_dev = deepcopy(parent._dev)
         self._dev_loading = False
         self._side_layouts = []
@@ -2671,10 +2679,26 @@ class SettingsDialog(QDialog):
         self._chat_max.setRange(0, 2160)
         self._chat_max.setSuffix(" px")
         self._chat_max.setSpecialValueText(tr(109))
-        self._chat_max.setValue(int(seed.get("chat_max", 0)))
+        self._chat_max.setValue(int(seed.get("chat_max", 340)))
         self._chat_max.valueChanged.connect(lambda _value: self._push_dev())
         form.addRow(tr(108), self._chat_max)
+        self._panel_flags = {}
+        look = _palette(self._look_theme, self._look_accent)
+        for key, number in (("panel_center", 111), ("panel_drag", 112)):
+            box = BoxCheck()
+            box.setChecked(bool(seed[key]))
+            box.set_colors(look["field"], look["border"], look["on_fg"], look["accent"])
+            box.toggled.connect(lambda _value: self._push_dev())
+            self._panel_flags[key] = box
+            form.addRow(tr(number), box)
         form.addRow(tr(91), self._dev_bar)
+        self._bar_min = QuietSpin()
+        self._bar_min.setRange(0, 3840)
+        self._bar_min.setSuffix(" px")
+        self._bar_min.setSpecialValueText(tr(57))
+        self._bar_min.setValue(int(seed["bar_min"]))
+        self._bar_min.valueChanged.connect(lambda _value: self._push_dev())
+        form.addRow(tr(113), self._bar_min)
         self._bar_inset = QuietSpin()
         self._bar_inset.setRange(0, 40)
         self._bar_inset.setSuffix("%")
@@ -2830,6 +2854,7 @@ class SettingsDialog(QDialog):
             self._dev_panel,
             self._dev_bar,
             self._chat_max,
+            self._bar_min,
             self._bar_inset,
             self._bar_alpha,
             self._panel_alpha,
@@ -2843,6 +2868,7 @@ class SettingsDialog(QDialog):
             self.gamma_size,
         ]
         widgets.extend(self._bar_buttons.values())
+        widgets.extend(self._panel_flags.values())
         for row in self._dev_rows.values():
             widgets.extend((row["size"], row["bold"], row["family"]))
         for widget in widgets:
@@ -2861,7 +2887,10 @@ class SettingsDialog(QDialog):
             row["light"].set_color(hex_color(item.get("light"), "#FFFFFF"))
         self._dev_panel.setValue(int(seed["panel"]))
         self._dev_bar.setValue(int(seed["bar"]))
-        self._chat_max.setValue(int(seed.get("chat_max", 0)))
+        self._chat_max.setValue(int(seed.get("chat_max", 340)))
+        self._bar_min.setValue(int(seed["bar_min"]))
+        for key, box in self._panel_flags.items():
+            box.setChecked(bool(seed[key]))
         self._bar_inset.setValue(int(seed.get("bar_inset", 30)))
         self._bar_alpha.setValue(int(seed.get("bar_alpha", 90)))
         self._panel_alpha.setValue(int(seed.get("panel_alpha", 90)))
@@ -2900,6 +2929,7 @@ class SettingsDialog(QDialog):
         self._dev_before = deepcopy(self._theme_before["dev"])
         self._saved_dev = deepcopy(self._dev_before)
         self._panel_before = _dev_values(self._theme_before, self._dev_before)["panel"]
+        self._position_before = None
 
     def _reset_dev(self):
         window = self.parent()
@@ -2917,6 +2947,8 @@ class SettingsDialog(QDialog):
             "panel": self._dev_panel.value(),
             "bar": self._dev_bar.value(),
             "chat_max": self._chat_max.value(),
+            "bar_min": self._bar_min.value(),
+            **{key: box.isChecked() for key, box in self._panel_flags.items()},
             "bar_alpha": self._bar_alpha.value(),
             "panel_alpha": self._panel_alpha.value(),
             "osd_alpha": self._osd_alpha.value(),
@@ -3050,6 +3082,9 @@ class SettingsDialog(QDialog):
             lines.append("face.{}.light={}".format(key, row["light"]))
         lines.append("panel.width={}".format(spec["panel"]))
         lines.append("chat.max-height={}".format(spec["chat_max"]))
+        lines.append("panel.center={}".format("yes" if spec["panel_center"] else "no"))
+        lines.append("panel.drag={}".format("yes" if spec["panel_drag"] else "no"))
+        lines.append("bar.min-width={}".format(spec["bar_min"]))
         lines.append("bar.height={}".format(spec["bar"]))
         lines.append("bar.alpha={}".format(spec["bar_alpha"]))
         lines.append("panel.alpha={}".format(spec["panel_alpha"]))
@@ -3372,6 +3407,7 @@ class SettingsDialog(QDialog):
             window._dev = deepcopy(self._dev_before)
             window._bar_h = int(window._dev.get("bar", BAR_HEIGHT))
             window._panel_width = self._panel_before
+            window._panel_pos = deepcopy(self._position_before)
             window.apply_theme()
         super().reject()
 
@@ -3490,6 +3526,7 @@ class MainWindow(QMainWindow):
         self._chat_held = False
         self._known_names = None
         self._dev = dev_settings(app.store.data["appearance"].get("dev"))
+        self._panel_pos = None
         self._bar_h = int(self._dev.get("bar", BAR_HEIGHT))
         self._awake = SleepInhibit()
         icon = Path(__file__).resolve().parent / "icon.png"
@@ -3701,8 +3738,15 @@ class MainWindow(QMainWindow):
         self.gear = IconButton("gear")
         self.gear.setObjectName("panelicon")
         self.gear.clicked.connect(lambda: self._open_settings(1))
+        self.panel_home = IconButton("arrow_right")
+        self.panel_home.setObjectName("panelicon")
+        self.panel_home.setToolTip(tr(114))
+        self.panel_home.setAccessibleName(tr(114))
+        self.panel_home.clicked.connect(self._reset_panel_position)
+        self.panel_home.hide()
         banner_row.addWidget(self.banner, 1)
         banner_row.addWidget(self.gear)
+        banner_row.addWidget(self.panel_home)
         side.addLayout(banner_row)
 
         self.reconnect = QPushButton()
@@ -3786,6 +3830,10 @@ class MainWindow(QMainWindow):
         kind = event.type()
         if kind == QEvent.Type.KeyPress and self._player_key(event):
             return True
+        if self._grip is not None and (
+                kind == QEvent.Type.UngrabMouse and watched is self.panel or
+                kind == QEvent.Type.WindowDeactivate and watched is self):
+            self._release_grip(False)
         if kind == QEvent.Type.MouseButtonPress and self._press_edge(event):
             return True
         if kind == QEvent.Type.MouseButtonPress and self._press_grip(watched, event):
@@ -3795,9 +3843,8 @@ class MainWindow(QMainWindow):
         if self._grip is not None and kind == QEvent.Type.MouseMove:
             self._drag_grip(event)
             return True
-        if self._grip is not None and kind == QEvent.Type.MouseButtonRelease:
-            self._grip = None
-            self._save_panel_width()
+        if self._grip is not None and kind == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
+            self._release_grip()
             return True
         if kind == QEvent.Type.MouseMove and watched is self.panel:
             self._grip_cursor(event)
@@ -4115,6 +4162,13 @@ class MainWindow(QMainWindow):
         if state == getattr(self, "_theme_state", None):
             return
         self._theme_state = state
+        self.panel_home.setVisible(bool(self._dev.get("panel_drag")))
+        if not self._dev.get("panel_drag"):
+            self._panel_pos = None
+        for widget in (self.banner, self.users_title, self.playlist_title, self.chat_title):
+            widget.setMouseTracking(True)
+            widget.setCursor(Qt.CursorShape.OpenHandCursor if self._dev.get("panel_drag") else
+                             Qt.CursorShape.PointingHandCursor if widget is self.banner else Qt.CursorShape.ArrowCursor)
         accent = appearance.get("accentColor")
         self.setStyleSheet(_stylesheet(theme, accent, self._face_paint(theme)) + self._chrome_css(theme))
         dev = _dev_values(appearance, self._dev)
@@ -4202,7 +4256,7 @@ class MainWindow(QMainWindow):
         self._apply_subtitles()
         self._refresh_osd()
         pal = _palette(theme, appearance.get("accentColor"))
-        for button in (self.play, self.ready, self.chat_btn, self.room, self.gear, self.bar_send, self.volume_btn, self.tracks_btn, self.mute_h, self.mute_v):
+        for button in (self.play, self.ready, self.chat_btn, self.room, self.gear, self.panel_home, self.bar_send, self.volume_btn, self.tracks_btn, self.mute_h, self.mute_v):
             button.set_ink(pal["button_fg"], pal["on_fg"], pal["accent"])
         self._refresh_banner()
         self._refresh_files()
@@ -4378,7 +4432,7 @@ class MainWindow(QMainWindow):
         gap = FLOAT_GAP if self._is_modern() else 0
         side = max(gap, int(round(width * self._bar_cut() / 100.0)))
         # Fixed-size controls must fit even when the floating bar is narrow.
-        minimum = self.bar.layout().minimumSize().width()
+        minimum = max(self.bar.layout().minimumSize().width(), int(self._dev.get("bar_min", 0)))
         side = max(0, min(side, (width - minimum) // 2))
         return QRect(side, max(0, height - inset - gap), max(1, width - side * 2), inset)
 
@@ -4416,27 +4470,80 @@ class MainWindow(QMainWindow):
         screen = self.screen()
         if screen is None:
             return False
-        if event.globalPosition().x() < screen.geometry().right() - (EDGE_PX - 1):
+        x = event.globalPosition().x()
+        if screen.geometry().left() + EDGE_PX <= x < screen.geometry().right() - (EDGE_PX - 1):
             return False
         self.set_panel(not self._panel_open)
         return True
 
     def _press_grip(self, watched, event):
-        if watched is not self.panel or not self._panel_open:
+        if not self._panel_open:
             return False
         if event.button() != Qt.MouseButton.LeftButton:
             return False
         local = self.panel.mapFromGlobal(event.globalPosition().toPoint())
-        if local.x() > GRIP_PX or local.y() < 0 or local.y() > self.panel.height():
+        origin = event.globalPosition().toPoint()
+        if watched is self.panel and self.panel.height() - GRIP_PX <= local.y() < self.panel.height():
+            self._grip = ("height", origin, self.chat.height())
+        elif watched is self.panel and 0 <= local.x() <= GRIP_PX:
+            self._grip = ("width", origin, self._panel_width)
+        elif self._dev.get("panel_drag") and watched in (self.panel, self.banner, self.users_title, self.playlist_title, self.chat_title):
+            self._grip = ("move", origin, self.panel.pos(), watched)
+        else:
             return False
-        self._grip = (event.globalPosition().x(), self._panel_width)
+        self._grip_moved = False
+        self.panel.grabMouse()
         return True
 
     def _drag_grip(self, event):
-        start_x, start_w = self._grip
-        delta = start_x - event.globalPosition().x()
-        self._panel_width = bounded_panel(start_w + delta)
+        mode, origin, initial, *_ = self._grip
+        delta = event.globalPosition().toPoint() - origin
+        if not self._grip_moved and delta.manhattanLength() < QApplication.startDragDistance():
+            return
+        self._grip_moved = True
+        if mode == "width":
+            self._panel_width = bounded_panel(initial - delta.x())
+        elif mode == "height":
+            cap = max(1, min(2160, initial + delta.y()))
+            if cap == 340:
+                self._dev.pop("chat_max", None)
+            else:
+                self._dev["chat_max"] = cap
+        else:
+            self._panel_pos = initial + delta
+            self.panel.setCursor(Qt.CursorShape.ClosedHandCursor)
         self._place_overlays()
+
+    def _release_grip(self, click_banner=True):
+        grip = self._grip
+        self._grip = None
+        self.panel.releaseMouse()
+        self.panel.unsetCursor()
+        if self._grip_moved:
+            if grip[0] == "width":
+                self._save_panel_width()
+            elif grip[0] == "height":
+                self.app.store.data["appearance"]["dev"] = deepcopy(self._dev)
+                self.app.store.save()
+        elif click_banner and grip[0] == "move" and grip[3] is self.banner:
+            self.banner.clicked.emit()
+
+    def _reset_panel_position(self):
+        self._panel_pos = None
+        self._place_overlays()
+
+    def _position_panel(self):
+        bounds = self._panel_rect()
+        x = bounds.x()
+        y = bounds.y()
+        if self._dev.get("panel_center"):
+            y += max(0, (bounds.height() - self.panel.height()) // 2)
+        if self._dev.get("panel_drag") and self._panel_pos is not None:
+            x, y = self._panel_pos.x(), self._panel_pos.y()
+        gap = FLOAT_GAP if self._is_modern() else 0
+        x = max(gap, min(x, self.stage.width() - self.panel.width() - gap))
+        y = max(bounds.y(), min(y, bounds.bottom() + 1 - self.panel.height()))
+        self.panel.move(x, y)
 
     def _save_panel_width(self):
         self.app.store.data["appearance"]["panelWidth"] = bounded_panel(self._panel_width)
@@ -4446,8 +4553,12 @@ class MainWindow(QMainWindow):
 
     def _grip_cursor(self, event):
         local = self.panel.mapFromGlobal(event.globalPosition().toPoint())
-        if 0 <= local.x() <= GRIP_PX:
+        if self.panel.height() - GRIP_PX <= local.y() < self.panel.height():
+            self.panel.setCursor(Qt.CursorShape.SizeVerCursor)
+        elif 0 <= local.x() <= GRIP_PX:
             self.panel.setCursor(Qt.CursorShape.SizeHorCursor)
+        elif self._dev.get("panel_drag"):
+            self.panel.setCursor(Qt.CursorShape.OpenHandCursor)
         else:
             self.panel.unsetCursor()
 
@@ -4836,7 +4947,7 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "chat"):
             return False
         layout = self.panel.layout()
-        chat_max = int(self._dev.get("chat_max") or 16777215)
+        chat_max = int(self._dev.get("chat_max", 340) or 16777215)
         self.chat.setMaximumHeight(chat_max)
         margins = layout.contentsMargins()
         visible = [layout.itemAt(index) for index in range(layout.count()) if not layout.itemAt(index).isEmpty()]
@@ -4858,6 +4969,7 @@ class MainWindow(QMainWindow):
         unused = max(0, available - height - chat_max)
         self.panel.resize(self.panel.width(), panel_height - unused)
         layout.activate()
+        self._position_panel()
         if changed:
             self._center_current_file()
         return changed
@@ -4920,6 +5032,8 @@ class MainWindow(QMainWindow):
             widget.setText(shown)
 
     def _retranslate(self):
+        self.panel_home.setToolTip(tr(114))
+        self.panel_home.setAccessibleName(tr(114))
         for widget in self.findChildren(QWidget):
             number = widget.property("phrase")
             if number:
