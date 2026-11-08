@@ -120,6 +120,8 @@ class App(object):
             appearance["volumeMax"] = max(100, min(130, ceiling))
             overlay = command.get("volumeOverlay") or "horizontal"
             appearance["volumeOverlay"] = "vertical" if overlay == "vertical" else "horizontal"
+            side = command.get("mainPanel", appearance.get("mainPanel", "right"))
+            appearance["mainPanel"] = "left" if side == "left" else "right"
             language = command.get("language", appearance.get("language") or "English")
             language = str(language or "English")
             if language not in languages():

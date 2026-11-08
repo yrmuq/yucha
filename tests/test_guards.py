@@ -55,7 +55,7 @@ class Guards(unittest.TestCase):
             self.assertEqual(original.strip(), shown.strip())
             self.assertNotIn(number.strip(), seen)
             seen.add(number.strip())
-        self.assertEqual(len(seen), 114)
+        self.assertEqual(len(seen), 117)
 
     def test_russian_keeps_the_same_ids(self):
         def rows(name):
@@ -135,12 +135,13 @@ class Guards(unittest.TestCase):
             folder = Path(tmp) / "yucha"
             folder.mkdir()
             (folder / "config.json").write_text(
-                '{"appearance": {"uiFontSize": "large", "chatFontSize": 99}}',
+                '{"appearance": {"uiFontSize": "large", "chatFontSize": 99, "mainPanel": "invalid"}}',
                 encoding="utf-8",
             )
             store = ConfigStore()
             self.assertEqual(store.data["appearance"]["uiFontSize"], 13)
             self.assertEqual(store.data["appearance"]["chatFontSize"], 20)
+            self.assertEqual(store.data["appearance"]["mainPanel"], "right")
         if previous is None:
             os.environ.pop("XDG_CONFIG_HOME", None)
         else:

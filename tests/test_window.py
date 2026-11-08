@@ -895,6 +895,119 @@ class WindowTests(unittest.TestCase):
             self.assertTrue(window._panel_open)
             window.set_panel(False)
 
+    def test_banner_hover_keeps_the_pointing_cursor_and_room_click(self):
+        window = self.window
+        window.set_panel(True)
+        self.qt.processEvents()
+        window._grip_cursor = Mock(wraps=window._grip_cursor)
+        for field in (window.banner, window.banner_text, window.banner_dot):
+            QTest.mouseMove(window.video, window.video.rect().center())
+            window._grip_cursor.reset_mock()
+            point = field.mapTo(window.banner, field.rect().center())
+            QTest.mouseMove(window.banner, point)
+            self.qt.processEvents()
+            window._grip_cursor.assert_not_called()
+            self.assertEqual(window.banner.cursor().shape(), Qt.CursorShape.PointingHandCursor)
+        window._open_settings = Mock()
+        QTest.mouseClick(window.banner, Qt.MouseButton.LeftButton)
+        window._open_settings.assert_called_once_with(0)
+
+    def test_left_panel_mirrors_controls_geometry_and_the_width_grip(self):
+        window = self.window
+        window.resize(1280, 1100)
+        window.set_panel(True)
+        for style in ("modern", "classic"):
+            with self.subTest(style=style):
+                look = self.store.data["appearance"]
+                look.update(style=style, mainPanel="right")
+                window.apply_dev({})
+                window._reset_panel_position()
+                self.qt.processEvents()
+                right = window.panel.geometry()
+                look["mainPanel"] = "left"
+                window.apply_theme()
+                self.qt.processEvents()
+                left = window.panel.geometry()
+                gap = 12 if style == "modern" else 0
+                self.assertEqual(left.x(), gap)
+                self.assertEqual(right.x(), window.stage.width() - left.width() - gap)
+                self.assertEqual(left.size(), right.size())
+                self.assertEqual(left.y(), right.y())
+                self.assertEqual(window.panel_home.kind, "arrow_left")
+                self.assertLess(window.panel_home.x(), window.gear.x())
+                self.assertLess(window.gear.x(), window.banner.x())
+                self.drag(window.banner, window.banner.rect().center(), QPoint(400, 40))
+                self.assertNotEqual(window.panel.pos(), left.topLeft())
+                self.assertLess(window.panel.geometry().bottom(), window._bar_rect().top() - (8 if gap else 0))
+                window.panel_home.click()
+                self.assertEqual(window.panel.geometry(), left)
+                self.drag(window.panel, QPoint(window.panel.width() - 2, 80), QPoint(60, 0))
+                self.assertEqual(window.panel.width(), left.width() + 60)
+                self.assertEqual(window.panel.x(), gap)
+                window.apply_dev({"panel_drag": False})
+                self.assertTrue(window.panel_home.isHidden())
+                self.assertLess(window.gear.x(), window.banner.x())
+                look["mainPanel"] = "right"
+                window.apply_dev({})
+                self.qt.processEvents()
+                self.assertEqual(window.panel_home.kind, "arrow_right")
+                self.assertLess(window.banner.x(), window.gear.x())
+                self.assertLess(window.gear.x(), window.panel_home.x())
+
+    def test_panel_side_preview_cancel_save_and_resets(self):
+        window = self.window
+        window.resize(1280, 1100)
+        window.set_panel(True)
+        self.qt.processEvents()
+        try:
+            for language, choices in (("English", ["Right", "Left"]), ("Russian", ["Справа", "Слева"])):
+                i18n.use(language)
+                dialog = self.dialog()
+                self.assertEqual([dialog.main_panel.itemText(i) for i in range(2)], choices)
+                dialog.reject()
+        finally:
+            i18n.use("English")
+        window._panel_pos = QPoint(200, 100)
+        window._place_overlays()
+        before = window.panel.pos()
+        dialog = self.dialog()
+        self.assertEqual(dialog.main_panel.currentData(), "right")
+        dialog.main_panel.setCurrentIndex(1)
+        self.assertEqual(window.panel.x(), 12)
+        self.assertEqual(ConfigStore().data["appearance"]["mainPanel"], "right")
+        dialog.main_panel.setCurrentIndex(0)
+        dialog.reject()
+        self.assertEqual(window.panel.pos(), before)
+        room = copy.deepcopy(self.store.data["connection"])
+        def edit(dialog):
+            dialog.main_panel.setCurrentIndex(1)
+            dialog._accept()
+            return QDialog.DialogCode.Accepted
+        with patch.object(SettingsDialog, "exec", edit):
+            window._open_settings()
+        self.app.store = ConfigStore()
+        restarted = self.make_window()
+        restarted.set_panel(True)
+        self.assertEqual(restarted.panel.x(), 12)
+        self.assertEqual(restarted.panel_home.kind, "arrow_left")
+        self.assertEqual(self.app.store.data["connection"], room)
+        self.app.store = self.store
+        window._panel_pos = QPoint(200, 100)
+        window._place_overlays()
+        dialog = self.dialog()
+        dialog._reset_dev()
+        self.assertEqual(window.panel.x(), 12)
+        self.assertEqual(ConfigStore().data["appearance"]["mainPanel"], "left")
+        dialog.reject()
+        dialog = self.dialog()
+        dialog._reset_standard()
+        self.assertEqual(dialog.main_panel.currentData(), "right")
+        self.assertEqual(window.panel_home.kind, "arrow_right")
+        self.assertEqual(window.panel.x(), window.stage.width() - window.panel.width() - 12)
+        self.assertEqual(ConfigStore().data["appearance"]["mainPanel"], "right")
+        self.assertEqual(ConfigStore().data["connection"], room)
+        dialog.reject()
+
     def test_horizontal_volume_number_has_the_same_background_as_panel(self):
         self.window.video.setStyleSheet("background: #325FC0;")
         self.window._dev = {"bar_alpha": 40}

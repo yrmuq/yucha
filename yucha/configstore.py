@@ -188,6 +188,7 @@ DEFAULTS = {
         "slowOnDesync": True,
         "volumeMax": 100,
         "volumeOverlay": "horizontal",
+        "mainPanel": "right",
         "language": "English",
         "subFont": "sans-serif",
         "subFontSize": 55,
@@ -229,6 +230,8 @@ class ConfigStore(object):
         look["panelWidth"] = bounded_int(look.get("panelWidth"), 380, 240, 900)
         look["devTab"] = bool(look.get("devTab", False))
         look["dev"] = dev_settings(look.get("dev"))
+        if look.get("mainPanel") not in ("right", "left"):
+            look["mainPanel"] = "right"
         if look.get("style") not in ("classic", "modern"):
             look["style"] = "modern"
         if look.get("theme") not in ("auto", "dark", "light"):

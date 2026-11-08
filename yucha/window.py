@@ -1852,10 +1852,11 @@ class IconButton(QPushButton):
             painter.drawLine(QPointF(cx + 3, cy - 7), QPointF(cx + 3, cy + 7))
         elif kind == "send":
             return
-        elif kind == "arrow_right":
+        elif kind in ("arrow_right", "arrow_left"):
+            direction = 1 if kind == "arrow_right" else -1
             painter.drawLine(QPointF(cx - 8, cy), QPointF(cx + 8, cy))
-            painter.drawLine(QPointF(cx + 8, cy), QPointF(cx + 2, cy - 6))
-            painter.drawLine(QPointF(cx + 8, cy), QPointF(cx + 2, cy + 6))
+            painter.drawLine(QPointF(cx + 8 * direction, cy), QPointF(cx + 2 * direction, cy - 6))
+            painter.drawLine(QPointF(cx + 8 * direction, cy), QPointF(cx + 2 * direction, cy + 6))
         elif kind == "gear":
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(color)
@@ -2356,6 +2357,11 @@ class SettingsDialog(QDialog):
         self.overlay.addItem(tr(37), "vertical")
         overlay = appearance.get("volumeOverlay") or "horizontal"
         self.overlay.setCurrentIndex(1 if overlay == "vertical" else 0)
+        self.main_panel = QComboBox()
+        self.main_panel.addItem(tr(116), "right")
+        self.main_panel.addItem(tr(117), "left")
+        self.main_panel.setCurrentIndex(1 if appearance.get("mainPanel") == "left" else 0)
+        self.main_panel.currentIndexChanged.connect(lambda _index: self._preview_theme())
         stepper = QWidget()
         stepper_row = QHBoxLayout(stepper)
         stepper_row.setContentsMargins(0, 0, 0, 0)
@@ -2374,6 +2380,7 @@ class SettingsDialog(QDialog):
         self.volume_max = _volume_limit(appearance.get("volumeMax"))
         self._show_volume_max()
         other_form.addRow(tr(38), self.language)
+        other_form.addRow(tr(115), self.main_panel)
         other_form.addRow(tr(35), self.overlay)
         other_form.addRow(tr(34), stepper)
         self.autoplay = BoxCheck()
@@ -2938,6 +2945,7 @@ class SettingsDialog(QDialog):
         self._persist_reset(saved)
         window.app.store.data["appearance"]["dev"] = {}
         window.apply_dev({})
+        window._reset_panel_position()
         self._fill_dev(self._dev_seed())
         self._apply_room_lock()
         self._apply_settings_font()
@@ -3023,7 +3031,7 @@ class SettingsDialog(QDialog):
         self._theme_timer.stop()
         combos = ((self.theme, "theme"), (self.style_pick, "style"),
                   (self.sub_font, "subFont"), (self.language, "language"),
-                  (self.overlay, "volumeOverlay"))
+                  (self.overlay, "volumeOverlay"), (self.main_panel, "mainPanel"))
         scales = ((self.chat_size, "chatFontSize"), (self.ui_size, "uiFontSize"),
                   (self.sub_size, "subFontSize"))
         boxes = ((self.autoplay, "autoplayNext"), (self.fastforward, "fastforwardOnDesync"),
@@ -3048,6 +3056,7 @@ class SettingsDialog(QDialog):
         window.app.store.data["appearance"] = defaults
         self._persist_reset(defaults)
         window.apply_dev({})
+        window._reset_panel_position()
         if hasattr(self, "_dev_rows"):
             self._fill_dev(self._dev_seed())
         else:
@@ -3205,6 +3214,7 @@ class SettingsDialog(QDialog):
             "slowOnDesync": self.slowdown.isChecked(),
             "volumeMax": self.volume_max,
             "volumeOverlay": self.overlay.currentData() or "horizontal",
+            "mainPanel": self.main_panel.currentData() or "right",
             "language": self.language.currentData() or "English",
             "checkUpdates": self.check_updates.isChecked(),
             "style": self.style_pick.currentData() or "modern",
@@ -3373,6 +3383,9 @@ class SettingsDialog(QDialog):
             return
         look = window.app.store.data["appearance"]
         before = dict(look)
+        look["mainPanel"] = self.main_panel.currentData() or "right"
+        if before.get("mainPanel", "right") != look["mainPanel"]:
+            window._panel_pos = None
         look["theme"] = self.theme.currentData()
         look["style"] = self.style_pick.currentData() or "modern"
         look["accentColor"] = hex_color(self.accent._color.name(), "#9A3A52")
@@ -3409,6 +3422,7 @@ class SettingsDialog(QDialog):
             window._panel_width = self._panel_before
             window._panel_pos = deepcopy(self._position_before)
             window.apply_theme()
+            window._place_overlays()
         super().reject()
 
     def _color_row(self, value, default, title):
@@ -3719,6 +3733,7 @@ class MainWindow(QMainWindow):
         side.setSpacing(8)
 
         banner_row = QHBoxLayout()
+        self._banner_row = banner_row
         banner_row.setSpacing(8)
         self.banner = ClickBox()
         self.banner.setObjectName("banner")
@@ -3726,6 +3741,7 @@ class MainWindow(QMainWindow):
         self.banner.setAutoFillBackground(True)
         self.banner.setFixedHeight(44)
         self.banner.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.banner.setAttribute(Qt.WidgetAttribute.WA_NoMousePropagation, True)
         self.banner.clicked.connect(lambda: self._open_settings(0))
         inside = QHBoxLayout(self.banner)
         inside.setContentsMargins(14, 0, 14, 0)
@@ -4159,10 +4175,13 @@ class MainWindow(QMainWindow):
         theme = _shown_theme(appearance.get("theme"))
         state = (theme, {key: appearance.get(key) for key in (
             "accentColor", "accentColor2", "uiFontSize", "chatFontSize",
-            "subFont", "subFontSize", "subColor", "style", "panelWidth")}, deepcopy(self._dev))
+            "subFont", "subFontSize", "subColor", "style", "panelWidth", "mainPanel")}, deepcopy(self._dev))
         if state == getattr(self, "_theme_state", None):
             return
         self._theme_state = state
+        self._banner_row.setDirection(QHBoxLayout.Direction.RightToLeft if self._panel_left() else
+                                      QHBoxLayout.Direction.LeftToRight)
+        self.panel_home.set_kind("arrow_left" if self._panel_left() else "arrow_right")
         self.panel_home.setVisible(bool(self._dev.get("panel_drag", True)))
         if not self._dev.get("panel_drag", True):
             self._panel_pos = None
@@ -4436,6 +4455,9 @@ class MainWindow(QMainWindow):
         side = max(0, min(side, (width - minimum) // 2))
         return QRect(side, max(0, height - inset - gap), max(1, width - side * 2), inset)
 
+    def _panel_left(self):
+        return self.app.store.data["appearance"].get("mainPanel") == "left"
+
     def _panel_rect(self):
         width = self.stage.width()
         height = self.stage.height()
@@ -4444,7 +4466,8 @@ class MainWindow(QMainWindow):
         lift = POP_GAP if gap else 0
         panel_width = self._panel_span(width)
         panel_height = max(0, height - inset - gap - lift - gap)
-        return QRect(max(0, width - panel_width - gap), gap, panel_width, panel_height)
+        x = gap if self._panel_left() else max(0, width - panel_width - gap)
+        return QRect(x, gap, panel_width, panel_height)
 
     def _slide_panel(self, animate):
         end = self._panel_rect()
@@ -4485,7 +4508,7 @@ class MainWindow(QMainWindow):
         origin = event.globalPosition().toPoint()
         if watched is self.panel and self.panel.height() - GRIP_PX <= local.y() < self.panel.height():
             self._grip = ("height", origin, self.chat.height())
-        elif watched is self.panel and 0 <= local.x() <= GRIP_PX:
+        elif watched is self.panel and self._width_grip(local):
             self._grip = ("width", origin, self._panel_width)
         elif self._dev.get("panel_drag", True) and watched in (self.panel, self.banner, self.users_title, self.playlist_title, self.chat_title):
             self._grip = ("move", origin, self.panel.pos(), watched)
@@ -4502,7 +4525,8 @@ class MainWindow(QMainWindow):
             return
         self._grip_moved = True
         if mode == "width":
-            self._panel_width = bounded_panel(initial - delta.x())
+            delta_x = delta.x() if self._panel_left() else -delta.x()
+            self._panel_width = bounded_panel(initial + delta_x)
         elif mode == "height":
             cap = max(1, min(2160, initial + delta.y()))
             if cap == 340:
@@ -4551,11 +4575,15 @@ class MainWindow(QMainWindow):
         self.app.store.data["appearance"]["dev"] = deepcopy(self._dev)
         self.app.store.save()
 
+    def _width_grip(self, point):
+        distance = self.panel.width() - 1 - point.x() if self._panel_left() else point.x()
+        return 0 <= distance <= GRIP_PX
+
     def _grip_cursor(self, event):
         local = self.panel.mapFromGlobal(event.globalPosition().toPoint())
         if self.panel.height() - GRIP_PX <= local.y() < self.panel.height():
             self.panel.setCursor(Qt.CursorShape.SizeVerCursor)
-        elif 0 <= local.x() <= GRIP_PX:
+        elif self._width_grip(local):
             self.panel.setCursor(Qt.CursorShape.SizeHorCursor)
         else:
             self.panel.unsetCursor()
@@ -5054,7 +5082,7 @@ class MainWindow(QMainWindow):
         after = self.app.store.data["appearance"]
         if any(before.get(key) != after.get(key) for key in (
                 "theme", "style", "accentColor", "accentColor2", "uiFontSize",
-                "chatFontSize", "subFont", "subFontSize", "subColor")):
+                "chatFontSize", "subFont", "subFontSize", "subColor", "mainPanel")):
             self.apply_theme()
         if before.get("volumeMax") != after.get("volumeMax"):
             self._apply_volume_max()
