@@ -4182,7 +4182,6 @@ class MainWindow(QMainWindow):
         self._banner_row.setDirection(QHBoxLayout.Direction.RightToLeft if self._panel_left() else
                                       QHBoxLayout.Direction.LeftToRight)
         self.panel_home.set_kind("arrow_left" if self._panel_left() else "arrow_right")
-        self.panel_home.setVisible(bool(self._dev.get("panel_drag", True)))
         if not self._dev.get("panel_drag", True):
             self._panel_pos = None
         for widget in (self.banner, self.users_title, self.playlist_title, self.chat_title):
@@ -4562,12 +4561,20 @@ class MainWindow(QMainWindow):
         y = bounds.y()
         if self._dev.get("panel_center", True):
             y += max(0, (bounds.height() - self.panel.height()) // 2)
-        if self._dev.get("panel_drag", True) and self._panel_pos is not None:
+        home = QPoint(x, y)
+        manual = self._dev.get("panel_drag", True) and self._panel_pos is not None
+        if manual:
             x, y = self._panel_pos.x(), self._panel_pos.y()
         gap = FLOAT_GAP if self._is_modern() else 0
         x = max(gap, min(x, self.stage.width() - self.panel.width() - gap))
         y = max(bounds.y(), min(y, bounds.bottom() + 1 - self.panel.height()))
         self.panel.move(x, y)
+        moved = manual and self.panel.pos() != home
+        if not moved:
+            self._panel_pos = None
+        if self.panel_home.isHidden() == moved:
+            self.panel_home.setVisible(moved)
+            self.panel.layout().activate()
 
     def _save_panel_width(self):
         self.app.store.data["appearance"]["panelWidth"] = bounded_panel(self._panel_width)
