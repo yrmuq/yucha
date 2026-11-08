@@ -565,6 +565,7 @@ def _n(value):
 
 
 _TIME = r"\d+:\d+(?::\d+)?"
+_PLAYING_LINE = re.compile(r"^(.+?) is playing '(.+?)' \([^)]*\)(?: in room: '.*')?$")
 
 
 def _ease(done):
@@ -633,7 +634,7 @@ def _status_spans(text):
         (r"^Reverting speed back to normal$", lambda m: (
             ("text", "1× " + tr(60)),
         )),
-        (r"^(.+?) is playing '(.+?)' \([^)]*\)(?: in room: '.*')?$", lambda m: (
+        (_PLAYING_LINE, lambda m: (
             ("nick", m.group(1)),
             ("text", ": "),
             ("mark", "play"),
@@ -806,6 +807,8 @@ class NoticeBoard(QWidget):
         self.bar_h = BAR_HEIGHT
         self.force = None
         self.repeat = 0
+        self._repeat_key = None
+        self._repeat_image = None
         self._timer = QTimer(self)
         self._timer.setInterval(16)
         self._timer.timeout.connect(self._tick)
@@ -924,34 +927,46 @@ class NoticeBoard(QWidget):
                 text_y += row_h
             y += box_h + 6
 
-    def _paint_repeat(self, painter, x, y):
-        painter.save()
-        painter.translate(x + 24, y + 24)
-        painter.setPen(QPen(QColor(self.page["border"]), 1, Qt.PenStyle.SolidLine,
-                            Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
-        painter.setBrush(QColor(self.page["accent"]))
-        arrow = QPainterPath()
-        arrow.arcMoveTo(QRectF(-18, -18, 36, 36), 155)
-        arrow.arcTo(QRectF(-18, -18, 36, 36), 155, -130)
-        for radius, angle in ((23, 25), (15.5, -10), (8, 25), (13, 25)):
-            radians = math.radians(angle)
-            arrow.lineTo(radius * math.cos(radians), -radius * math.sin(radians))
-        arrow.arcTo(QRectF(-13, -13, 26, 26), 25, 130)
-        arrow.closeSubpath()
-        painter.drawPath(arrow)
-        painter.rotate(180)
-        painter.drawPath(arrow)
-        painter.rotate(180)
-        if self.repeat == 1:
-            font = QFont(self.font())
-            font.setPixelSize(18)
-            font.setBold(True)
-            digit = QPainterPath()
-            digit.addText(0, 0, font, "1")
-            center = digit.boundingRect().center()
-            digit.translate(-center.x(), -center.y())
-            painter.drawPath(digit)
-        painter.restore()
+    def _paint_repeat(self, target, x, y):
+        size = max(1, round(48 * target.device().devicePixelRatioF()))
+        key = (self.repeat, self.page["accent"], self.page["border"], self.font().key(), size)
+        if key != self._repeat_key:
+            image = QImage(size * 4, size * 4, QImage.Format.Format_ARGB32_Premultiplied)
+            image.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(image)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+            painter.scale(size * 4 / 48, size * 4 / 48)
+            painter.translate(24, 24)
+            painter.setPen(QPen(QColor(self.page["border"]), 1, Qt.PenStyle.SolidLine,
+                                Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+            painter.setBrush(QColor(self.page["accent"]))
+            arrow = QPainterPath()
+            arrow.arcMoveTo(QRectF(-18, -18, 36, 36), 155)
+            arrow.arcTo(QRectF(-18, -18, 36, 36), 155, -130)
+            for radius, angle in ((23, 25), (15.5, -10), (8, 25), (13, 25)):
+                radians = math.radians(angle)
+                arrow.lineTo(radius * math.cos(radians), -radius * math.sin(radians))
+            arrow.arcTo(QRectF(-13, -13, 26, 26), 25, 130)
+            arrow.closeSubpath()
+            painter.drawPath(arrow)
+            painter.rotate(180)
+            painter.drawPath(arrow)
+            painter.rotate(180)
+            if self.repeat == 1:
+                font = QFont(self.font())
+                font.setPixelSize(18)
+                font.setBold(True)
+                digit = QPainterPath()
+                digit.addText(0, 0, font, "1")
+                center = digit.boundingRect().center()
+                digit.translate(-center.x(), -center.y())
+                painter.drawPath(digit)
+            painter.end()
+            self._repeat_image = image.scaled(size, size, Qt.AspectRatioMode.IgnoreAspectRatio,
+                                              Qt.TransformationMode.SmoothTransformation)
+            self._repeat_key = key
+        target.drawImage(QRectF(x, y, 48, 48), self._repeat_image)
 
     def _box(self, painter, x, y, w, h):
         painter.setPen(Qt.PenStyle.NoPen)
@@ -2528,6 +2543,7 @@ class SettingsDialog(QDialog):
             "sub": {"size": 55, "bold": False, "family": "sans-serif", "dark": white, "light": white},
             "titles": {"size": 11, "bold": True, "family": family, "dark": dark, "light": light},
             "gamma": 10,
+            "chat_max": 0,
             "face": face,
             "panel": PANEL_WIDTH,
             "bar": BAR_HEIGHT,
@@ -2635,6 +2651,13 @@ class SettingsDialog(QDialog):
         self._dev_bar.setValue(int(seed["bar"]))
         self._dev_bar.valueChanged.connect(lambda _value: self._push_dev())
         form.addRow(tr(90), self._dev_panel)
+        self._chat_max = QuietSpin()
+        self._chat_max.setRange(0, 2160)
+        self._chat_max.setSuffix(" px")
+        self._chat_max.setSpecialValueText(tr(109))
+        self._chat_max.setValue(int(seed.get("chat_max", 0)))
+        self._chat_max.valueChanged.connect(lambda _value: self._push_dev())
+        form.addRow(tr(108), self._chat_max)
         form.addRow(tr(91), self._dev_bar)
         self._bar_inset = QuietSpin()
         self._bar_inset.setRange(0, 40)
@@ -2788,6 +2811,7 @@ class SettingsDialog(QDialog):
         widgets = [
             self._dev_panel,
             self._dev_bar,
+            self._chat_max,
             self._bar_inset,
             self._bar_alpha,
             self._panel_alpha,
@@ -2819,6 +2843,7 @@ class SettingsDialog(QDialog):
             row["light"].set_color(hex_color(item.get("light"), "#FFFFFF"))
         self._dev_panel.setValue(int(seed["panel"]))
         self._dev_bar.setValue(int(seed["bar"]))
+        self._chat_max.setValue(int(seed.get("chat_max", 0)))
         self._bar_inset.setValue(int(seed.get("bar_inset", 30)))
         self._bar_alpha.setValue(int(seed.get("bar_alpha", 90)))
         self._panel_alpha.setValue(int(seed.get("panel_alpha", 90)))
@@ -2851,6 +2876,7 @@ class SettingsDialog(QDialog):
         spec = {
             "panel": self._dev_panel.value(),
             "bar": self._dev_bar.value(),
+            "chat_max": self._chat_max.value(),
             "bar_alpha": self._bar_alpha.value(),
             "panel_alpha": self._panel_alpha.value(),
             "osd_alpha": self._osd_alpha.value(),
@@ -2955,6 +2981,7 @@ class SettingsDialog(QDialog):
             lines.append("face.{}.dark={}".format(key, row["dark"]))
             lines.append("face.{}.light={}".format(key, row["light"]))
         lines.append("panel.width={}".format(spec["panel"]))
+        lines.append("chat.max-height={}".format(spec["chat_max"]))
         lines.append("bar.height={}".format(spec["bar"]))
         lines.append("bar.alpha={}".format(spec["bar_alpha"]))
         lines.append("panel.alpha={}".format(spec["panel_alpha"]))
@@ -3384,6 +3411,7 @@ class MainWindow(QMainWindow):
         self._current_path = ""
         self._listed_path = ""
         self._repeat = 0
+        self._alone = False
         self._eof_seen = False
         self._volume_until = 0
         self._hold_pause = None
@@ -3563,7 +3591,7 @@ class MainWindow(QMainWindow):
         self.volume_slider.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.volume_slider.setFixedHeight(120)
         self.volume_slider.valueChanged.connect(self._on_vertical_volume)
-        volume_pop_col.addWidget(self.volume_readout)
+        volume_pop_col.addWidget(self.volume_readout, 0, Qt.AlignmentFlag.AlignHCenter)
         volume_pop_col.addWidget(self.volume_slider, 1, Qt.AlignmentFlag.AlignHCenter)
         self.mute_v = IconButton("mute")
         self.mute_v.setParent(self.volume_pop)
@@ -3658,6 +3686,7 @@ class MainWindow(QMainWindow):
         self.chat.setReadOnly(True)
         self.chat.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         side.addWidget(self.chat, 1)
+        side.addStretch(0)
         self.user_scroll = EdgeScroll(Qt.Orientation.Horizontal, self.panel)
         self.file_scroll = EdgeScroll(Qt.Orientation.Vertical, self.panel)
         self.chat_scroll = EdgeScroll(Qt.Orientation.Vertical, self.panel)
@@ -4617,14 +4646,19 @@ class MainWindow(QMainWindow):
         self._hold_pause = None
         eof = self._get("eof-reached")
         if eof in (True, "yes", "true", 1) and len(self._playlist) == 1:
-            self._cmd("seek", "0", "absolute")
-            self._set("pause", "no")
-            self._paused = False
-            self._pos_at = 0
-            self._pos_when = time.monotonic()
-            self._eof_seen = True
+            self._restart_current()
             return
         self._cmd("cycle", "pause")
+
+    def _restart_current(self):
+        self._arm_play = None
+        self._hold_pause = None
+        self._cmd("seek", "0", "absolute")
+        self._set("pause", "no")
+        self._paused = False
+        self._pos_at = 0
+        self._pos_when = time.monotonic()
+        self._eof_seen = True
 
     def _add_dropped(self, paths):
         batch = []
@@ -4703,7 +4737,16 @@ class MainWindow(QMainWindow):
                 return
             next_index = 0
         auto = bool(self._repeat or self.app.store.data["appearance"].get("autoplayNext"))
-        self._play_path(self._playlist[next_index]["path"], start=auto)
+        path = self._playlist[next_index]["path"]
+        if path == self._current_path:
+            self._restart_current()
+        else:
+            client = getattr(self.app, "client", None)
+            if auto and getattr(client, "_player", None) is not None:
+                from twisted.internet import reactor
+                # Match Syncplay's advance marker so its rewind guard does not re-pause playback.
+                reactor.callFromThread(setattr, client, "lastAdvanceTime", time.time())
+            self._play_path(path, start=auto)
 
     def _refresh_files(self):
         if not hasattr(self, "files"):
@@ -4742,6 +4785,8 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "chat"):
             return False
         layout = self.panel.layout()
+        chat_max = int(self._dev.get("chat_max") or 16777215)
+        self.chat.setMaximumHeight(chat_max)
         margins = layout.contentsMargins()
         visible = [layout.itemAt(index) for index in range(layout.count()) if not layout.itemAt(index).isEmpty()]
         fixed = 0
@@ -4751,7 +4796,7 @@ class MainWindow(QMainWindow):
                 continue
             fixed += max(item.minimumSize().height(), item.heightForWidth(width) if item.hasHeightForWidth() else 0)
         available = self.panel.height() - margins.top() - margins.bottom() - fixed - layout.spacing() * max(0, len(visible) - 1)
-        chat_min = max(self.chat.minimumSizeHint().height(), QFontMetrics(self.chat.font()).lineSpacing() * 3 + 12)
+        chat_min = min(chat_max, max(self.chat.minimumSizeHint().height(), QFontMetrics(self.chat.font()).lineSpacing() * 3 + 12))
         row_h = max(24, QFontMetrics(self.files.font()).height() + 12)
         frame = self.files.frameWidth() * 2
         rows = min(12, max(3, self.files.count()), max(0, (available - chat_min - frame) // row_h))
@@ -4954,6 +4999,8 @@ class MainWindow(QMainWindow):
         state = event.get("state") or ""
         was = self._connected
         self._connected = state == "connected"
+        if not self._connected:
+            self._alone = False
         self._failed = state == "failed"
         if state == "failed":
             self._set_status(event.get("text") or "")
@@ -5030,6 +5077,8 @@ class MainWindow(QMainWindow):
             if name not in ready_names:
                 self._ready_until.pop(name, None)
         self._users = people
+        if len(people) != 1:
+            self._alone = False
         me = str(self.app.store.data["connection"].get("name") or "")
         self._known_names, joined = people_joined(self._known_names, [person["name"] for person in people], me)
         line = join_line(joined)
@@ -5109,10 +5158,14 @@ class MainWindow(QMainWindow):
     def _add_chat(self, user, text):
         if not text or _hidden_line(text):
             return
+        alone = not user and text.strip().rstrip(".!").casefold() in ("you're alone in the room", "you are alone in the room")
         if user:
             spans = [{"k": "nick", "v": user}, {"k": "text", "v": ": " + text}]
         elif re.match(r"^.+ has left\s*$", text):
             spans = [{"k": "leave", "v": text}]
+        elif alone:
+            self._alone = len(self._users) <= 1
+            spans = [{"k": "text", "v": tr(110)}]
         else:
             spans = _status_spans(text) or [{"k": "text", "v": text}]
             if any(span["k"] == "nick" and span["v"] in ("", "None") for span in spans):
@@ -5123,7 +5176,9 @@ class MainWindow(QMainWindow):
             self._paint_chat()
         else:
             self._append_chat_line(spans)
-        if not _startup_line(text):
+        if alone:
+            self._refresh_osd()
+        elif not _startup_line(text) and (user or not _PLAYING_LINE.fullmatch(" ".join(text.split()))):
             now = time.monotonic()
             if not replace_seek_toast(self._osd, spans, now, SLIDE):
                 self._osd.append({"born": now, "fresh": now, "spans": spans, "leave": None})
@@ -5269,6 +5324,8 @@ class MainWindow(QMainWindow):
             people.append(person)
         differ, missing = room_file_notes(self._users)
         notices = []
+        if self._alone and self._connected:
+            notices.append(tr(110))
         if differ:
             notices.append(tr(11))
         notices.extend(trf(58, name) for name in missing)

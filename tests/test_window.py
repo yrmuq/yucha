@@ -6,6 +6,7 @@ import copy
 import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -272,11 +273,18 @@ class WindowTests(unittest.TestCase):
                 window.ctl.properties.update({"path": window._current_path, "eof-reached": False})
                 window._refresh_transport()
                 play.reset_mock()
+                seeks = window.ctl.calls.count(("seek", "0", "absolute"))
                 window.ctl.properties["eof-reached"] = True
                 window._refresh_transport()
-                play.assert_called_once_with(f"/tmp/{expected}.mkv", start=start)
+                if mode == 1:
+                    play.assert_not_called()
+                    self.assertEqual(window.ctl.calls.count(("seek", "0", "absolute")), seeks + 1)
+                    self.assertFalse(window.ctl.properties["pause"])
+                else:
+                    play.assert_called_once_with(f"/tmp/{expected}.mkv", start=start)
                 window._refresh_transport()
-                self.assertEqual(play.call_count, 1)
+                self.assertEqual(play.call_count, 0 if mode == 1 else 1)
+                self.assertEqual(window.ctl.calls.count(("seek", "0", "absolute")), seeks + (mode == 1))
             window._repeat = 0
             window._current_path = "/tmp/2.mkv"
             window._eof_seen = False
@@ -289,6 +297,90 @@ class WindowTests(unittest.TestCase):
                 window._repeat = mode
                 window._advance()
                 self.assertEqual(window._current_path, "/tmp/0.mkv")
+
+    def test_repeat_avoids_reload_and_syncplay_does_not_restore_the_rewind_pause(self):
+        from syncplay.client import SyncplayClient
+        client = SyncplayClient.__new__(SyncplayClient)
+        client._player = Mock()
+        client.ui = Mock()
+        client._globalPaused = True
+        client._playerPaused = True
+        client.lastAdvanceTime = None
+        client.lastRewindTime = time.time()
+        client.lastUpdatedFileTime = 0
+        client.lastPausedOnLeaveTime = None
+        client.userlist = Mock()
+        client.userlist.currentUser.canControl.return_value = True
+        client.isPlayingMusic = Mock(return_value=False)
+        client.instaplayConditionsMet = Mock(return_value=True)
+        client.getPlayerPaused = Mock(return_value=True)
+        client.changeReadyState = Mock()
+        client.openFile = Mock()
+        self.app.client = client
+        window = self.window
+        window._repeat = 1
+        window._playlist.append({"path": "/tmp/next.mkv", "name": "next.mkv"})
+        window.ctl.properties.update({"pause": True, "eof-reached": True})
+        window._eof_seen = False
+        window._refresh_transport()
+        client.openFile.assert_not_called()
+        self.assertIn(("seek", "0", "absolute"), window.ctl.calls)
+        self.assertFalse(window.ctl.properties["pause"])
+        self.assertFalse(client._toggleReady(True, False))
+        client._player.setPaused.assert_called_once_with(True)
+        client._player.reset_mock()
+        window._repeat = 2
+        with patch("twisted.internet.reactor.callFromThread", side_effect=lambda fn, *args: fn(*args)):
+            window._advance()
+        client.openFile.assert_called_once_with("/tmp/next.mkv", True)
+        self.assertTrue(client._toggleReady(True, False))
+        client._player.setPaused.assert_not_called()
+        client.userlist.currentUser.canControl.return_value = False
+        self.assertFalse(client._toggleReady(True, False))
+        client._player.setPaused.assert_called_once_with(True)
+
+    def test_file_notifications_stay_in_chat_and_alone_status_moves_to_the_left(self):
+        try:
+            for language in ("English", "Russian"):
+                i18n.use(language)
+                window = self.window
+                window._osd = []
+                window._users = [{"name": "me", "ready": False, "file": "Episode.mkv", "size": 10000000, "duration": 120}]
+                window._connected = True
+                window._add_chat("", "me is playing 'Episode.mkv' (02:00) in room: 'room'")
+                self.assertIn("Episode.mkv", window.chat.toPlainText())
+                self.assertFalse(window._osd)
+                window._add_chat("", "You're alone in the room")
+                self.assertIn(i18n.tr(110), window.board.notices)
+                self.assertIn(i18n.tr(110), window.chat.toPlainText())
+                self.assertFalse(window._osd)
+                window._add_chat("me", "You're alone in the room")
+                self.assertEqual(len(window._osd), 1)
+                window._add_chat("", "me paused at 0:05")
+                self.assertEqual(len(window._osd), 2)
+                window._on_users({"list": window._users + [{"name": "other", "ready": False, "file": "Episode.mkv", "size": 10000000, "duration": 120}]})
+                window._refresh_osd()
+                self.assertNotIn(i18n.tr(110), window.board.notices)
+        finally:
+            i18n.use("English")
+
+    def test_chat_maximum_height_previews_and_dev_reset_and_cancel_restore_it(self):
+        self.window.set_panel(True)
+        dialog = self.dialog()
+        self.assertEqual(dialog._chat_max.value(), 0)
+        self.assertEqual(dialog._chat_max.specialValueText(), i18n.tr(109))
+        form = dialog._chat_max.parentWidget().layout()
+        self.assertEqual(form.labelForField(dialog._chat_max).text(), i18n.tr(108))
+        dialog._chat_max.setValue(150)
+        self.qt.processEvents()
+        self.assertEqual(self.window.chat.maximumHeight(), 150)
+        self.assertEqual(self.window.chat.height(), 150)
+        dialog._reset_dev()
+        self.qt.processEvents()
+        self.assertEqual(dialog._chat_max.value(), 0)
+        self.assertGreater(self.window.chat.height(), 150)
+        dialog.reject()
+        self.assertNotIn("chat_max", self.window._dev)
 
     def test_repeat_indicator_has_accent_fill_and_themed_outlines(self):
         self.window._users = []
@@ -500,12 +592,15 @@ class WindowTests(unittest.TestCase):
         self.qt.processEvents()
         self.window._place_overlays()
         geometry = self.window.volume_pop.geometry()
+        readout_y = self.window.volume_readout.y()
         for level in (0, 1, 9, 10, 99, 100, 130, 8, 99):
             self.window._show_volume(level)
             self.window._refresh_transport()
             self.qt.processEvents()
             self.window._place_overlays()
             self.assertEqual(self.window.volume_pop.geometry(), geometry)
+            self.assertLessEqual(abs(self.window.volume_readout.geometry().center().x() - self.window.volume_pop.rect().center().x()), 1)
+            self.assertEqual(self.window.volume_readout.y(), readout_y)
 
     def test_popup_tracks_real_button_position_after_tracks_disappear(self):
         self.window._toggle_volume_popup()
@@ -599,6 +694,7 @@ class WindowTests(unittest.TestCase):
             dialog._bar_alpha.setValue(61)
             dialog._settings_w.setValue(540)
             dialog._slider_numbers.setChecked(True)
+            dialog._chat_max.setValue(150)
             dialog._accept()
             return QDialog.DialogCode.Accepted
 
@@ -610,6 +706,7 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(restarted._dev, saved)
         self.assertEqual(restarted._bar_height(), 70)
         self.assertEqual(restarted.chat.font().pointSize(), 18)
+        self.assertEqual(restarted.chat.maximumHeight(), 150)
         before = copy.deepcopy(self.window._dev)
         dialog = self.dialog()
         dialog._dev_rows["alfa"]["size"].setValue(30)

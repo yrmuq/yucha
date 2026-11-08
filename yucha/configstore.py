@@ -68,6 +68,7 @@ def dev_settings(value):
         "settings_h": (375, 240, 900), "settings_w": (450, 360, 1100),
         "settings_pad": (23, 0, 160), "settings_top": (23, 0, 160),
         "gamma": (10, 1, 96),
+        "chat_max": (0, 0, 2160),
     }
     for key, limits in ranges.items():
         if key in value:
