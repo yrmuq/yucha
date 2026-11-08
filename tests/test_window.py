@@ -815,29 +815,77 @@ class WindowTests(unittest.TestCase):
         self.assertTrue(dialog.ui_size._numbers)
         dialog.reject()
 
-    def test_reset_restores_all_dev_defaults_and_is_saved(self):
+    def test_dev_activation_does_not_save_values_and_edits_are_sparse(self):
+        self.store.data["appearance"]["devTab"] = False
+        dialog = self.dialog()
+        for _ in range(5):
+            dialog._logo_pressed()
+        self.assertEqual(self.window._dev, {})
+        dialog._accept()
+        self.app.on_command({"c": "appearance", **dialog.appearance})
+        self.assertEqual(ConfigStore().data["appearance"]["dev"], {})
+        dialog = self.dialog()
+        dialog.gamma_size.setValue(18)
+        dialog._dev_rows["alfa"]["bold"].setChecked(True)
+        dialog._face_rows["border"]["dark"].set_color("#123456")
+        dialog._push_dev()
+        expected = {"gamma": 18, "alfa": {"bold": True}, "face": {"border": {"dark": "#123456"}}}
+        self.assertEqual(self.window._dev, expected)
+        dialog._accept()
+        self.app.on_command({"c": "appearance", **dialog.appearance})
+        self.assertEqual(ConfigStore().data["appearance"]["dev"], expected)
+        dialog = self.dialog()
+        self.assertEqual(dialog._face_rows["border"]["light"]._color.name().upper(),
+                         dialog._dev_defaults()["face"]["border"]["light"])
+        dialog.gamma_size.setValue(10)
+        self.assertNotIn("gamma", self.window._dev)
+        dialog._accept()
+        self.app.on_command({"c": "appearance", **dialog.appearance})
+        self.assertNotIn("gamma", ConfigStore().data["appearance"]["dev"])
+
+    def test_legacy_dev_defaults_are_not_saved_as_overrides(self):
+        dialog = self.dialog()
+        defaults = dialog._dev_defaults()
+        dialog.reject()
+        self.window._dev = defaults
+        self.window._dev["gamma"] = 18
+        dialog = self.dialog()
+        dialog._accept()
+        self.app.on_command({"c": "appearance", **dialog.appearance})
+        self.assertEqual(ConfigStore().data["appearance"]["dev"], {"gamma": 18})
+
+    def test_dev_reset_is_saved_immediately_without_saving_other_previews(self):
         self.store.data["appearance"].update({"uiFontSize": 16, "chatFontSize": 20,
                                               "subFontSize": 58, "subColor": "#AABBCC"})
-        ordinary = copy.deepcopy(self.store.data["appearance"])
-        def edit(dialog):
-            dialog._dev_rows["alfa"]["size"].setValue(29)
-            dialog._bar_alpha.setValue(12)
-            dialog._bar_buttons["volume"].setChecked(False)
-            dialog._reset_dev()
-            self.expected_defaults = dialog._dev_defaults()
-            self.assertEqual(dialog._dev_spec(), self.expected_defaults)
-            dialog._accept()
-            return QDialog.DialogCode.Accepted
-
-        with patch.object(SettingsDialog, "exec", edit):
-            self.window._open_settings()
+        self.window._dev = {"gamma": 19, "bar": 70}
+        self.store.data["appearance"]["dev"] = copy.deepcopy(self.window._dev)
+        self.store.save()
+        before = copy.deepcopy(self.store.data)
+        dialog = self.dialog()
+        dialog.ui_size.setValue(15)
+        dialog._preview_theme()
+        dialog.host.setText("not-saved.example")
+        dialog._reset_dev()
+        self.assertEqual(self.window._dev, {})
+        self.assertEqual(ConfigStore().data["appearance"]["dev"], {})
+        self.assertEqual(ConfigStore().data["appearance"]["uiFontSize"], 16)
+        self.assertEqual(self.window.font().pointSize(), 15)
+        dialog.gamma_size.setValue(24)
+        dialog.reject()
+        before["appearance"]["dev"] = {}
+        self.assertEqual(self.store.data, before)
+        self.assertEqual(ConfigStore().data, before)
+        self.assertEqual(self.window._dev, {})
+        self.assertEqual(self.window.font().pointSize(), 16)
         self.app.store = ConfigStore()
         restarted = self.make_window()
-        self.assertEqual(restarted._dev, self.expected_defaults)
-        for key in ("uiFontSize", "chatFontSize", "subFontSize", "subColor"):
-            self.assertEqual(self.app.store.data["appearance"][key], ordinary[key])
+        self.assertEqual(restarted._dev, {})
+        self.assertEqual(restarted.font().pointSize(), 16)
+        self.assertEqual(restarted.board.font_px, 20)
+        restarted._apply_subtitles()
+        self.assertEqual(restarted.ctl.properties["sub-font-size"], 58)
 
-    def test_other_reset_saves_defaults_without_changing_room_or_dev(self):
+    def test_other_reset_is_saved_immediately_and_preserves_room(self):
         self.store.data["appearance"].update({
             "theme": "light", "style": "classic", "accentColor": "#123456",
             "accentColor2": "#ABCDEF", "chatColor": "#010203", "uiFontSize": 16,
@@ -845,46 +893,70 @@ class WindowTests(unittest.TestCase):
             "autoplayNext": True, "fastforwardOnDesync": False, "slowOnDesync": False,
             "panelWidth": 650, "volumeOverlay": "vertical"})
         self.window._dev = {"gamma": 18, "ui": {"size": 15}, "panel": 650,
-                            "osd": {"size": 22}, "sub": {"size": 57}}
-        self.window.apply_theme()
-        dev = copy.deepcopy(self.window._dev)
+                            "osd": {"size": 22}, "sub": {"size": 57}, "settings_h": 500}
+        self.store.data["appearance"]["dev"] = copy.deepcopy(self.window._dev)
+        self.window.apply_dev(self.window._dev)
         room = copy.deepcopy(self.store.data["connection"])
         self.app.on_command = Mock(wraps=self.app.on_command)
-
-        def edit(dialog):
-            fields = tuple(field.text() for field in dialog._room_fields)
-            dialog.reset_other.click()
-            self.assertEqual(tuple(field.text() for field in dialog._room_fields), fields)
-            self.assertEqual(self.window._dev, dev)
-            dialog._accept()
-            return QDialog.DialogCode.Accepted
-
-        with patch.object(SettingsDialog, "exec", edit):
-            self.window._open_settings()
+        dialog = self.dialog()
+        dialog.host.setText("pending.example")
+        fields = tuple(field.text() for field in dialog._room_fields)
+        dialog.reset_other.click()
+        self.assertEqual(tuple(field.text() for field in dialog._room_fields), fields)
+        self.assertEqual(self.window._dev, {})
+        self.assertIsNone(dialog._dev_page)
+        self.assertEqual((dialog._page_w, dialog._page_h), (450, 375))
+        self.assertEqual(self.window._panel_width, 380)
+        self.assertEqual(self.window.ctl.properties["volume-max"], 100)
         saved = ConfigStore().data
         for key, value in DEFAULTS["appearance"].items():
-            if key not in ("dev", "devTab"):
-                self.assertEqual(saved["appearance"][key], system_language() if key == "language" else value, key)
-        self.assertEqual(saved["appearance"]["dev"], dev)
-        self.assertTrue(saved["appearance"]["devTab"])
+            self.assertEqual(saved["appearance"][key], system_language() if key == "language" else value, key)
         self.assertEqual(saved["connection"], room)
         self.assertEqual([call.args[0]["c"] for call in self.app.on_command.call_args_list], ["appearance"])
-        self.assertEqual(self.window.ctl.properties["volume-max"], 100)
+        dialog.ui_size.setValue(16)
+        dialog._preview_theme()
+        dialog.reject()
+        self.assertEqual(self.store.data, saved)
+        self.assertEqual(ConfigStore().data, saved)
 
-    def test_cancel_undoes_both_resets(self):
-        self.store.data["appearance"].update({"style": "classic", "uiFontSize": 16})
-        self.window._dev = {"gamma": 19, "bar": 70}
-        self.window.apply_theme()
-        self.store.data["appearance"]["dev"] = copy.deepcopy(self.window._dev)
-        self.store.save()
-        before = copy.deepcopy(self.store.data)
+    def test_other_reset_restores_defaults_with_dev_hidden(self):
+        self.store.data["appearance"].update(devTab=False, dev={"settings_pad": 40, "settings_w": 600})
+        self.window._dev = copy.deepcopy(self.store.data["appearance"]["dev"])
         dialog = self.dialog()
         dialog._reset_standard()
-        dialog._reset_dev()
+        self.assertEqual(dialog._side_layouts[0][0].contentsMargins().left(), 23)
+        self.assertEqual((dialog._page_w, dialog._page_h), (450, 375))
         dialog.reject()
-        self.assertEqual(self.store.data, before)
-        self.assertEqual(self.window._dev, before["appearance"]["dev"])
-        self.assertEqual(ConfigStore().data, before)
+        self.assertEqual(ConfigStore().data["appearance"]["dev"], {})
+
+    def test_other_reset_restores_panel_geometry_and_dev_can_be_reopened(self):
+        self.store.data["appearance"]["panelWidth"] = 650
+        self.window._panel_width = 650
+        self.window.set_panel(True)
+        self.window.apply_theme()
+        self.qt.processEvents()
+        self.assertEqual(self.window.panel.width(), 650)
+        dialog = self.dialog()
+        dialog._reset_standard()
+        self.qt.processEvents()
+        self.assertEqual(self.window.panel.width(), 380)
+        for _ in range(5):
+            dialog._logo_pressed()
+        self.assertIsNotNone(dialog._dev_page)
+        self.assertEqual(self.window._dev, {})
+        dialog.gamma_size.setValue(18)
+        dialog._accept()
+        self.app.on_command({"c": "appearance", **dialog.appearance})
+        self.assertEqual(ConfigStore().data["appearance"]["dev"], {"gamma": 18})
+
+    def test_standard_font_controls_do_not_create_dev_overrides(self):
+        self.window._dev = {"gamma": 18, "ui": {"size": 20, "bold": True}}
+        dialog = self.dialog()
+        dialog.ui_size.setValue(15)
+        dialog._preview_theme()
+        self.assertEqual(self.window._dev, {"gamma": 18, "ui": {"bold": True}})
+        self.assertEqual(dialog._dev_rows["ui"]["size"].value(), 15)
+        dialog.reject()
 
     def test_gamma_changes_only_settings_and_survives_reopening(self):
         ordinary = copy.deepcopy(self.store.data["appearance"])

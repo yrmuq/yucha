@@ -118,6 +118,85 @@ def _dev_ink(row, theme):
     return str(picked)
 
 
+def _dev_values(appearance, overrides=None):
+    family = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont).family() or "sans-serif"
+    dark = _palette("dark")["fg"]
+    light = _palette("light")["fg"]
+    white = "#FFFFFF"
+    dark_pal = _palette("dark")
+    light_pal = _palette("light")
+    face = {}
+    for key in ("bg", "field", "border", "button", "button_fg"):
+        face[key] = {"dark": dark_pal[key], "light": light_pal[key]}
+    face["ready"] = {"dark": "#3EAD62", "light": "#3EAD62"}
+    face["away"] = {"dark": "#C4453C", "light": "#C4453C"}
+    face["locked"] = {"dark": "#2A2D36", "light": "#E4E0D8"}
+    values = {
+        "ui": {"size": 13, "bold": False, "family": family, "dark": dark, "light": light},
+        "alfa": {"size": 10, "bold": False, "family": family, "dark": dark, "light": light},
+        "osd": {"size": 17, "bold": False, "family": family, "dark": dark, "light": light},
+        "sub": {"size": 55, "bold": False, "family": "sans-serif", "dark": white, "light": white},
+        "titles": {"size": 11, "bold": True, "family": family, "dark": dark, "light": light},
+        "gamma": 10,
+        "chat_max": 0,
+        "face": face,
+        "panel": PANEL_WIDTH,
+        "bar": BAR_HEIGHT,
+        "bar_alpha": 90,
+        "panel_alpha": 90,
+        "osd_alpha": 90,
+        "bar_inset": 30,
+        "settings_h": 375,
+        "settings_w": 450,
+        "settings_pad": 23,
+        "settings_top": 23,
+        "slider_numbers": False,
+        "bold_names": False,
+        "bar_buttons": {
+            "play": True,
+            "ready": True,
+            "volume": True,
+            "tracks": True,
+            "chat": True,
+            "room": True,
+        },
+    }
+    values["ui"]["size"] = int(appearance.get("uiFontSize") or 13)
+    values["osd"]["size"] = int(appearance.get("chatFontSize") or 17)
+    values["sub"].update(size=int(appearance.get("subFontSize") or 55),
+                         family=font_name(appearance.get("subFont")))
+    color = hex_color(appearance.get("subColor"), "#FFFFFF")
+    values["sub"].update(dark=color, light=color)
+    values["panel"] = bounded_panel(appearance.get("panelWidth"))
+    return _merge_dev(values, overrides or {})
+
+
+def _merge_dev(base, overrides):
+    for key, value in overrides.items():
+        if isinstance(value, dict):
+            _merge_dev(base[key], value)
+        else:
+            base[key] = value
+    return base
+
+
+def _dev_edits(before, after, saved, defaults):
+    result = deepcopy(saved)
+    for key, value in after.items():
+        if isinstance(value, dict):
+            branch = _dev_edits(before.get(key, {}), value, result.get(key, {}), defaults[key])
+            if branch:
+                result[key] = branch
+            else:
+                result.pop(key, None)
+        else:
+            if value != before.get(key):
+                result[key] = value
+            if result.get(key) == defaults[key]:
+                result.pop(key, None)
+    return result
+
+
 def _font_families():
     cached = getattr(_font_families, "names", None)
     if cached is not None:
@@ -2093,7 +2172,6 @@ class SettingsDialog(QDialog):
         self._panel_before = parent._panel_width
         self._saved_dev = deepcopy(parent._dev)
         self._dev_loading = False
-        self._standard_reset = False
         self._side_layouts = []
         self._name_forms = []
         self._checking = False
@@ -2524,76 +2602,14 @@ class SettingsDialog(QDialog):
         self._dev_button.show()
 
     def _dev_defaults(self):
-        family = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont).family() or "sans-serif"
-        dark = _palette("dark")["fg"]
-        light = _palette("light")["fg"]
-        white = "#FFFFFF"
-        dark_pal = _palette("dark")
-        light_pal = _palette("light")
-        face = {}
-        for key in ("bg", "field", "border", "button", "button_fg"):
-            face[key] = {"dark": dark_pal[key], "light": light_pal[key]}
-        face["ready"] = {"dark": "#3EAD62", "light": "#3EAD62"}
-        face["away"] = {"dark": "#C4453C", "light": "#C4453C"}
-        face["locked"] = {"dark": "#2A2D36", "light": "#E4E0D8"}
-        return {
-            "ui": {"size": 13, "bold": False, "family": family, "dark": dark, "light": light},
-            "alfa": {"size": 10, "bold": False, "family": family, "dark": dark, "light": light},
-            "osd": {"size": 17, "bold": False, "family": family, "dark": dark, "light": light},
-            "sub": {"size": 55, "bold": False, "family": "sans-serif", "dark": white, "light": white},
-            "titles": {"size": 11, "bold": True, "family": family, "dark": dark, "light": light},
-            "gamma": 10,
-            "chat_max": 0,
-            "face": face,
-            "panel": PANEL_WIDTH,
-            "bar": BAR_HEIGHT,
-            "bar_alpha": 90,
-            "panel_alpha": 90,
-            "osd_alpha": 90,
-            "bar_inset": 30,
-            "settings_h": 375,
-            "settings_w": 450,
-            "settings_pad": 23,
-            "settings_top": 23,
-            "slider_numbers": False,
-            "bold_names": False,
-            "bar_buttons": {
-                "play": True,
-                "ready": True,
-                "volume": True,
-                "tracks": True,
-                "chat": True,
-                "room": True,
-            },
-        }
+        return _dev_values(DEFAULTS["appearance"])
 
     def _dev_seed(self):
         window = self.parent()
-        current = getattr(window, "_dev", None) if window is not None else None
-        if current:
-            merged = self._dev_defaults()
-            for key, value in current.items():
-                if isinstance(value, dict):
-                    merged[key].update(deepcopy(value))
-                else:
-                    merged[key] = value
-            return merged
-        base = self._dev_defaults()
-        if window is None:
-            return base
-        look = window.app.store.data["appearance"]
-        base["ui"]["size"] = int(look.get("uiFontSize") or 13)
-        base["osd"]["size"] = int(look.get("chatFontSize") or 17)
-        base["sub"]["size"] = int(look.get("subFontSize") or 55)
-        base["sub"]["family"] = font_name(look.get("subFont"))
-        sub = hex_color(look.get("subColor"), "#FFFFFF")
-        base["sub"]["dark"] = sub
-        base["sub"]["light"] = sub
-        base["panel"] = int(getattr(window, "_panel_width", PANEL_WIDTH) or PANEL_WIDTH)
-        base["bar"] = int(getattr(window, "_bar_h", BAR_HEIGHT) or BAR_HEIGHT)
-        return base
+        return _dev_values(window.app.store.data["appearance"], window._dev)
 
     def _build_dev_page(self):
+        self._dev_loading = True
         seed = self._dev_seed()
         page = QWidget()
         form = QFormLayout(page)
@@ -2733,8 +2749,10 @@ class SettingsDialog(QDialog):
             button_row.addWidget(QLabel(title))
         button_row.addStretch(1)
         form.addRow(tr(104), buttons)
-        if getattr(self, "_scrolls", None):
-            self._set_settings_pad(self._settings_pad.value())
+        self._dev_last = self._dev_spec()
+        self._dev_loading = False
+        if self._scrolls:
+            self._apply_settings_edges()
         return page
 
     def _dev_font_row(self, key, seed):
@@ -2866,11 +2884,33 @@ class SettingsDialog(QDialog):
             self._apply_settings_edges()
         self._show_slider_numbers()
         self._apply_label_weight()
+        self._dev_last = self._dev_spec()
         self._dev_loading = False
 
+    def _persist_reset(self, appearance):
+        window = self.parent()
+        store = window.app.store
+        live = store.data["appearance"]
+        try:
+            store.data["appearance"] = deepcopy(appearance)
+            window.app.on_command({"c": "appearance", **appearance})
+            self._theme_before = deepcopy(store.data["appearance"])
+        finally:
+            store.data["appearance"] = live
+        self._dev_before = deepcopy(self._theme_before["dev"])
+        self._saved_dev = deepcopy(self._dev_before)
+        self._panel_before = _dev_values(self._theme_before, self._dev_before)["panel"]
+
     def _reset_dev(self):
-        self._fill_dev(self._dev_defaults())
-        self._push_dev()
+        window = self.parent()
+        saved = deepcopy(self._theme_before)
+        saved.update(dev={}, devTab=bool(window.app.store.data["appearance"].get("devTab")))
+        self._persist_reset(saved)
+        window.app.store.data["appearance"]["dev"] = {}
+        window.apply_dev({})
+        self._fill_dev(self._dev_seed())
+        self._apply_room_lock()
+        self._apply_settings_font()
 
     def _dev_spec(self):
         spec = {
@@ -2910,13 +2950,22 @@ class SettingsDialog(QDialog):
         window = self.parent()
         if window is None or self._dev_loading or not hasattr(self, "_bar_buttons"):
             return
-        window.apply_dev(self._dev_spec())
+        spec = self._dev_spec()
+        defaults = _dev_values(window.app.store.data["appearance"])
+        window.apply_dev(_dev_edits(self._dev_last, spec, window._dev, defaults))
+        self._dev_last = spec
         self._apply_room_lock()
         self._apply_label_weight()
         self._apply_settings_font()
 
     def _set_gamma_size(self, size):
-        self.parent()._dev["gamma"] = int(size)
+        if self._dev_loading:
+            return
+        if size == 10:
+            self.parent()._dev.pop("gamma", None)
+        else:
+            self.parent()._dev["gamma"] = int(size)
+        self._dev_last["gamma"] = int(size)
         self._apply_settings_font()
 
     def _apply_settings_font(self):
@@ -2937,7 +2986,8 @@ class SettingsDialog(QDialog):
         self._fit_settings_pages()
 
     def _reset_standard(self):
-        defaults = DEFAULTS["appearance"]
+        defaults = deepcopy(DEFAULTS["appearance"])
+        defaults["language"] = system_language()
         self._theme_timer.stop()
         combos = ((self.theme, "theme"), (self.style_pick, "style"),
                   (self.sub_font, "subFont"), (self.language, "language"),
@@ -2962,8 +3012,26 @@ class SettingsDialog(QDialog):
         self._kept_chat = defaults["chatColor"]
         self.volume_max = defaults["volumeMax"]
         self._show_volume_max()
-        self._standard_reset = True
-        self._push_theme(False, sync_dev=False)
+        window = self.parent()
+        window.app.store.data["appearance"] = defaults
+        self._persist_reset(defaults)
+        window.apply_dev({})
+        if hasattr(self, "_dev_rows"):
+            self._fill_dev(self._dev_seed())
+        else:
+            self._dev_loading = True
+            self._set_settings_height(375)
+            self._set_settings_width(450)
+            self._dev_loading = False
+            self._apply_settings_edges()
+        if self._dev_page is not None:
+            self.tabs.removeTab(self.tabs.indexOf(self._dev_page))
+            self._dev_page = None
+            self._dev_button.hide()
+        window._apply_volume_max()
+        window._retranslate()
+        self._apply_room_lock()
+        self._apply_settings_font()
         self._sync_update_row()
 
     def _export_dev(self):
@@ -3080,6 +3148,10 @@ class SettingsDialog(QDialog):
         if self._theme_timer.isActive():
             self._theme_timer.stop()
             self._flush_theme()
+        if hasattr(self, "_dev_rows"):
+            window = self.parent()
+            window._dev = _dev_edits(self._dev_last, self._dev_spec(), window._dev,
+                                     _dev_values(window.app.store.data["appearance"]))
         color = self._kept_chat
         accent = hex_color(self.accent._color.name(), "#9A3A52")
         accent2 = hex_color(self.accent2._color.name(), "#1F6A8A")
@@ -3104,8 +3176,6 @@ class SettingsDialog(QDialog):
             "dev": deepcopy(self.parent()._dev),
             "devTab": bool(self.parent().app.store.data["appearance"].get("devTab")),
         }
-        if self._standard_reset:
-            self.appearance["panelWidth"] = DEFAULTS["appearance"]["panelWidth"]
         self.connection = {
             "host": self.host.text(),
             "port": self.port.text(),
@@ -3199,7 +3269,7 @@ class SettingsDialog(QDialog):
         window = self.parent()
         if window is not None:
             theme = _shown_theme(window.app.store.data["appearance"].get("theme"))
-        row = {}
+        row = (window._dev.get("face") or {}).get("locked", {}) if window is not None else {}
         if hasattr(self, "_face_rows"):
             picked = self._face_rows.get("locked")
             if picked:
@@ -3277,29 +3347,19 @@ class SettingsDialog(QDialog):
         look["subFont"] = font_name(self.sub_font.currentData())
         look["subFontSize"] = self.sub_size.value()
         look["subColor"] = hex_color(self.sub_color._color.name(), "#FFFFFF")
-        # Ordinary size controls and the development tab edit the same sizes.
-        for key, setting in (("ui", "uiFontSize"), ("osd", "chatFontSize"), ("sub", "subFontSize")):
-            if sync_dev and before.get(setting) != look[setting] and window._dev:
-                window._dev.setdefault(key, {})["size"] = look[setting]
-                if hasattr(self, "_dev_rows"):
-                    spin = self._dev_rows[key]["size"]
-                    spin.blockSignals(True)
-                    spin.setValue(look[setting])
-                    spin.blockSignals(False)
-        if sync_dev and window._dev:
-            sub = window._dev.setdefault("sub", {})
-            if before.get("subFont") != look["subFont"]:
-                sub["family"] = look["subFont"]
-            if before.get("subColor") != look["subColor"]:
-                sub.update(dark=look["subColor"], light=look["subColor"])
+        if sync_dev:
+            changed = (("ui", "uiFontSize", ("size",)), ("osd", "chatFontSize", ("size",)),
+                       ("sub", "subFontSize", ("size",)), ("sub", "subFont", ("family",)),
+                       ("sub", "subColor", ("dark", "light")))
+            for key, setting, fields in changed:
+                if before.get(setting) != look[setting]:
+                    row = window._dev.get(key, {})
+                    for field in fields:
+                        row.pop(field, None)
+                    if not row:
+                        window._dev.pop(key, None)
             if hasattr(self, "_dev_rows"):
-                row = self._dev_rows["sub"]
-                row["family"].blockSignals(True)
-                row["family"].setCurrentFont(QFont(sub.get("family", look["subFont"])))
-                row["family"].blockSignals(False)
-                for shade in ("dark", "light"):
-                    if shade in sub:
-                        row[shade].set_color(sub[shade])
+                self._fill_dev(self._dev_seed())
         self._theme_dirty = True
         window.apply_theme()
         self._apply_settings_font()
@@ -4038,8 +4098,9 @@ class MainWindow(QMainWindow):
 
     def apply_dev(self, spec):
         self._dev = dev_settings(spec)
-        self._bar_h = int(spec["bar"])
-        self._panel_width = bounded_panel(spec["panel"])
+        values = _dev_values(self.app.store.data["appearance"], self._dev)
+        self._bar_h = values["bar"]
+        self._panel_width = values["panel"]
         self.apply_theme()
 
     def _fill_from_store(self):
@@ -4050,13 +4111,13 @@ class MainWindow(QMainWindow):
         theme = _shown_theme(appearance.get("theme"))
         state = (theme, {key: appearance.get(key) for key in (
             "accentColor", "accentColor2", "uiFontSize", "chatFontSize",
-            "subFont", "subFontSize", "subColor", "style")}, deepcopy(self._dev))
+            "subFont", "subFontSize", "subColor", "style", "panelWidth")}, deepcopy(self._dev))
         if state == getattr(self, "_theme_state", None):
             return
         self._theme_state = state
         accent = appearance.get("accentColor")
         self.setStyleSheet(_stylesheet(theme, accent, self._face_paint(theme)) + self._chrome_css(theme))
-        dev = self._dev or {}
+        dev = _dev_values(appearance, self._dev)
         ui = dev.get("ui") or {}
         ui_point = max(1, min(96, int(ui.get("size") or appearance.get("uiFontSize") or 13)))
         font = QFont()
@@ -4255,7 +4316,7 @@ class MainWindow(QMainWindow):
             self.board.plate_alpha = max(0, min(255, int(round(percent / 100.0 * 255))))
 
     def _style_titles(self):
-        spec = (self._dev or {}).get("titles") or {}
+        spec = _dev_values(self.app.store.data["appearance"], self._dev)["titles"]
         theme = _shown_theme(self.app.store.data["appearance"].get("theme"))
         ink = _dev_ink(spec, theme)
         css = "background: transparent; font-size: {}pt; font-weight: {};".format(
@@ -4280,17 +4341,11 @@ class MainWindow(QMainWindow):
             return
         look = self.app.store.data["appearance"]
         theme = _shown_theme(look.get("theme"))
-        dev = (self._dev or {}).get("sub")
-        if dev:
-            family = font_name(dev.get("family"))
-            size = int(dev.get("size") or 55)
-            color = hex_color(_dev_ink(dev, theme), "#FFFFFF")
-            bold = "yes" if dev.get("bold") else "no"
-        else:
-            family = font_name(look.get("subFont"))
-            size = int(look.get("subFontSize") or 55)
-            color = hex_color(look.get("subColor"), "#FFFFFF")
-            bold = "no"
+        dev = _dev_values(look, self._dev)["sub"]
+        family = font_name(dev["family"])
+        size = dev["size"]
+        color = hex_color(_dev_ink(dev, theme), "#FFFFFF")
+        bold = "yes" if dev["bold"] else "no"
         self._set("sub-font", family)
         self._set("sub-font-size", size)
         self._set("sub-bold", bold)
@@ -4385,9 +4440,8 @@ class MainWindow(QMainWindow):
 
     def _save_panel_width(self):
         self.app.store.data["appearance"]["panelWidth"] = bounded_panel(self._panel_width)
-        if self._dev:
-            self._dev["panel"] = bounded_panel(self._panel_width)
-            self.app.store.data["appearance"]["dev"] = deepcopy(self._dev)
+        self._dev.pop("panel", None)
+        self.app.store.data["appearance"]["dev"] = deepcopy(self._dev)
         self.app.store.save()
 
     def _grip_cursor(self, event):
@@ -5314,14 +5368,9 @@ class MainWindow(QMainWindow):
         self._osd = kept
         appearance = self.app.store.data["appearance"]
         theme = _shown_theme(appearance.get("theme"))
-        point = int(appearance.get("chatFontSize") or 17)
-        osd = (getattr(self, "_dev", None) or {}).get("osd")
-        if osd:
-            self.board.force = osd
-            point = int(osd.get("size") or point)
-        else:
-            self.board.force = None
-        point = max(1, min(96, point))
+        osd = _dev_values(appearance, self._dev)["osd"]
+        self.board.force = osd
+        point = max(1, min(96, int(osd["size"])))
         self.board.bar_h = self._bar_height() + (FLOAT_GAP if self._is_modern() else 0)
         page = _palette(theme, appearance.get("accentColor"))
         page["border"] = self._face_paint(theme).get("border", page["border"])

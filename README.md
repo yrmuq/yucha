@@ -16,6 +16,8 @@
 > [!NOTE]
 > **Active Beta Development:** `yucha` is currently in active beta development. Pre-release `x86_64` `AppImage` builds are available on the [Releases](https://github.com/yrmuq/yucha/releases) page.
 >
+> **After Updates:** `yucha` changes frequently, and saved settings may become outdated. If you experience problems after an update, try `Settings` → `Other` → `Reset`, then click `OK` to save the reset. Your `Room` connection and `Dev` settings are kept.
+>
 > **Independent Project:** `yucha` is an independent project and is not affiliated with or endorsed by `mpv` or `Syncplay`.
 
 ---
