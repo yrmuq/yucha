@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "third_party" / "syncplay"))
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QTimer, Qt, Signal
 from PySide6.QtGui import QColor, QFontMetrics, QImage, QKeyEvent, QMouseEvent, QPainter, QPalette
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QFormLayout, QLabel, QWidget
@@ -1069,6 +1069,19 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(self.window.apply_theme.call_count, 1)
         self.assertEqual(self.window.font().pointSize(), 14)
 
+    def test_closed_settings_dialogs_are_released(self):
+        execute = SettingsDialog.exec
+
+        def close(dialog):
+            QTimer.singleShot(0, dialog.reject if cancel else dialog._accept)
+            return execute(dialog)
+
+        with patch.object(SettingsDialog, "exec", close):
+            for cancel in (True, False):
+                self.window._open_settings()
+                self.qt.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+                self.assertEqual(self.window.findChildren(SettingsDialog), [])
+
     def test_dev_ui_osd_and_title_sizes_are_effective(self):
         dialog = self.dialog()
         dialog._dev_rows["ui"]["size"].setValue(15)
@@ -1217,7 +1230,7 @@ class WindowTests(unittest.TestCase):
         dialog.reset_other.click()
         self.assertEqual(tuple(field.text() for field in dialog._room_fields), fields)
         self.assertEqual(self.window._dev, {})
-        self.assertIsNone(dialog._dev_page)
+        self.assertEqual(dialog.tabs.indexOf(dialog._dev_page), -1)
         self.assertEqual((dialog._page_w, dialog._page_h), (450, 375))
         self.assertEqual(self.window._panel_width, 380)
         self.assertEqual(self.window.ctl.properties["volume-max"], 100)
@@ -1380,13 +1393,14 @@ class WindowTests(unittest.TestCase):
         self.assertTrue(button.isChecked())
         dialog.tabs.setCurrentIndex(0)
         self.assertFalse(button.isChecked())
+        dev_page = dialog._dev_page
         for _ in range(5):
             dialog._logo_pressed()
-        self.assertIsNone(dialog._dev_page)
+        self.assertEqual(dialog.tabs.indexOf(dev_page), -1)
         self.assertTrue(button.isHidden())
         for _ in range(5):
             dialog._logo_pressed()
-        self.assertIs(dialog.tabs.currentWidget(), dialog._dev_page)
+        self.assertIs(dialog.tabs.currentWidget(), dev_page)
         self.assertFalse(button.isHidden())
         self.assertTrue(button.isChecked())
         dialog.reject()

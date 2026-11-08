@@ -2582,18 +2582,14 @@ class SettingsDialog(QDialog):
         if self._logo_n < 5:
             return
         self._logo_n = 0
-        enabled = self._dev_page is None
+        enabled = self.tabs.indexOf(self._dev_page) < 0
         self._store_dev_tab(enabled)
         if enabled:
             self._insert_dev_tab()
             self.tabs.setCurrentWidget(self._dev_page)
         else:
-            dev = self.tabs.indexOf(self._dev_page)
             self.tabs.setCurrentWidget(self._about_page)
-            if dev >= 0:
-                self.tabs.removeTab(dev)
-            self._dev_page = None
-            self._dev_button.hide()
+            self._hide_dev_tab()
 
     def _store_dev_tab(self, enabled):
         window = self.parent()
@@ -2606,15 +2602,20 @@ class SettingsDialog(QDialog):
         self._dev_button.setChecked(True)
 
     def _insert_dev_tab(self):
-        if self._dev_page is not None:
+        if self.tabs.indexOf(self._dev_page) >= 0:
             return
-        page = self._build_dev_page()
-        if self._page_h:
-            page = self._scroll_page(page)
-        self._dev_page = page
+        if self._dev_page is None:
+            page = self._build_dev_page()
+            self._dev_page = self._scroll_page(page) if self._page_h else page
         self.tabs.addTab(self._dev_page, tr(77))
         self.tabs.setTabVisible(self.tabs.indexOf(self._dev_page), False)
         self._dev_button.show()
+
+    def _hide_dev_tab(self):
+        index = self.tabs.indexOf(self._dev_page)
+        if index >= 0:
+            self.tabs.removeTab(index)
+        self._dev_button.hide()
 
     def _dev_defaults(self):
         return _dev_values(DEFAULTS["appearance"])
@@ -3065,10 +3066,7 @@ class SettingsDialog(QDialog):
             self._set_settings_width(450)
             self._dev_loading = False
             self._apply_settings_edges()
-        if self._dev_page is not None:
-            self.tabs.removeTab(self.tabs.indexOf(self._dev_page))
-            self._dev_page = None
-            self._dev_button.hide()
+        self._hide_dev_tab()
         window._apply_volume_max()
         window._retranslate()
         self._apply_room_lock()
@@ -5082,7 +5080,11 @@ class MainWindow(QMainWindow):
             self,
             page,
         )
-        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.appearance:
+        try:
+            result = dialog.exec()
+        finally:
+            dialog.deleteLater()
+        if result != QDialog.DialogCode.Accepted or not dialog.appearance:
             return
         before = deepcopy(self.app.store.data["appearance"])
         self.app.on_command({"c": "appearance", **dialog.appearance})
