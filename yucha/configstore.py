@@ -67,7 +67,7 @@ def dev_settings(value):
         "osd_alpha": (90, 0, 100), "bar_inset": (30, 0, 40),
         "settings_h": (375, 240, 900), "settings_w": (450, 360, 1100),
         "settings_pad": (23, 0, 160), "settings_top": (23, 0, 160),
-        "gamma": (12, 1, 96),
+        "gamma": (10, 1, 96),
     }
     for key, limits in ranges.items():
         if key in value:

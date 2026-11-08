@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "third_party" / "syncplay"))
 
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, Signal
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtGui import QColor, QKeyEvent, QPalette
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QFormLayout, QLabel, QWidget
 
@@ -25,7 +25,7 @@ from yucha.app import App
 from yucha.configstore import DEFAULTS, ConfigStore
 from yucha import __version__, i18n
 from yucha.i18n import system_language
-from yucha.window import MainWindow, SettingsDialog
+from yucha.window import MainWindow, SettingsDialog, _palette
 
 
 class PictureStub(QWidget):
@@ -472,8 +472,10 @@ class WindowTests(unittest.TestCase):
                     dialog.tabs.setCurrentIndex(2)
                     dialog.show()
                     self.qt.processEvents()
-                    self.assertEqual(dialog.gamma_size.value(), 12)
-                    self.assertEqual(dialog.port.font().pointSize(), 12)
+                    self.assertEqual(dialog.gamma_size.value(), 10)
+                    self.assertEqual(dialog._dev_rows["alfa"]["size"].value(), 10)
+                    self.assertEqual(self.window.chat.font().pointSize(), 10)
+                    self.assertEqual(dialog.port.font().pointSize(), 10)
                     self.assertEqual(dialog._page_h, 375)
                     self.assertEqual([dialog.overlay.itemText(index) for index in (0, 1)], [horizontal, vertical])
                     form = dialog.reset_other.parentWidget().layout()
@@ -483,7 +485,7 @@ class WindowTests(unittest.TestCase):
                                      - form.contentsMargins().left() - form.contentsMargins().right())
                     gamma_form = dialog.gamma_size.parentWidget().layout()
                     self.assertEqual(gamma_form.labelForField(dialog.gamma_size).text(), gamma)
-                    dialog.tabs.setCurrentIndex(5)
+                    dialog.tabs.setCurrentWidget(dialog._dev_page)
                     self.qt.processEvents()
                     spin = dialog._dev_rows["ui"]["size"]
                     self.assertGreaterEqual(spin.height(), spin.minimumSizeHint().height())
@@ -504,15 +506,72 @@ class WindowTests(unittest.TestCase):
         finally:
             i18n.use("English")
 
+    def test_dev_opens_at_the_right_edge_without_a_spacer_tab(self):
+        dialog = self.dialog()
+        dialog.show()
+        self.qt.processEvents()
+        self.assertEqual(dialog.tabs.count(), 5)
+        self.assertTrue(all(dialog.tabs.tabText(index) for index in range(dialog.tabs.count())))
+        button = dialog.tabs.cornerWidget(Qt.Corner.TopRightCorner)
+        self.assertEqual(button.text(), "Dev")
+        self.assertEqual(button.geometry().right(), dialog.tabs.width() - 1)
+        self.assertEqual(dialog.tabs.tabBar().tabRect(0).left(), 0)
+        QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+        self.assertIs(dialog.tabs.currentWidget(), dialog._dev_page)
+        self.assertTrue(button.isChecked())
+        QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+        self.assertTrue(button.isChecked())
+        dialog.tabs.setCurrentIndex(0)
+        self.assertFalse(button.isChecked())
+        for _ in range(5):
+            dialog._logo_pressed()
+        self.assertIsNone(dialog._dev_page)
+        self.assertTrue(button.isHidden())
+        for _ in range(5):
+            dialog._logo_pressed()
+        self.assertIs(dialog.tabs.currentWidget(), dialog._dev_page)
+        self.assertFalse(button.isHidden())
+        self.assertTrue(button.isChecked())
+        dialog.reject()
+
+    def test_theme_controls_and_popup_margins_follow_the_active_palette(self):
+        dialog = self.dialog()
+        dialog.show()
+        for theme, field in (("dark", "#1C1E26"), ("light", "#FFFCF7"), ("dark", "#293441")):
+            with self.subTest(theme=theme, field=field):
+                self.window._dev.setdefault("face", {})["field"] = {theme: field}
+                dialog.theme.setCurrentIndex(dialog.theme.findData(theme))
+                dialog._flush_theme()
+                self.qt.processEvents()
+                foreground = QColor(_palette(theme)["fg"])
+                for scale in (dialog.chat_size, dialog.ui_size, dialog.sub_size):
+                    self.assertEqual(scale.palette().color(QPalette.ColorRole.WindowText), foreground)
+                for swatch in (dialog.accent, dialog.accent2, dialog.sub_color):
+                    self.assertEqual(swatch.palette().color(QPalette.ColorRole.ButtonText), foreground)
+                for combo in (dialog.theme, dialog.style_pick, dialog.sub_font, dialog.language, dialog.overlay):
+                    popup = combo.view().window()
+                    self.assertEqual(popup.palette().color(QPalette.ColorRole.Window), QColor(field))
+                    self.assertEqual(combo.view().palette().color(QPalette.ColorRole.Base), QColor(field))
+                dialog.style_pick.showPopup()
+                self.qt.processEvents()
+                image = dialog.style_pick.view().window().grab().toImage()
+                for y in (2, image.height() - 3):
+                    self.assertEqual(image.pixelColor(10, y), QColor(field))
+                dialog.style_pick.hidePopup()
+        dialog.reject()
+
     def test_saved_sizes_stay_custom_until_dev_reset(self):
-        self.window._dev = {"gamma": 17, "settings_h": 430}
+        self.window._dev = {"gamma": 17, "alfa": {"size": 18}, "settings_h": 430}
         dialog = self.dialog()
         self.assertEqual(dialog.port.font().pointSize(), 17)
+        self.assertEqual(dialog._dev_rows["alfa"]["size"].value(), 18)
         self.assertEqual(dialog._page_h, 430)
         dialog._reset_dev()
         self.qt.processEvents()
-        self.assertEqual(dialog.gamma_size.value(), 12)
-        self.assertEqual(dialog.port.font().pointSize(), 12)
+        self.assertEqual(dialog.gamma_size.value(), 10)
+        self.assertEqual(dialog._dev_rows["alfa"]["size"].value(), 10)
+        self.assertEqual(self.window.chat.font().pointSize(), 10)
+        self.assertEqual(dialog.port.font().pointSize(), 10)
         self.assertEqual(dialog._page_h, 375)
         dialog.reject()
 

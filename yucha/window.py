@@ -54,7 +54,6 @@ from PySide6.QtWidgets import (
     QSlider,
     QSpinBox,
     QStyledItemDelegate,
-    QTabBar,
     QTabWidget,
     QTextEdit,
     QVBoxLayout,
@@ -208,6 +207,9 @@ def _stylesheet(theme, accent=None, paint=None):
         border: 1px solid {border};
         padding: 6px;
         selection-background-color: {accent};
+    }}
+    StepScale, TickSlider, QPushButton#swatch {{
+        color: {fg};
     }}
     QComboBox QAbstractItemView {{
         background: {field};
@@ -373,22 +375,16 @@ def _stylesheet(theme, accent=None, paint=None):
         background: {bg};
         border: none;
     }}
-    QTabBar::tab {{
+    QTabBar::tab, QPushButton#devtab {{
         background: {field};
         color: {fg};
         padding: 2px 12px;
         margin: 0px;
         border: 1px solid {border};
     }}
-    QTabBar::tab:selected {{
+    QTabBar::tab:selected, QPushButton#devtab:checked {{
         background: {accent};
         color: {on_fg};
-    }}
-    QTabBar::tab:disabled {{
-        background: transparent;
-        border: none;
-        padding: 0px;
-        margin: 0px;
     }}
     QListWidget {{
         background: {field};
@@ -1934,7 +1930,7 @@ class RoundSwatch(QPushButton):
     def paintEvent(self, _event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        painter.setPen(QPen(QColor("#5C584F"), 1))
+        painter.setPen(QPen(self.palette().color(QPalette.ColorRole.ButtonText), 1))
         painter.setBrush(self._color)
         painter.drawEllipse(QRectF(1, 1, self.width() - 2, self.height() - 2))
         painter.end()
@@ -1967,27 +1963,6 @@ class PencilButton(QPushButton):
         tip.closeSubpath()
         painter.drawPath(tip)
         painter.end()
-
-
-class EdgeTabBar(QTabBar):
-    """The empty tab before dev is only a gap, so dev sits just to the right of About."""
-
-    def __init__(self):
-        super().__init__()
-        self.setExpanding(False)
-        self.spacer = -1
-
-    def tabSizeHint(self, index):
-        hint = super().tabSizeHint(index)
-        if index == self.spacer and self.spacer >= 0:
-            hint.setWidth(36)
-        return hint
-
-    def minimumTabSizeHint(self, index):
-        hint = super().minimumTabSizeHint(index)
-        if index == self.spacer and self.spacer >= 0:
-            hint.setWidth(36)
-        return hint
 
 
 class StarPassword(QLineEdit):
@@ -2060,9 +2035,18 @@ class SettingsDialog(QDialog):
         self._theme_timer.setInterval(40)
         self._theme_timer.timeout.connect(self._flush_theme)
         root = QVBoxLayout(self)
+        self._dev_page = None
         self.tabs = QTabWidget()
-        self._tabbar = EdgeTabBar()
-        self.tabs.setTabBar(self._tabbar)
+        self.tabs.tabBar().setExpanding(False)
+        self._dev_button = QPushButton(tr(77))
+        self._dev_button.setObjectName("devtab")
+        self._dev_button.setCheckable(True)
+        self._dev_button.clicked.connect(self._open_dev)
+        self.tabs.setCornerWidget(self._dev_button, Qt.Corner.TopRightCorner)
+        self._dev_button.hide()
+        self.tabs.currentChanged.connect(
+            lambda _index: self._dev_button.setChecked(self.tabs.currentWidget() is self._dev_page)
+        )
         root.addWidget(self.tabs)
 
         theme_page = QWidget()
@@ -2084,13 +2068,11 @@ class SettingsDialog(QDialog):
         self.theme.setCurrentIndex(max(0, self.theme.findData(current)))
         self._look_theme = _shown_theme(current)
         self._look_accent = appearance.get("accentColor")
-        self._style_popup(self.theme)
         self.style_pick = QComboBox()
         self.style_pick.addItem(tr(72), "classic")
         self.style_pick.addItem(tr(73), "modern")
         picked_style = appearance.get("style") or "modern"
         self.style_pick.setCurrentIndex(1 if picked_style == "modern" else 0)
-        self._style_popup(self.style_pick)
         self._kept_chat = hex_color(appearance.get("chatColor"), "#F4F1EA")
         self.accent = self._swatch(appearance.get("accentColor"), "#9A3A52")
         self.accent2 = self._swatch(appearance.get("accentColor2"), "#1F6A8A")
@@ -2123,7 +2105,6 @@ class SettingsDialog(QDialog):
         for name in families:
             self.sub_font.addItem(name, name)
         self.sub_font.setCurrentIndex(max(0, self.sub_font.findData(chosen_font)))
-        self._style_popup(self.sub_font)
         self.sub_color = self._swatch(appearance.get("subColor"), "#FFFFFF")
         subtitles = QWidget()
         sub_row = QHBoxLayout(subtitles)
@@ -2209,14 +2190,12 @@ class SettingsDialog(QDialog):
         if index < 0:
             index = max(0, self.language.findData("English"))
         self.language.setCurrentIndex(index)
-        self._style_popup(self.language)
         row_h = self.language.sizeHint().height()
         self.overlay = QComboBox()
         self.overlay.addItem(tr(36), "horizontal")
         self.overlay.addItem(tr(37), "vertical")
         overlay = appearance.get("volumeOverlay") or "horizontal"
         self.overlay.setCurrentIndex(1 if overlay == "vertical" else 0)
-        self._style_popup(self.overlay)
         stepper = QWidget()
         stepper_row = QHBoxLayout(stepper)
         stepper_row.setContentsMargins(0, 0, 0, 0)
@@ -2318,7 +2297,6 @@ class SettingsDialog(QDialog):
         about_layout.addWidget(thanks, 0, Qt.AlignmentFlag.AlignLeft)
         self.tabs.addTab(about, tr(39))
         self._dev_page = None
-        self._dev_gap = None
         if bool(appearance.get("devTab")):
             self._insert_dev_tab()
         window = self.parent()
@@ -2356,14 +2334,7 @@ class SettingsDialog(QDialog):
             kept.append((self.tabs.tabText(index), self.tabs.widget(index), self.tabs.isTabEnabled(index)))
         while self.tabs.count():
             self.tabs.removeTab(0)
-        self._tabbar.spacer = -1
         for title, page, enabled in kept:
-            if page is self._dev_gap:
-                self.tabs.addTab(page, "")
-                gap = self.tabs.count() - 1
-                self.tabs.setTabEnabled(gap, False)
-                self._tabbar.spacer = gap
-                continue
             area = self._scroll_page(page)
             self.tabs.addTab(area, title)
             if not enabled:
@@ -2372,6 +2343,7 @@ class SettingsDialog(QDialog):
                 self._about_page = area
             if page is self._dev_page:
                 self._dev_page = area
+                self.tabs.setTabVisible(self.tabs.indexOf(area), False)
         self.tabs.setCurrentIndex(self._open_page if 0 <= self._open_page < self.tabs.count() else 0)
         root.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
         self._apply_settings_edges()
@@ -2450,15 +2422,11 @@ class SettingsDialog(QDialog):
             self.tabs.setCurrentWidget(self._dev_page)
         else:
             dev = self.tabs.indexOf(self._dev_page)
-            gap = self.tabs.indexOf(self._dev_gap)
-            self._tabbar.spacer = -1
             self.tabs.setCurrentWidget(self._about_page)
             if dev >= 0:
                 self.tabs.removeTab(dev)
-            if gap >= 0:
-                self.tabs.removeTab(self.tabs.indexOf(self._dev_gap))
             self._dev_page = None
-            self._dev_gap = None
+            self._dev_button.hide()
 
     def _store_dev_tab(self, enabled):
         window = self.parent()
@@ -2466,20 +2434,20 @@ class SettingsDialog(QDialog):
             return
         window.app.store.data["appearance"]["devTab"] = bool(enabled)
 
+    def _open_dev(self):
+        self.tabs.setCurrentWidget(self._dev_page)
+        self._dev_button.setChecked(True)
+
     def _insert_dev_tab(self):
         if self._dev_page is not None:
             return
         page = self._build_dev_page()
-        self._dev_gap = QWidget()
-        self.tabs.addTab(self._dev_gap, "")
-        gap = self.tabs.indexOf(self._dev_gap)
-        self.tabs.setTabEnabled(gap, False)
-        self._tabbar.spacer = gap
         if self._page_h:
             page = self._scroll_page(page)
         self._dev_page = page
         self.tabs.addTab(self._dev_page, tr(77))
-        self._tabbar.updateGeometry()
+        self.tabs.setTabVisible(self.tabs.indexOf(self._dev_page), False)
+        self._dev_button.show()
 
     def _dev_defaults(self):
         family = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont).family() or "sans-serif"
@@ -2496,11 +2464,11 @@ class SettingsDialog(QDialog):
         face["locked"] = {"dark": "#2A2D36", "light": "#E4E0D8"}
         return {
             "ui": {"size": 13, "bold": False, "family": family, "dark": dark, "light": light},
-            "alfa": {"size": 11, "bold": False, "family": family, "dark": dark, "light": light},
+            "alfa": {"size": 10, "bold": False, "family": family, "dark": dark, "light": light},
             "osd": {"size": 17, "bold": False, "family": family, "dark": dark, "light": light},
             "sub": {"size": 55, "bold": False, "family": "sans-serif", "dark": white, "light": white},
             "titles": {"size": 11, "bold": True, "family": family, "dark": dark, "light": light},
-            "gamma": 12,
+            "gamma": 10,
             "face": face,
             "panel": PANEL_WIDTH,
             "bar": BAR_HEIGHT,
@@ -2573,7 +2541,7 @@ class SettingsDialog(QDialog):
             if key == "titles":
                 self.gamma_size = QuietSpin()
                 self.gamma_size.setRange(1, 96)
-                self.gamma_size.setValue(int(seed.get("gamma", 12)))
+                self.gamma_size.setValue(int(seed.get("gamma", 10)))
                 self.gamma_size.valueChanged.connect(self._set_gamma_size)
                 form.addRow(tr(81), self.gamma_size)
         self._face_rows = {}
@@ -2803,7 +2771,7 @@ class SettingsDialog(QDialog):
         self._settings_top.setValue(int(seed.get("settings_top", 23)))
         self._slider_numbers.setChecked(bool(seed.get("slider_numbers", False)))
         self._label_bold.setChecked(bool(seed.get("bold_names", False)))
-        self.gamma_size.setValue(int(seed.get("gamma", 12)))
+        self.gamma_size.setValue(int(seed.get("gamma", 10)))
         flags = seed.get("bar_buttons") or {}
         for key, box in self._bar_buttons.items():
             box.setChecked(bool(flags.get(key, True)))
@@ -2868,12 +2836,14 @@ class SettingsDialog(QDialog):
         self._apply_settings_font()
 
     def _apply_settings_font(self):
-        size = int(self.parent()._dev.get("gamma", 12))
+        size = int(self.parent()._dev.get("gamma", 10))
         font = self.font()
         font.setPointSize(size)
         self.setFont(font)
         self.setStyleSheet("QDialog#settings, QDialog#settings QWidget { font-size: %dpt; }" % size)
         self.ensurePolished()
+        for combo in self.findChildren(QComboBox):
+            self._style_popup(combo)
         row_h = max(self.theme.sizeHint().height(), QFontMetrics(font).height() + 14)
         for field in self._theme_fields:
             field.setFixedHeight(row_h)
@@ -3293,21 +3263,29 @@ class SettingsDialog(QDialog):
         form.addRow(text, host)
 
     def _style_popup(self, combo):
-        page = _palette(self._look_theme, self._look_accent)
+        window = self.parent()
+        look = window.app.store.data["appearance"]
+        theme = _shown_theme(look.get("theme"))
+        page = _palette(theme, look.get("accentColor"))
+        page.update(window._face_paint(theme))
         view = combo.view()
         palette = view.palette()
-        palette.setColor(QPalette.ColorRole.Base, QColor(page["field"]))
-        palette.setColor(QPalette.ColorRole.Text, QColor(page["fg"]))
-        palette.setColor(QPalette.ColorRole.Window, QColor(page["field"]))
-        palette.setColor(QPalette.ColorRole.WindowText, QColor(page["fg"]))
-        palette.setColor(QPalette.ColorRole.Highlight, QColor(page["accent"]))
-        palette.setColor(QPalette.ColorRole.HighlightedText, QColor(page["on_fg"]))
+        for role, key in ((QPalette.ColorRole.Window, "field"),
+                          (QPalette.ColorRole.Base, "field"),
+                          (QPalette.ColorRole.WindowText, "fg"),
+                          (QPalette.ColorRole.Text, "fg"),
+                          (QPalette.ColorRole.Highlight, "accent"),
+                          (QPalette.ColorRole.HighlightedText, "on_fg")):
+            palette.setColor(role, QColor(page[key]))
+        # The popup frame paints the margins above and below the item view.
+        popup = view.window()
+        popup.setPalette(palette)
+        popup.setObjectName("settingspopup")
+        popup.setStyleSheet("QFrame#settingspopup {{ background: {}; border: 1px solid {}; }}".format(
+            page["field"], page["border"]
+        ))
+        popup.setAutoFillBackground(True)
         view.setPalette(palette)
-        view.setStyleSheet(
-            "background: {}; color: {}; selection-background-color: {}; selection-color: {};".format(
-                page["field"], page["fg"], page["accent"], page["on_fg"]
-            )
-        )
 
     def _nudge_volume_max(self, delta):
         self.volume_max = _volume_limit(self.volume_max + int(delta))
@@ -4002,7 +3980,7 @@ class MainWindow(QMainWindow):
             QApplication.instance().setFont(font)
         self.setFont(font)
         alfa_spec = dev.get("alfa") or {}
-        alfa = max(1, min(96, int(alfa_spec.get("size") or ui_point)))
+        alfa = max(1, min(96, int(alfa_spec.get("size") or 10)))
         block = QFont(font)
         if alfa_spec.get("family"):
             block.setFamily(alfa_spec["family"])
