@@ -1289,6 +1289,7 @@ class EdgeScroll(QScrollBar):
         self._until = 0
         self.hide()
         self.sliderMoved.connect(self.bump)
+        self.actionTriggered.connect(self._page_action)
 
     def attach(self, native):
         self._native = native
@@ -1305,12 +1306,25 @@ class EdgeScroll(QScrollBar):
         self.blockSignals(True)
         self.setMinimum(native.minimum())
         self.setMaximum(native.maximum())
-        self.setPageStep(native.pageStep())
+        # Cap the visual thumb; page clicks still use the native viewport size.
+        length = self.height() if self.orientation() == Qt.Orientation.Vertical else self.width()
+        cap = min(64, max(18, length // 4))
+        span = native.maximum() - native.minimum()
+        self.setPageStep(min(native.pageStep(), max(1, span * cap // max(1, length - cap))))
         self.setSingleStep(max(1, native.singleStep()))
         self.setValue(native.value())
         self.blockSignals(False)
         if self.maximum() <= self.minimum():
             self.hide()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.sync()
+
+    def _page_action(self, action):
+        if action in (self.SliderAction.SliderPageStepAdd.value, self.SliderAction.SliderPageStepSub.value):
+            self._native.triggerAction(self.SliderAction(action))
+            self.setSliderPosition(self._native.value())
 
     def _from_native(self, value):
         if self.value() != value:
@@ -1878,7 +1892,7 @@ class IconButton(QPushButton):
         self._quality = label
         font = QFont(self.font())
         font.setPixelSize(18)
-        font.setBold(True)
+        font.setBold(False)
         width = max(40, QFontMetrics(font).horizontalAdvance(label) + 12)
         self.setStyleSheet("min-width: {0}px; max-width: {0}px;".format(width))
         self.setFixedWidth(width)
@@ -2002,7 +2016,7 @@ class IconButton(QPushButton):
         elif kind == "quality":
             font = painter.font()
             font.setPixelSize(18)
-            font.setBold(True)
+            font.setBold(False)
             painter.setFont(font)
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, getattr(self, "_quality", "—"))
         elif kind == "add":
@@ -4365,7 +4379,7 @@ class MainWindow(QMainWindow):
             return
         self._set(kind, track_id)
         if kind == "vid":
-            self._fill_quality()
+            self._close_popups(None)
         else:
             self._fill_tracks()
         self._place_overlays()
@@ -5135,6 +5149,8 @@ class MainWindow(QMainWindow):
             if item["path"] == url and item["name"] != title:
                 item["name"] = title
                 self._refresh_files()
+                if url == video_url(self._current_path):
+                    self._refresh_youtube(url)
                 break
 
     def _add_dropped(self, paths):
@@ -5185,6 +5201,7 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
         self._refresh_files()
+        self._refresh_youtube(video_url(path))
 
     def _remove_file(self, path):
         if not path:
@@ -5773,7 +5790,11 @@ class MainWindow(QMainWindow):
         self._apply_bar_buttons()
 
     def _refresh_youtube(self, url):
-        if url:
+        pending = video_url(self._arm_play or self._hold_pause)
+        if pending:
+            url = pending
+        loaded = bool(url) and video_url(self._get("path")) == url
+        if loaded:
             tracks = self._read_tracks()
             selected = next((track for track in tracks if track.get("type") == "audio" and track.get("selected")), None)
             if selected:
@@ -5781,14 +5802,17 @@ class MainWindow(QMainWindow):
                     if track_language(best) == track_language(selected) and best.get("id") != selected.get("id"):
                         self._set("aid", best["id"])
         height = 0
-        if url:
+        if loaded:
             height = next((resolution(track.get("demux-h")) for track in tracks
                            if track.get("type") == "video" and track.get("selected")), 0)
             height = height or resolution(self._get("video-params/h"))
         self.quality_btn.set_quality(height)
-        title = stream_title(self._get("media-title")) if url else ""
-        if video_url(title):
-            title = ""
+        title = next((item["name"] for item in self._playlist
+                      if url and item["path"] == url and not video_url(item["name"])), "")
+        if not title and loaded:
+            title = stream_title(self._get("media-title"))
+            if video_url(title) or title in (url.rsplit("=", 1)[-1], url.rsplit("/", 1)[-1]):
+                title = ""
         old_url, old_title, old_height = self._stream
         if url and url == old_url:
             title = title or old_title

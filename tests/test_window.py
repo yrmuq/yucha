@@ -20,7 +20,11 @@ sys.path.insert(0, str(ROOT / "third_party" / "syncplay"))
 from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QTimer, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QKeyEvent, QMouseEvent, QPainter, QPalette, QWheelEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog, QFormLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QWidget
+from PySide6.QtNetwork import QNetworkReply
+from PySide6.QtWidgets import (
+    QApplication, QDialog, QFormLayout, QLabel, QLineEdit, QPushButton,
+    QScrollArea, QScrollBar, QStyle, QStyleOptionSlider, QWidget,
+)
 
 from syncplay.messages import getMessage
 from yucha.app import App
@@ -29,7 +33,7 @@ from yucha.player_ui import PlayerUI
 from yucha.configstore import DEFAULTS, ConfigStore
 from yucha import __version__, i18n
 from yucha.i18n import system_language
-from yucha.window import MainWindow, SettingsDialog, _palette
+from yucha.window import EdgeScroll, MainWindow, SettingsDialog, _palette
 
 
 class PictureStub(QWidget):
@@ -222,6 +226,9 @@ class WindowTests(unittest.TestCase):
                          [("set_property", "vid", 2)])
         self.assertEqual(window.ctl.properties["time-pos"], 24)
         self.assertTrue(window.ctl.properties["pause"])
+        self.assertFalse(window._quality_open)
+        self.assertTrue(window.quality_pop.isHidden())
+        self.assertFalse(window.quality_btn.isChecked())
         window.tracks_btn.click()
         self.assertTrue(window._tracks_open)
         self.assertFalse(window._quality_open)
@@ -246,7 +253,7 @@ class WindowTests(unittest.TestCase):
         window.quality_btn.set_quality(1080)
         font = QFont(window.quality_btn.font())
         font.setPixelSize(18)
-        font.setBold(True)
+        font.setBold(False)
         self.assertGreaterEqual(window.quality_btn.width(), QFontMetrics(font).horizontalAdvance("1080p") + 12)
         self.assertIn(("set_property", "aid", 2), window.ctl.calls)
         with patch("yucha.youtube.QLocale.system", return_value=QLocale("ru_RU")):
@@ -256,6 +263,33 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(len(buttons), 5)
         buttons[-1].click()
         self.assertEqual(window.ctl.properties["aid"], 3)
+
+    def test_youtube_title_reaches_users_before_play_and_when_switching(self):
+        window = self.window
+        url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+        window._playlist = []
+        window._users = [{"name": "me", "file": url, "ready": True}]
+        self.app.client.set_youtube_info = Mock()
+        reply = Mock()
+        reply.error.return_value = QNetworkReply.NetworkError.NoError
+        reply.read.return_value = b'{"title":"Title before play"}'
+        with patch.object(window, "_fetch_youtube_title"), patch(
+                "twisted.internet.reactor.callFromThread", side_effect=lambda fn, *args: fn(*args)):
+            window._add_dropped([url])
+            window.ctl.properties.update({"path": url, "media-title": "jNQXAC9IVRw", "pause": True})
+            window._youtube_title_received(url, reply)
+            window._refresh_transport()
+            self.assertEqual(window.room_users.files_col.itemAt(0).widget().text(), "Title before play")
+            self.app.client.set_youtube_info.assert_called_with(url, "Title before play", 0)
+            self.assertTrue(window.ctl.properties["pause"])
+            next_url = "https://www.youtube.com/watch?v=2iAkQCsSctc"
+            window._playlist.append({"path": next_url, "name": "Queued title"})
+            window.ctl.properties["media-title"] = "Old engine title"
+            window._play_path(next_url)
+            window._refresh_transport()
+            self.assertEqual(window._stream, (next_url, "Queued title", 0))
+            self.app.client.set_youtube_info.assert_called_with(next_url, "Queued title", 0)
+        reply.deleteLater.assert_called_once_with()
 
     def test_chapter_markers_toggle_and_removed_youtube_does_not_return(self):
         window = self.window
@@ -307,6 +341,29 @@ class WindowTests(unittest.TestCase):
         area.deleteLater()
         self.qt.sendPostedEvents(None, QEvent.Type.DeferredDelete)
         self.assertNotIn(area, manager._areas)
+
+    def test_long_scrollbar_thumb_is_capped_without_changing_page_scroll(self):
+        native = QScrollBar(Qt.Orientation.Vertical, self.window)
+        native.setRange(0, 4000)
+        native.setPageStep(600)
+        bar = EdgeScroll(Qt.Orientation.Vertical, self.window)
+        bar.setGeometry(5, 5, 3, 600)
+        bar.attach(native)
+        bar.show()
+        self.qt.processEvents()
+        for length in (600, 900):
+            bar.resize(3, length)
+            option = QStyleOptionSlider()
+            bar.initStyleOption(option)
+            thumb = bar.style().subControlRect(QStyle.ComplexControl.CC_ScrollBar, option,
+                                               QStyle.SubControl.SC_ScrollBarSlider, bar)
+            self.assertGreaterEqual(thumb.height(), 18)
+            self.assertLessEqual(thumb.height(), 64)
+        bar.triggerAction(bar.SliderAction.SliderPageStepAdd)
+        self.assertEqual(native.value(), 600)
+        self.assertEqual(bar.value(), 600)
+        bar.setValue(bar.maximum())
+        self.assertEqual(native.value(), 4000)
 
     def test_settings_wheel_scrolls_page_without_changing_fields(self):
         dialog = self.dialog()
