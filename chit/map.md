@@ -6,6 +6,7 @@ Read only the row the task needs. Do not read `third_party/` or `packaging/appim
 - `yucha/app.py` — starts Qt, builds the client, calls `launch_player`.
 - `yucha/window.py` — playlist, chat, seek, volume, settings. Large. Search a class. Do not read the whole file.
 - `yucha/engine.py` — `Picture` draws the video through `libmpv`. This is the player.
+- `yucha/youtube.py` — canonical YouTube URLs and display metadata from the room and `libmpv`.
 - `yucha/session.py` — Syncplay client. `mpv --version`, then attach to the `libmpv` socket. Does not start a second player.
 - `yucha/player_ui.py` — methods Syncplay calls. Forwards them. Does not draw.
 - `yucha/bridge.py` — writes those calls to `events.jsonl` for the window.
@@ -19,7 +20,7 @@ Read only the row the task needs. Do not read `third_party/` or `packaging/appim
 ## Packaging
 - `packaging/appimage/build.sh` — builds the image, copies Ubuntu `libmpv`, writes the `mpv --version` stub.
 - `packaging/appimage/AppRun` — points `YUCHA_MPV` at that stub and `YUCHA_LIBMPV` at the copied library.
-- `requirements.txt` — `PySide6_Essentials`, Twisted, `python-mpv`.
+- `requirements.txt` — `PySide6_Essentials`, Twisted, `python-mpv`, and `yt-dlp` with its default dependencies.
 - `.github/workflows/appimage.yml` — builds a version tag. `X.Y.0` is a release. Any other `X.Y.Z` is a prerelease.
 - `.github/workflows/release.yml` — a merge from `dev` into `main` raises Y, publishes, then merges the published commit back into `dev`. An explicit `[refresh-release]` merge replaces the current release once.
 - `.github/workflows/dev.yml` — tests and updates the draft on a manual request or an explicit `[draft]` commit on `dev`. Ordinary pushes skip the build. It does not take a version number.
@@ -30,6 +31,7 @@ Read only the row the task needs. Do not read `third_party/` or `packaging/appim
 ## Libraries
 - `libmpv` — decodes and draws. Ubuntu package copied at build time.
 - `python-mpv` — the binding `engine.py` uses to call `libmpv`.
+- `yt-dlp` with `yt-dlp-ejs` and `Node.js` — resolve YouTube streams for `libmpv`. AppImage bundles the runtime and Python wheels.
 - `PySide6_Essentials` — the window. Used modules: QtCore, QtGui, QtWidgets, QtDBus, QtOpenGLWidgets.
 - Twisted — the room connection in `session.py`.
 - Syncplay — unmodified tree in `third_party/syncplay`. Imported pieces: `client`, `messages`, `constants`, `players/mpv.py`. Its GUI is not started.

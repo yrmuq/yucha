@@ -4,6 +4,7 @@
 the picture into the video area."""
 
 import html
+import json
 from copy import deepcopy
 import math
 import os
@@ -11,6 +12,7 @@ import re
 import threading
 import time
 from pathlib import Path
+from urllib.parse import urlencode
 
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
@@ -31,12 +33,14 @@ from PySide6.QtGui import (
     QPixmap,
     QShortcut,
 )
+from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QFontComboBox,
     QFormLayout,
@@ -66,6 +70,7 @@ from yucha.engine import Picture
 from yucha.i18n import languages, system_language, tr, trf
 from yucha.player_ui import replace_seek_toast, room_file_notes
 from yucha.system import Notifier, SleepInhibit, join_line, people_joined
+from yucha.youtube import quality_tracks, resolution, stream_title, video_url
 
 HIDE_AFTER = 3.0
 CHAT_LIFE = 5.0
@@ -1401,8 +1406,9 @@ class UserTable(QWidget):
                 )
             )
             self.names_col.addWidget(nick)
-            filename = person.get("file") or ""
+            filename = person.get("title") or person.get("file") or ""
             label = QLabel(filename)
+            label.setTextFormat(Qt.TextFormat.PlainText)
             label.setWordWrap(False)
             label.setFixedHeight(row_h)
             label.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
@@ -1415,7 +1421,11 @@ class UserTable(QWidget):
             label.setFixedWidth(wide)
             widest = max(widest, wide)
             self.files_col.addWidget(label)
-            size = QLabel(_megabytes(person.get("size")))
+            if person.get("youtube"):
+                height = person.get("height")
+                size = QLabel("{}p".format(height) if height else "—")
+            else:
+                size = QLabel(_megabytes(person.get("size")))
             size.setWordWrap(False)
             size.setFixedHeight(row_h)
             size.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight)
@@ -1801,7 +1811,7 @@ class IconButton(QPushButton):
         color = QColor(self._ink)
         if self.isChecked() and self.kind == "mute":
             color = QColor("#C4453C")
-        elif self.isChecked() and self.kind in ("speaker", "tracks"):
+        elif self.isChecked() and self.kind in ("speaker", "tracks", "quality"):
             color = QColor(self._accent)
         elif self.isChecked():
             color = QColor(self._ink_on)
@@ -1890,6 +1900,21 @@ class IconButton(QPushButton):
             painter.drawLine(QPointF(cx - 6, cy - 5), QPointF(cx + 6, cy - 5))
             painter.drawLine(QPointF(cx - 6, cy), QPointF(cx + 3, cy))
             painter.drawLine(QPointF(cx - 6, cy + 5), QPointF(cx + 6, cy + 5))
+        elif kind == "quality":
+            font = painter.font()
+            font.setPixelSize(13)
+            font.setBold(True)
+            painter.setFont(font)
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "HD")
+        elif kind == "add":
+            painter.drawLine(QPointF(cx - 5, cy), QPointF(cx + 5, cy))
+            painter.drawLine(QPointF(cx, cy - 5), QPointF(cx, cy + 5))
+        elif kind == "link":
+            painter.translate(cx, cy)
+            painter.rotate(-45)
+            for x in (-8, 0):
+                painter.drawRoundedRect(QRectF(x, -3, 8, 6), 2, 2)
+            painter.drawLine(QPointF(-3, 0), QPointF(3, 0))
         elif kind == "mute":
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(color)
@@ -3528,6 +3553,9 @@ class MainWindow(QMainWindow):
         self._hold_pause = None
         self._volume_open = False
         self._tracks_open = False
+        self._quality_open = False
+        self._stream = ("", "", 0)
+        self._title_requests = {}
         self._room_names = set()
         self._room_was_ready = False
         self._volume_flash = False
@@ -3624,6 +3652,9 @@ class MainWindow(QMainWindow):
         self.tracks_btn = IconButton("tracks")
         self.tracks_btn.setCheckable(True)
         self.tracks_btn.setEnabled(False)
+        self.quality_btn = IconButton("quality")
+        self.quality_btn.setCheckable(True)
+        self.quality_btn.hide()
         self.ready = IconButton("ready")
         self.ready.setCheckable(True)
         self.chat_btn = IconButton("chat")
@@ -3634,12 +3665,15 @@ class MainWindow(QMainWindow):
         self.slider.sliderReleased.connect(self._seek_released)
         self.volume_btn.clicked.connect(self._toggle_volume_popup)
         self.tracks_btn.clicked.connect(self._toggle_tracks_popup)
+        self.quality_btn.clicked.connect(self._toggle_quality_popup)
         self.ready.clicked.connect(self._toggle_ready)
         self.chat_btn.clicked.connect(self._toggle_chat_field)
         self.room.clicked.connect(self._toggle_room)
-        for widget in (self.play, self.ready, self.elapsed, self.slider, self.total, self.volume_btn, self.tracks_btn, self.chat_btn, self.room):
+        for widget in (self.play, self.ready, self.elapsed, self.slider, self.total, self.volume_btn,
+                       self.tracks_btn, self.quality_btn, self.chat_btn, self.room):
             bar.addWidget(widget)
-        for button in (self.play, self.ready, self.chat_btn, self.room, self.volume_btn, self.tracks_btn):
+        for button in (self.play, self.ready, self.chat_btn, self.room, self.volume_btn,
+                       self.tracks_btn, self.quality_btn):
             button.setObjectName("baricon")
         bar.setStretchFactor(self.slider, 1)
 
@@ -3712,13 +3746,8 @@ class MainWindow(QMainWindow):
         self.mute_v.setCheckable(True)
         self.mute_v.clicked.connect(self._toggle_mute)
 
-        self.tracks_pop = QWidget(column)
-        self.tracks_pop.setObjectName("trackpop")
-        self._overlay(self.tracks_pop)
-        self.tracks_pop.hide()
-        tracks_col = QVBoxLayout(self.tracks_pop)
-        tracks_col.setContentsMargins(10, 8, 10, 8)
-        tracks_col.setSpacing(2)
+        self.tracks_pop = self._track_popup()
+        self.quality_pop = self._track_popup()
 
         row.addWidget(column, 1)
 
@@ -3782,7 +3811,21 @@ class MainWindow(QMainWindow):
         playlist_title.setObjectName("heading")
         self._mark(playlist_title, 2)
         self.playlist_title = playlist_title
-        side.addWidget(playlist_title)
+        playlist_row = QHBoxLayout()
+        playlist_row.setSpacing(4)
+        playlist_row.addWidget(playlist_title)
+        self.files_add = IconButton("add")
+        self.link_add = IconButton("link")
+        for button in (self.files_add, self.link_add):
+            button.setObjectName("panelicon")
+            button.setFixedSize(24, 24)
+            playlist_row.addWidget(button)
+        playlist_row.addStretch(1)
+        self.files_add.clicked.connect(self._pick_files)
+        self.link_add.clicked.connect(self._pick_link)
+        side.addLayout(playlist_row)
+        self._translate_media_buttons()
+        self._youtube_network = QNetworkAccessManager(self)
         self.files = FileList()
         self.files.setObjectName("playlist")
         self.files.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -3838,6 +3881,24 @@ class MainWindow(QMainWindow):
         widget.setAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop, True)
         widget.setAutoFillBackground(True)
         widget.setAttribute(Qt.WidgetAttribute.WA_NoMousePropagation, True)
+
+    def _track_popup(self):
+        popup = QScrollArea(self.stage)
+        popup.setObjectName("trackpop")
+        popup.setFrameShape(QFrame.Shape.NoFrame)
+        popup.setWidgetResizable(True)
+        popup.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        popup.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        body = QWidget()
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(2)
+        popup.setWidget(body)
+        popup.viewport().setAutoFillBackground(False)
+        body.setAutoFillBackground(False)
+        self._overlay(popup)
+        popup.hide()
+        return popup
 
     def eventFilter(self, watched, event):
         if not isinstance(watched, QWidget) or watched.window() is not self:
@@ -3930,6 +3991,8 @@ class MainWindow(QMainWindow):
             self.volume_pop.raise_()
         if self._tracks_open:
             self.tracks_pop.raise_()
+        if self._quality_open:
+            self.quality_pop.raise_()
 
     def _place_pops(self):
         if not hasattr(self, "volume_pop"):
@@ -3937,14 +4000,14 @@ class MainWindow(QMainWindow):
         show_volume = self._volume_open or self._volume_flash
         self.volume_pop.setVisible(show_volume)
         self.tracks_pop.setVisible(self._tracks_open)
+        self.quality_pop.setVisible(self._quality_open)
         if show_volume:
             self._fit_volume_pop()
             hint = self.volume_pop.sizeHint()
             self._move_pop(self.volume_pop, self.volume_btn, self.volume_pop.width(), max(hint.height(), 1))
             self._place_volume_mute()
         if self._tracks_open:
-            self.tracks_pop.layout().activate()
-            hint = self.tracks_pop.sizeHint()
+            hint = self.tracks_pop.widget().sizeHint()
             width = max(160, min(280, hint.width()))
             height = max(48, hint.height())
             if self._tracks_lock is None:
@@ -3952,7 +4015,13 @@ class MainWindow(QMainWindow):
             else:
                 width = max(width, self._tracks_lock[0])
                 height = max(height, self._tracks_lock[1])
-            self._move_pop(self.tracks_pop, self.tracks_btn, width, height)
+            self._move_track_pop(self.tracks_pop, self.tracks_btn, width, height)
+        if self._quality_open:
+            self._move_track_pop(self.quality_pop, self.quality_btn, 160, self.quality_pop.widget().sizeHint().height())
+
+    def _move_track_pop(self, popup, button, width, height):
+        available = max(1, self._bar_rect().top() - POP_GAP - 8)
+        self._move_pop(popup, button, width, min(available, height))
 
     def _fit_volume_pop(self):
         top = 8
@@ -4003,38 +4072,41 @@ class MainWindow(QMainWindow):
             return
         point = event.globalPosition().toPoint()
         if any(target.isVisible() and target.rect().contains(target.mapFromGlobal(point))
-               for target in (self.panel, self.bar, self.volume_pop, self.tracks_pop, self.chat_line)):
+               for target in (self.panel, self.bar, self.volume_pop, self.tracks_pop, self.quality_pop, self.chat_line)):
             return
         self.set_panel(False)
 
     def _popup_widget(self, widget):
         while widget is not None:
-            if widget in (self.volume_pop, self.tracks_pop, self.volume_btn, self.tracks_btn):
+            if widget in (self.volume_pop, self.tracks_pop, self.quality_pop,
+                          self.volume_btn, self.tracks_btn, self.quality_btn):
                 return True
             widget = widget.parentWidget()
         return False
 
     def _close_popups(self, watched):
-        if not self._volume_open and not self._tracks_open:
+        if not (self._volume_open or self._tracks_open or self._quality_open):
             return False
         if self._popup_widget(watched):
             return False
         self._volume_open = False
         self._tracks_open = False
+        self._quality_open = False
         self.volume_btn.setChecked(False)
         self.tracks_btn.setChecked(False)
+        self.quality_btn.setChecked(False)
         self._tracks_lock = None
         self.volume_pop.hide()
         self.tracks_pop.hide()
+        self.quality_pop.hide()
         return False
 
     def _toggle_volume_popup(self):
-        self._volume_open = not self._volume_open
+        show = not self._volume_open
+        self._close_popups(None)
+        self._volume_open = show
         self.volume_btn.setChecked(self._volume_open)
         if self._volume_open:
-            self._tracks_open = False
-            self.tracks_btn.setChecked(False)
-            self.tracks_pop.hide()
             self._sync_volume_slider(self.volume.value())
             self._set_bar(True)
         self._place_overlays()
@@ -4076,22 +4148,23 @@ class MainWindow(QMainWindow):
         self.volume_btn.set_silent(self._muted or int(level) <= 0)
 
     def _toggle_tracks_popup(self):
-        if not self._playlist:
-            self._tracks_open = False
-            self.tracks_btn.setChecked(False)
-            self.tracks_pop.hide()
-            return
-        self._tracks_open = not self._tracks_open
+        show = not self._tracks_open and bool(self._playlist or self._stream[0])
+        self._close_popups(None)
+        self._tracks_open = show
         self.tracks_btn.setChecked(self._tracks_open)
         if self._tracks_open:
-            self._volume_open = False
-            self.volume_btn.setChecked(False)
-            self.volume_pop.hide()
-            self._tracks_lock = None
             self._fill_tracks()
             self._set_bar(True)
-        else:
-            self._tracks_lock = None
+        self._place_overlays()
+
+    def _toggle_quality_popup(self):
+        show = not self._quality_open and bool(self._stream[0])
+        self._close_popups(None)
+        self._quality_open = show
+        self.quality_btn.setChecked(show)
+        if show:
+            self._fill_quality()
+            self._set_bar(True)
         self._place_overlays()
 
     def _track_name(self, track):
@@ -4105,8 +4178,8 @@ class MainWindow(QMainWindow):
             return lang
         return trf(14, track.get("id"))
 
-    def _fill_tracks(self):
-        layout = self.tracks_pop.layout()
+    def _clear_track_rows(self, popup):
+        layout = popup.widget().layout()
         while layout.count():
             item = layout.takeAt(0)
             widget = item.widget()
@@ -4114,13 +4187,21 @@ class MainWindow(QMainWindow):
                 widget.hide()
                 widget.setParent(None)
                 widget.deleteLater()
+        return layout
+
+    def _read_tracks(self):
         raw = self._get("track-list") or []
-        if not isinstance(raw, list):
-            raw = []
-        subs = [track for track in raw if isinstance(track, dict) and track.get("type") == "sub"]
-        audios = [track for track in raw if isinstance(track, dict) and track.get("type") == "audio"]
+        return [track for track in raw if isinstance(track, dict)] if isinstance(raw, list) else []
+
+    def _fill_tracks(self):
+        layout = self._clear_track_rows(self.tracks_pop)
+        raw = self._read_tracks()
+        subs = [track for track in raw if track.get("type") == "sub"]
+        audios = [track for track in raw if track.get("type") == "audio"]
         if subs:
             self._track_heading(layout, tr(12))
+            self._track_row(layout, {"id": "no", "selected": not any(t.get("selected") for t in subs)},
+                            "sid", tr(122))
             for track in subs:
                 self._track_row(layout, track, "sid")
         self._track_heading(layout, tr(13))
@@ -4128,13 +4209,25 @@ class MainWindow(QMainWindow):
             self._track_row(layout, track, "aid")
         layout.activate()
 
+    def _fill_quality(self):
+        layout = self._clear_track_rows(self.quality_pop)
+        self._track_heading(layout, tr(120))
+        tracks = quality_tracks(self._read_tracks())
+        for height, track in tracks:
+            self._track_row(layout, track, "vid", "{}p".format(height))
+        if not tracks:
+            self._track_heading(layout, tr(121))
+        layout.activate()
+
     def _track_heading(self, layout, text):
         label = QLabel(text)
         label.setObjectName("heading")
         layout.addWidget(label)
 
-    def _track_row(self, layout, track, kind):
-        button = QPushButton(self._track_name(track))
+    def _track_row(self, layout, track, kind, name=None):
+        name = name or self._track_name(track)
+        button = QPushButton(name)
+        button.setToolTip(name)
         button.setObjectName("trackrow")
         button.setCheckable(True)
         button.setChecked(bool(track.get("selected")))
@@ -4149,7 +4242,10 @@ class MainWindow(QMainWindow):
         if track_id is None:
             return
         self._set(kind, track_id)
-        self._fill_tracks()
+        if kind == "vid":
+            self._fill_quality()
+        else:
+            self._fill_tracks()
         self._place_overlays()
 
     def _is_modern(self):
@@ -4272,7 +4368,9 @@ class MainWindow(QMainWindow):
         self._apply_subtitles()
         self._refresh_osd()
         pal = _palette(theme, appearance.get("accentColor"))
-        for button in (self.play, self.ready, self.chat_btn, self.room, self.gear, self.panel_home, self.bar_send, self.volume_btn, self.tracks_btn, self.mute_h, self.mute_v):
+        for button in (self.play, self.ready, self.chat_btn, self.room, self.gear, self.panel_home, self.bar_send,
+                       self.volume_btn, self.tracks_btn, self.quality_btn, self.files_add, self.link_add,
+                       self.mute_h, self.mute_v):
             button.set_ink(pal["button_fg"], pal["on_fg"], pal["accent"])
         self._refresh_banner()
         self._refresh_files()
@@ -4320,6 +4418,7 @@ class MainWindow(QMainWindow):
             "ready": self.ready,
             "volume": self.volume_btn,
             "tracks": self.tracks_btn,
+            "quality": self.quality_btn,
             "chat": self.chat_btn,
             "room": self.room,
         }
@@ -4327,6 +4426,7 @@ class MainWindow(QMainWindow):
         shown["ready"] &= not modern
         shown["chat"] &= not modern
         shown["tracks"] &= self._tracks_useful()
+        shown["quality"] = bool(self._stream[0])
         changed = False
         for key, widget in mapping.items():
             if widget.isHidden() == shown[key]:
@@ -4346,14 +4446,9 @@ class MainWindow(QMainWindow):
             self._place_overlays()
 
     def _tracks_useful(self):
-        raw = self._get("track-list") or []
-        if not isinstance(raw, list):
-            return False
         subs = 0
         audios = 0
-        for track in raw:
-            if not isinstance(track, dict):
-                continue
+        for track in self._read_tracks():
             kind = track.get("type")
             if kind == "sub":
                 subs += 1
@@ -4601,7 +4696,7 @@ class MainWindow(QMainWindow):
         self.set_panel(not self._panel_open)
 
     def _set_bar(self, open_):
-        if self._panel_open or self._chat_open or self._volume_open or self._tracks_open:
+        if self._panel_open or self._chat_open or self._volume_open or self._tracks_open or self._quality_open:
             open_ = True
         if open_ == self._bar_open:
             return
@@ -4853,13 +4948,81 @@ class MainWindow(QMainWindow):
         self._pos_when = time.monotonic()
         self._eof_seen = True
 
+    def _pick_files(self):
+        files, _ = QFileDialog.getOpenFileNames(self, tr(118))
+        self._add_dropped(files)
+
+    def _pick_link(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle(tr(119))
+        layout = QVBoxLayout(dialog)
+        field = QLineEdit()
+        field.setPlaceholderText("https://www.youtube.com/watch?v=…")
+        field.setAccessibleName(tr(119))
+        field.setMaxLength(4096)
+        layout.addWidget(field)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        ok = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        ok.setText(tr(43))
+        ok.setDefault(True)
+        ok.setEnabled(False)
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(tr(44))
+        field.textChanged.connect(lambda text: ok.setEnabled(bool(video_url(text))))
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        dialog.resize(390, dialog.sizeHint().height())
+        field.setFocus()
+        try:
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                url = video_url(field.text())
+                if url:
+                    self._add_dropped([url])
+        finally:
+            dialog.deleteLater()
+
+    def _fetch_youtube_title(self, url):
+        if url in self._title_requests:
+            return
+        query = urlencode({"url": url, "format": "json"})
+        request = QNetworkRequest(QUrl("https://www.youtube.com/oembed?" + query))
+        request.setTransferTimeout(8000)
+        reply = self._youtube_network.get(request)
+        self._title_requests[url] = reply
+        reply.finished.connect(lambda: self._youtube_title_received(url, reply))
+
+    def _youtube_title_received(self, url, reply):
+        self._title_requests.pop(url, None)
+        try:
+            if reply.error() == QNetworkReply.NetworkError.NoError:
+                data = json.loads(bytes(reply.read(16384)))
+                if isinstance(data, dict):
+                    self._rename_youtube(url, stream_title(data.get("title")))
+        except (ValueError, UnicodeError):
+            pass
+        finally:
+            reply.deleteLater()
+
+    def _rename_youtube(self, url, title):
+        if not title:
+            return
+        for item in self._playlist:
+            if item["path"] == url and item["name"] != title:
+                item["name"] = title
+                self._refresh_files()
+                break
+
     def _add_dropped(self, paths):
         batch = []
         known = {item["path"] for item in self._playlist}
         for path in paths:
+            url = video_url(path)
+            path = url or path
             if not path or path in known:
                 continue
-            batch.append({"path": path, "name": Path(path).name})
+            batch.append({"path": path, "name": url or Path(path).name})
+            if url:
+                self._fetch_youtube_title(url)
             known.add(path)
         batch.sort(key=lambda item: _natural(item["name"]))
         fresh = not self._playlist
@@ -4874,6 +5037,8 @@ class MainWindow(QMainWindow):
         self._refresh_files()
 
     def _play_path(self, path, start=False):
+        if path != self._current_path and (self._tracks_open or self._quality_open):
+            self._close_popups(None)
         self._current_path = path
         self._eof_seen = True
         self._paused = not start
@@ -5065,6 +5230,7 @@ class MainWindow(QMainWindow):
     def _retranslate(self):
         self.panel_home.setToolTip(tr(114))
         self.panel_home.setAccessibleName(tr(114))
+        self._translate_media_buttons()
         for widget in self.findChildren(QWidget):
             number = widget.property("phrase")
             if number:
@@ -5072,6 +5238,13 @@ class MainWindow(QMainWindow):
         self._refresh_banner()
         if self._tracks_open:
             self._fill_tracks()
+        if self._quality_open:
+            self._fill_quality()
+
+    def _translate_media_buttons(self):
+        for button, phrase in ((self.files_add, 118), (self.link_add, 119), (self.quality_btn, 120)):
+            button.setToolTip(tr(phrase))
+            button.setAccessibleName(tr(phrase))
 
     def _open_settings(self, page=1):
         dialog = SettingsDialog(
@@ -5272,6 +5445,9 @@ class MainWindow(QMainWindow):
                 "file": str(person.get("file") or ""),
                 "size": person.get("size"),
                 "duration": person.get("duration"),
+                "youtube": person.get("youtube") or "",
+                "title": person.get("title") or "",
+                "height": person.get("height") or 0,
             })
             if ready:
                 ready_names.add(name)
@@ -5345,7 +5521,13 @@ class MainWindow(QMainWindow):
         theme = _shown_theme(appearance.get("theme"))
         pal = _palette(theme, appearance.get("accentColor"))
         pal.update(self._face_paint(theme))
-        self.room_users.set_people(self._users, me, mine, other, pal["border"])
+        url, title, height = self._stream
+        people = [
+            {**person, "youtube": url, "title": title, "height": height}
+            if url and person["name"] == me else person
+            for person in self._users
+        ]
+        self.room_users.set_people(people, me, mine, other, pal["border"])
         self._fit_playlist()
         me = str(self.app.store.data["connection"].get("name") or "")
         mine = next((person for person in self._users if person["name"] == me), None)
@@ -5436,24 +5618,49 @@ class MainWindow(QMainWindow):
                 self._advance()
         else:
             self._eof_seen = False
+        current = self._get("path") or ""
         if self._arm_play and self._duration > 0:
-            current = self._get("path") or ""
             same = current == self._arm_play or Path(str(current)).name == Path(self._arm_play).name
             if same and current:
                 self._set("pause", "no")
                 self._paused = False
                 self._arm_play = None
         elif self._hold_pause and self._duration > 0:
-            current = self._get("path") or ""
             same = current == self._hold_pause or Path(str(current)).name == Path(self._hold_pause).name
             if same and current:
                 self._set("pause", "yes")
                 self._paused = True
                 self._hold_pause = None
         self._move_knob()
-        loaded = bool(self._current_path) or bool(self._get("path"))
+        loaded = bool(self._current_path or current)
         self._awake.set_playing(loaded and not self._paused and not ended)
+        self._refresh_youtube(video_url(current))
         self._apply_bar_buttons()
+
+    def _refresh_youtube(self, url):
+        height = resolution(self._get("video-params/h")) if url else 0
+        title = stream_title(self._get("media-title")) if url else ""
+        if video_url(title):
+            title = ""
+        old_url, old_title, old_height = self._stream
+        if url and url == old_url:
+            title = title or old_title
+            height = height or old_height
+        if (url, title, height) == self._stream:
+            return
+        self._stream = (url, title, height)
+        if self._quality_open:
+            if url != old_url:
+                self._close_popups(None)
+            else:
+                self._fill_quality()
+        if url:
+            self._rename_youtube(url, title)
+        self._paint_users()
+        publish = getattr(getattr(self.app, "client", None), "set_youtube_info", None)
+        if publish is not None:
+            from twisted.internet import reactor
+            reactor.callFromThread(publish, *self._stream)
 
     def _sync_chapters(self):
         raw = self._get("chapter-list") if self.ctl is not None else None

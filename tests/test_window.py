@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / "third_party" / "syncplay"))
 from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QTimer, Qt, Signal
 from PySide6.QtGui import QColor, QFontMetrics, QImage, QKeyEvent, QMouseEvent, QPainter, QPalette
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog, QFormLayout, QLabel, QWidget
+from PySide6.QtWidgets import QApplication, QDialog, QFormLayout, QLabel, QLineEdit, QPushButton, QWidget
 
 from syncplay.messages import getMessage
 from yucha.app import App
@@ -169,6 +169,56 @@ class WindowTests(unittest.TestCase):
         self.assertTrue(self.window.ctl.properties["pause"])
         self.assertEqual(self.window.ctl.calls.count(("cycle", "pause")), 1)
         self.window._toggle_ready.assert_not_called()
+
+    def test_youtube_link_queues_and_quality_switches_without_reloading(self):
+        window = self.window
+        window.set_panel(True)
+        url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+
+        def enter_link():
+            dialog = QApplication.activeModalWidget()
+            field = dialog.findChild(QLineEdit)
+            field.setText("https://youtu.be/jNQXAC9IVRw?si=example")
+            QTest.keyClick(field, Qt.Key.Key_Return)
+
+        with patch.object(window, "_fetch_youtube_title") as fetch:
+            QTimer.singleShot(0, enter_link)
+            window.link_add.click()
+        fetch.assert_called_once_with(url)
+        self.assertEqual(window._current_path, "/tmp/video.mkv")
+        self.assertEqual(window._playlist[-1]["path"], url)
+        self.assertTrue(window.quality_btn.isHidden())
+
+        window._play_path(url)
+        window.ctl.properties.update({
+            "path": url, "media-title": "YouTube title", "video-params/h": 1080,
+            "pause": True, "time-pos": 24,
+            "track-list": [
+                {"id": 1, "type": "video", "demux-h": 1080, "selected": True},
+                {"id": 2, "type": "video", "demux-h": 720},
+                {"id": 3, "type": "video", "demux-h": 720},
+                {"id": 4, "type": "audio", "title": "English"},
+                {"id": 5, "type": "audio", "title": "Russian"},
+                {"id": 6, "type": "sub", "lang": "en"},
+            ],
+        })
+        window._users = [{"name": "me", "file": url, "size": 0, "ready": True}]
+        window._refresh_transport()
+        self.assertEqual(window._playlist[-1]["name"], "YouTube title")
+        self.assertEqual(window.room_users.sizes_col.itemAt(0).widget().text(), "1080p")
+        self.assertFalse(window.quality_btn.isHidden())
+        window.quality_btn.click()
+        buttons = window.quality_pop.findChildren(QPushButton)
+        self.assertEqual([button.text() for button in buttons], ["1080p", "720p"])
+        window.ctl.calls.clear()
+        buttons[1].click()
+        self.assertEqual([call for call in window.ctl.calls if call[0] != "get_property"],
+                         [("set_property", "vid", 2)])
+        self.assertEqual(window.ctl.properties["time-pos"], 24)
+        self.assertTrue(window.ctl.properties["pause"])
+        window.tracks_btn.click()
+        self.assertTrue(window._tracks_open)
+        self.assertFalse(window._quality_open)
 
     def test_playlist_height_adapts_without_covering_chat(self):
         window = self.window

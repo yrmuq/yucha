@@ -22,6 +22,7 @@ from syncplay.messages import getMessage, setLanguage
 from syncplay.players.mpv import MpvPlayer
 from yucha.configstore import port_number
 from yucha.i18n import tr
+from yucha.youtube import video_url
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -141,6 +142,23 @@ def load_client_tls(host, cert_path):
         return None
 
 
+class RoomClient(SyncplayClient):
+    _youtube_info = ("", "", 0)
+
+    def set_youtube_info(self, url, title, height):
+        self._youtube_info = (url, title, height)
+        file = self.userlist.currentUser.file
+        if url and file and video_url(file.get("name")) == url:
+            self.sendFile()
+
+    def getSanitizedCurrentUserFile(self):
+        file = super().getSanitizedCurrentUserFile()
+        url, title, height = self._youtube_info
+        if url and file and video_url(file.get("name")) == url:
+            file["yucha_youtube"] = {"title": title, "height": height}
+        return file
+
+
 def make_client(ui, store):
     setLanguage("en")
     config = _defaults()
@@ -156,7 +174,7 @@ def make_client(ui, store):
     config["pauseOnLeave"] = True
     config["fastforwardOnDesync"] = bool(look.get("fastforwardOnDesync", True))
     config["slowOnDesync"] = bool(look.get("slowOnDesync", True))
-    client = SyncplayClient(MpvPlayer, ui, config)
+    client = RoomClient(MpvPlayer, ui, config)
     _keep_window_on_login_failure(client)
     return client
 

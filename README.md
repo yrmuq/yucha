@@ -45,6 +45,9 @@
 | :--- | :--- |
 | `Drag & Drop` | Append media files to the playlist (sorted alphabetically), keeping the current video. The first file opens paused. |
 | `Open With` | Add the opened video to the playlist. A window that is already open receives it. |
+| `+` (Playlist) | Choose local files to add to the playlist. |
+| Link icon (Playlist) | Enter a YouTube video URL and press `Enter` to queue it. For synchronized viewing, open the same video in each client. |
+| Tracks icon / `HD` | Choose available audio and subtitle tracks, or set YouTube video quality locally. |
 | `Right Click` / `Space` | Toggle Play / Pause. |
 | `Double Click` | Toggle Fullscreen. |
 | `Left Click` (left or right screen edge, fullscreen) | Toggle the side panel. |
@@ -110,5 +113,7 @@ If the host system lacks `FUSE` support, extract and run the bundle directly:
 | --- | --- | --- | --- |
 | `libmpv` | [mpv-player/mpv](https://github.com/mpv-player/mpv) | `GPL-2.0-or-later` | Copied from the build machine. `third_party/mpv` is not built or shipped. |
 | `Syncplay` | [Syncplay/syncplay](https://github.com/Syncplay/syncplay) | `Apache-2.0` | Unmodified source snapshot in `third_party/syncplay` (including `ISC`, `BSD`, and `MIT` submodules). |
+| `yt-dlp` / `yt-dlp-ejs` | [yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp), [yt-dlp/ejs](https://github.com/yt-dlp/ejs) | `Unlicense` | Resolve YouTube streams and their available tracks. |
+| `Node.js` | [nodejs/node](https://github.com/nodejs/node) | `MIT` and bundled notices | Runs the YouTube challenge solver. |
 
 *Copyright (C) 2026 yrmuq.*

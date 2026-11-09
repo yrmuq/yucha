@@ -6,6 +6,7 @@ import re
 
 from syncplay import constants
 from syncplay.messages import getMessage
+from yucha.youtube import resolution, stream_title, video_url
 
 
 _CHAT = re.compile(r"^<([^>\n]+)> (.*)$", re.DOTALL)
@@ -14,13 +15,16 @@ _CHAT = re.compile(r"^<([^>\n]+)> (.*)$", re.DOTALL)
 def room_file_notes(people):
     """Whether loaded files differ, and who has not opened one.
 
-    Size and duration are the whole check. The file name is ignored.
+    Local files use size and duration. YouTube uses the canonical video URL.
     """
     if len(people) < 2:
         return False, []
     loaded = []
     missing = []
     for person in people:
+        if person.get("youtube"):
+            loaded.append(person["youtube"])
+            continue
         size = _file_size(person.get("size"))
         duration = _file_duration(person.get("duration"))
         if size is None and duration is None:
@@ -188,6 +192,7 @@ class PlayerUI(object):
             filename = ""
             size = None
             duration = None
+            stream = {}
             current_file = getattr(user, "file", None)
             if isinstance(current_file, dict):
                 filename = str(current_file.get("name") or "")
@@ -197,12 +202,22 @@ class PlayerUI(object):
                 raw_duration = current_file.get("duration")
                 if isinstance(raw_duration, (int, float)) and not isinstance(raw_duration, bool):
                     duration = raw_duration
+                url = video_url(filename)
+                if url:
+                    info = current_file.get("yucha_youtube")
+                    info = info if isinstance(info, dict) else {}
+                    stream = {
+                        "youtube": url,
+                        "title": stream_title(info.get("title")),
+                        "height": resolution(info.get("height")),
+                    }
             people.append({
                 "name": user.username,
                 "ready": bool(user.isReady()),
                 "file": filename,
                 "size": size,
                 "duration": duration,
+                **stream,
             })
 
         add(current)
