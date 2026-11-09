@@ -3,9 +3,13 @@
 
 import io
 import json
+import os
 import sys
+import tempfile
+import time
 import unittest
 from contextlib import redirect_stdout
+from http.cookiejar import Cookie
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -20,10 +24,48 @@ from twisted.internet.testing import StringTransport
 from syncplay.server import SyncFactory
 from yucha.player_ui import PlayerUI, room_file_notes
 from yucha.session import RoomClient
-from yucha.youtube import audio_tracks, quality_label, quality_tracks, subtitle_tracks, video_url
+from yucha.youtube import (
+    audio_tracks, cookie_file, extract_youtube_cookies, playback_options, quality_label,
+    quality_tracks, save_cookies, subtitle_tracks, video_url,
+)
 
 
 class YouTubeTests(unittest.TestCase):
+    def test_cookie_import_filters_domains_and_saves_a_private_playback_session(self):
+        from yt_dlp.cookies import YoutubeDLCookieJar
+
+        source = YoutubeDLCookieJar()
+        for domain, expires in ((".youtube.com", None), ("www.youtube.com", time.time() + 3600),
+                                (".youtube.com", time.time() - 3600), ("youtube.com.evil.test", None),
+                                ("notyoutube.com", None), (".google.com", None)):
+            source.set_cookie(Cookie(0, str(expires), "test-session", None, False, domain, True,
+                                     domain.startswith("."), "/", True, True, expires, False, None, None, {}))
+        with tempfile.TemporaryDirectory(prefix="yucha, cookies=") as home, \
+                patch.dict(os.environ, {"XDG_CONFIG_HOME": home}), \
+                patch("yt_dlp.cookies.extract_cookies_from_browser", return_value=source) as extract:
+            self.assertNotIn("cookies", playback_options())
+            cookies = extract_youtube_cookies("firefox", "/test/profile")
+            extract.assert_called_once()
+            self.assertEqual(extract.call_args.kwargs["profile"], "/test/profile")
+            self.assertEqual({cookie.domain for cookie in cookies}, {".youtube.com", "www.youtube.com"})
+            self.assertEqual(len(cookies), 2)
+            save_cookies(cookies)
+            path = cookie_file()
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            restored = YoutubeDLCookieJar(str(path))
+            restored.load()
+            self.assertEqual(len(restored), 2)
+            self.assertEqual(playback_options()["cookies"], str(path))
+            before = path.read_bytes()
+            with patch.object(cookies, "save", side_effect=OSError("disk full")):
+                with self.assertRaises(OSError):
+                    save_cookies(cookies)
+            self.assertEqual(path.read_bytes(), before)
+            self.assertEqual(list(path.parent.glob(".youtube-cookies-*")), [])
+            extract.return_value = YoutubeDLCookieJar()
+            with self.assertRaises(ValueError):
+                extract_youtube_cookies("firefox")
+
     def test_quality_choices_start_at_480_and_use_resolution_labels(self):
         tracks = [{"id": height, "type": "video", "demux-h": height}
                   for height in (144, 360, 480, 720, 1080, 1440, 2160)]

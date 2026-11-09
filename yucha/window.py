@@ -74,8 +74,8 @@ from yucha.i18n import languages, system_language, tr, trf
 from yucha.player_ui import replace_seek_toast, room_file_notes
 from yucha.system import Notifier, SleepInhibit, join_line, people_joined
 from yucha.youtube import (
-    audio_tracks, quality_label, quality_tracks, resolution, stream_title,
-    subtitle_tracks, track_language, video_url,
+    audio_tracks, cookie_file, extract_youtube_cookies, playback_options, quality_label,
+    quality_tracks, resolution, save_cookies, stream_title, subtitle_tracks, track_language, video_url,
 )
 
 HIDE_AFTER = 3.0
@@ -2301,6 +2301,110 @@ class StarPassword(QLineEdit):
         self._show()
 
 
+class YouTubeConnect(QDialog):
+    cookies_ready = Signal(object, int)
+    changed = Signal()
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle(tr(124))
+        layout = QVBoxLayout(self)
+        note = QLabel(tr(136))
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        form = QFormLayout()
+        self.browser = QComboBox()
+        for name, key in (("Firefox", "firefox"), ("Chrome", "chrome"), ("Chromium", "chromium"),
+                          ("Brave", "brave"), ("Edge", "edge"), ("Opera", "opera"), ("Vivaldi", "vivaldi")):
+            self.browser.addItem(name, key)
+        form.addRow(tr(125), self.browser)
+        self.profile = QLineEdit()
+        self.profile.setPlaceholderText(tr(127))
+        profile_row = QHBoxLayout()
+        profile_row.addWidget(self.profile, 1)
+        self.browse = QPushButton("…")
+        self.browse.setAutoDefault(False)
+        self.browse.setToolTip(tr(128))
+        self.browse.setAccessibleName(tr(128))
+        self.browse.clicked.connect(self._choose_profile)
+        profile_row.addWidget(self.browse)
+        form.addRow(tr(126), profile_row)
+        layout.addLayout(form)
+        self.status = QLabel(tr(137) if cookie_file().is_file() else "")
+        self.status.setWordWrap(True)
+        self.status.setTextFormat(Qt.TextFormat.PlainText)
+        layout.addWidget(self.status)
+        self.remove = QPushButton(tr(134))
+        self.remove.setAutoDefault(False)
+        self.remove.setEnabled(cookie_file().is_file())
+        self.remove.clicked.connect(self._remove)
+        layout.addWidget(self.remove)
+        buttons = QHBoxLayout()
+        self.start = QPushButton(tr(129))
+        self.start.setDefault(True)
+        self.start.clicked.connect(self._import)
+        close = QPushButton(tr(140))
+        close.setAutoDefault(False)
+        close.clicked.connect(self.reject)
+        buttons.addWidget(self.start, 1)
+        buttons.addWidget(close, 1)
+        layout.addLayout(buttons)
+        self.cookies_ready.connect(self._import_done)
+        self.resize(440, self.sizeHint().height())
+
+    def _choose_profile(self):
+        path = QFileDialog.getExistingDirectory(self, tr(128))
+        if path:
+            self.profile.setText(path)
+
+    def _import(self):
+        self.status.setText(tr(130))
+        for field in (self.browser, self.profile, self.browse, self.start, self.remove):
+            field.setEnabled(False)
+        threading.Thread(target=self._read_cookies,
+                         args=(self.browser.currentData(), self.profile.text().strip() or None),
+                         daemon=True).start()
+
+    def _read_cookies(self, browser, profile):
+        cookies, error = None, 0
+        try:
+            cookies = extract_youtube_cookies(browser, profile)
+        except FileNotFoundError:
+            error = 139
+        except ValueError:
+            error = 132
+        except Exception:
+            error = 133
+        try:
+            self.cookies_ready.emit(cookies, error)
+        except RuntimeError:
+            pass
+
+    def _import_done(self, cookies, error):
+        if not self.isVisible():
+            return
+        if not error:
+            try:
+                save_cookies(cookies)
+                self.changed.emit()
+            except OSError:
+                error = 138
+        self.status.setText(tr(error or 131))
+        for field in (self.browser, self.profile, self.browse, self.start):
+            field.setEnabled(True)
+        self.remove.setEnabled(cookie_file().is_file())
+
+    def _remove(self):
+        try:
+            cookie_file().unlink(missing_ok=True)
+        except OSError:
+            self.status.setText(tr(138))
+            return
+        self.changed.emit()
+        self.remove.setEnabled(False)
+        self.status.setText(tr(135))
+
+
 class SettingsDialog(QDialog):
     release_text = Signal(str)
 
@@ -2608,6 +2712,12 @@ class SettingsDialog(QDialog):
         if window is not None and hasattr(window, "release_ready"):
             window.release_ready.connect(self._on_release_ready)
         self._sync_update_row()
+
+        self.youtube_connect = QPushButton(tr(124))
+        self.youtube_connect.clicked.connect(self._connect_youtube)
+        root.addWidget(self.youtube_connect)
+        self.tabs.currentChanged.connect(lambda index: self.youtube_connect.setVisible(index == 0))
+        self.youtube_connect.setVisible(self.tabs.currentIndex() == 0)
 
         buttons = QHBoxLayout()
         ok = QPushButton(tr(43))
@@ -3415,6 +3525,14 @@ class SettingsDialog(QDialog):
     def _set_settings_top(self, _top):
         self._apply_settings_edges()
         self._push_dev()
+
+    def _connect_youtube(self):
+        dialog = YouTubeConnect(self)
+        dialog.changed.connect(lambda: self.parent()._set("ytdl-raw-options", playback_options()))
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
 
     def _edit_room(self):
         window = self.parent()

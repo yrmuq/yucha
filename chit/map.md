@@ -6,7 +6,7 @@ Read only the row the task needs. Do not read `third_party/` or `packaging/appim
 - `yucha/app.py` — starts Qt, builds the client, calls `launch_player`.
 - `yucha/window.py` — playlist, chat, seek, volume, settings; `EdgeScroll` and `ScrollEdges` standardize external scrollbars. Large. Search a class. Do not read the whole file.
 - `yucha/engine.py` — `Picture` draws the video through `libmpv`. This is the player.
-- `yucha/youtube.py` — canonical YouTube URLs, quality labels, and language/quality filtering for `libmpv` tracks.
+- `yucha/youtube.py` — canonical YouTube URLs, track filtering, browser cookie import and private local storage, `yt-dlp` playback options.
 - `yucha/session.py` — Syncplay client. `mpv --version`, then attach to the `libmpv` socket. Does not start a second player.
 - `yucha/player_ui.py` — methods Syncplay calls. Forwards them. Does not draw.
 - `yucha/bridge.py` — writes those calls to `events.jsonl` for the window.
@@ -31,7 +31,7 @@ Read only the row the task needs. Do not read `third_party/` or `packaging/appim
 ## Libraries
 - `libmpv` — decodes and draws. Ubuntu package copied at build time.
 - `python-mpv` — the binding `engine.py` uses to call `libmpv`.
-- `yt-dlp` with `yt-dlp-ejs` and `Node.js` — resolve YouTube streams for `libmpv`. AppImage bundles the runtime and Python wheels.
+- `yt-dlp` with `yt-dlp-ejs` and `Node.js` — resolve YouTube streams for `libmpv` and import browser cookies; `secretstorage` reads Chromium keys through Linux Secret Service. AppImage bundles the runtime and Python wheels.
 - `PySide6_Essentials` — the window. Used modules: QtCore, QtGui, QtWidgets, QtDBus, QtOpenGLWidgets.
 - Twisted — the room connection in `session.py`.
 - Syncplay — unmodified tree in `third_party/syncplay`. Imported pieces: `client`, `messages`, `constants`, `players/mpv.py`. Its GUI is not started.

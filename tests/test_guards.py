@@ -55,7 +55,7 @@ class Guards(unittest.TestCase):
             self.assertEqual(original.strip(), shown.strip())
             self.assertNotIn(number.strip(), seen)
             seen.add(number.strip())
-        self.assertEqual(len(seen), 123)
+        self.assertEqual(len(seen), 140)
 
     def test_russian_keeps_the_same_ids(self):
         def rows(name):

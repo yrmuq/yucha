@@ -10,12 +10,13 @@ import sys
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QLocale, Qt, Signal
+from PySide6.QtCore import QByteArray, Qt, Signal
 from PySide6.QtGui import QOpenGLFunctions, QPainter
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QSizePolicy
 
 from yucha.i18n import trf
+from yucha.youtube import playback_options
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "third_party" / "syncplay" / "syncplay" / "resources" / "syncplayintf.lua"
@@ -122,14 +123,13 @@ class Picture(QOpenGLWidget):
             demuxer_max_bytes="512MiB",
             ytdl="yes",
             script_opts="ytdl_hook-all_formats=yes",
-            ytdl_raw_options="ignore-config=,write-auto-subs=,sub-langs=[en.*,{0}.*,-live_chat]".format(
-                QLocale.languageToCode(QLocale.system().language())),
             input_terminal="no",
             terminal="no",
             hwdec="auto-safe",
             input_ipc_server=str(self.ipc_path),
             term_playing_msg=PLAYING_MSG,
         )
+        self.mpv.ytdl_raw_options = playback_options()
         found = _library_version(self.mpv)
         if found is None or (found[0] == 0 and found[1] < 23):
             raise RuntimeError("yucha needs libmpv 0.23 or newer")

@@ -2,12 +2,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import io
+import os
 import tempfile
 import threading
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from yucha.engine import Picture, _hardware_decoding
 
@@ -26,7 +28,8 @@ class EngineTests(unittest.TestCase):
                 self.assertEqual(_hardware_decoding(vendor, renderer), expected)
 
     def test_playback_failure_reaches_stderr_with_terminal_disabled(self):
-        with tempfile.TemporaryDirectory() as runtime, redirect_stderr(io.StringIO()) as output:
+        with tempfile.TemporaryDirectory() as runtime, redirect_stderr(io.StringIO()) as output, \
+                patch.dict(os.environ, {"XDG_CONFIG_HOME": runtime}):
             engine = SimpleNamespace(ipc_path=Path(runtime) / "mpv.sock")
             Picture._start_engine(engine)
             try:

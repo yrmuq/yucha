@@ -9,6 +9,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from http.cookiejar import Cookie
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
@@ -33,7 +34,8 @@ from yucha.player_ui import PlayerUI
 from yucha.configstore import DEFAULTS, ConfigStore
 from yucha import __version__, i18n
 from yucha.i18n import system_language
-from yucha.window import EdgeScroll, MainWindow, SettingsDialog, _palette
+from yucha.window import EdgeScroll, MainWindow, SettingsDialog, YouTubeConnect, _palette
+from yucha.youtube import cookie_file
 
 
 class PictureStub(QWidget):
@@ -163,6 +165,59 @@ class WindowTests(unittest.TestCase):
             QPointF(widget.mapFromGlobal(destination)), QPointF(destination),
             Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier))
         self.qt.processEvents()
+
+    def test_room_imports_and_removes_youtube_cookies_without_restarting_the_player(self):
+        from yt_dlp.cookies import YoutubeDLCookieJar
+
+        cookies = YoutubeDLCookieJar()
+        cookies.set_cookie(Cookie(0, "SID", "test-session", None, False, ".youtube.com", True,
+                                  True, "/", True, True, None, True, None, None, {}))
+        settings = self.dialog()
+        settings.show()
+        self.qt.processEvents()
+        self.assertFalse(settings.youtube_connect.isVisible())
+        settings.tabs.setCurrentIndex(0)
+        self.qt.processEvents()
+        self.assertTrue(settings.youtube_connect.isVisible())
+        ok = next(button for button in settings.findChildren(QPushButton) if button.text() == i18n.tr(43))
+        self.assertLess(settings.youtube_connect.geometry().bottom(), ok.mapTo(settings, QPoint()).y())
+
+        def finish_import(dialog):
+            dialog.start.click()
+            self.assertFalse(dialog.start.isEnabled())
+            for _ in range(100):
+                self.qt.processEvents()
+                if dialog.start.isEnabled():
+                    break
+                QTest.qWait(10)
+            self.assertTrue(dialog.start.isEnabled())
+
+        def interact(dialog):
+            dialog.show()
+            self.assertEqual(dialog.browser.currentData(), "firefox")
+            self.assertGreater(dialog.browser.count(), 1)
+            finish_import(dialog)
+            self.assertEqual(dialog.status.text(), i18n.tr(131))
+            self.assertTrue(cookie_file().is_file())
+            self.assertEqual(self.window.ctl.properties["ytdl-raw-options"]["cookies"], str(cookie_file()))
+            dialog.remove.click()
+            self.assertFalse(cookie_file().exists())
+            self.assertNotIn("cookies", self.window.ctl.properties["ytdl-raw-options"])
+            extract.side_effect = FileNotFoundError("test profile missing")
+            finish_import(dialog)
+            self.assertEqual(dialog.status.text(), i18n.tr(139))
+            self.assertFalse(cookie_file().exists())
+            dialog.reject()
+            dialog._import_done(cookies, 0)
+            self.assertFalse(cookie_file().exists(), "A closed import dialog saved a session")
+
+        try:
+            with patch("yucha.window.extract_youtube_cookies", return_value=cookies) as extract, \
+                    patch.object(YouTubeConnect, "exec", autospec=True, side_effect=interact):
+                settings.youtube_connect.click()
+        finally:
+            settings.reject()
+            settings.deleteLater()
 
     def test_space_pauses_once_when_ready_and_playing(self):
         self.window.ready.setChecked(True)
