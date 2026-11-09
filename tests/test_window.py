@@ -179,11 +179,20 @@ class WindowTests(unittest.TestCase):
         settings.show()
         self.qt.processEvents()
         self.assertFalse(settings.youtube_connect.isVisible())
+        size = settings.size()
         settings.tabs.setCurrentIndex(0)
         self.qt.processEvents()
         self.assertTrue(settings.youtube_connect.isVisible())
+        self.assertEqual(settings.size(), size)
+        area = settings.tabs.currentWidget().findChild(QScrollArea)
+        self.assertTrue(area.widget().isAncestorOf(settings.youtube_connect))
+        position = settings.youtube_connect.mapTo(area.viewport(), QPoint())
+        self.assertTrue(area.viewport().rect().contains(position))
+        self.assertTrue(area.viewport().rect().contains(position + QPoint(
+            settings.youtube_connect.width() - 1, settings.youtube_connect.height() - 1)))
         ok = next(button for button in settings.findChildren(QPushButton) if button.text() == i18n.tr(43))
-        self.assertLess(settings.youtube_connect.geometry().bottom(), ok.mapTo(settings, QPoint()).y())
+        bottom = settings.youtube_connect.mapTo(settings, QPoint(0, settings.youtube_connect.height())).y()
+        self.assertLess(bottom, ok.mapTo(settings, QPoint()).y())
 
         def finish_import(dialog):
             dialog.start.click()
@@ -217,8 +226,8 @@ class WindowTests(unittest.TestCase):
 
         try:
             with patch("yucha.window.extract_youtube_cookies", return_value=cookies) as extract, \
-                    patch.object(YouTubeConnect, "exec", autospec=True, side_effect=interact):
-                settings.youtube_connect.click()
+                    patch.object(YouTubeConnect, "exec", new=interact):
+                settings._connect_youtube()
         finally:
             settings.reject()
             settings.deleteLater()

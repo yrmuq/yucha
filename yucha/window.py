@@ -2541,6 +2541,7 @@ class SettingsDialog(QDialog):
             field.setFixedHeight(row_h)
 
         room = QWidget()
+        self._room_page = room
         room_box = QVBoxLayout(room)
         room_box.setContentsMargins(23, 23, 23, 12)
         self._keep_side(room_box)
@@ -2579,6 +2580,10 @@ class SettingsDialog(QDialog):
         self.port_error.setWordWrap(True)
         self.port_error.hide()
         room_box.addWidget(self.port_error)
+        room_box.addStretch(1)
+        self.youtube_connect = QPushButton(tr(124))
+        self.youtube_connect.clicked.connect(self._connect_youtube)
+        room_box.addWidget(self.youtube_connect)
         self._room_fields = (self.host, self.port, self.name, self.password, self.room_name)
         self._room_editing = False
         self._apply_room_lock()
@@ -2721,12 +2726,6 @@ class SettingsDialog(QDialog):
             window.release_ready.connect(self._on_release_ready)
         self._sync_update_row()
 
-        self.youtube_connect = QPushButton(tr(124))
-        self.youtube_connect.clicked.connect(self._connect_youtube)
-        root.addWidget(self.youtube_connect)
-        self.tabs.currentChanged.connect(lambda index: self.youtube_connect.setVisible(index == 0))
-        self.youtube_connect.setVisible(self.tabs.currentIndex() == 0)
-
         buttons = QHBoxLayout()
         ok = QPushButton(tr(43))
         cancel = QPushButton(tr(44))
@@ -2781,7 +2780,7 @@ class SettingsDialog(QDialog):
         page.setMinimumWidth(max(1, self._page_w - gutter))
         hint_h = max(page.sizeHint().height(), 1)
         page.setMinimumHeight(hint_h)
-        if page is self._about_content:
+        if page in (self._about_content, self._room_page):
             page.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         else:
             page.setMaximumHeight(hint_h)
@@ -3521,7 +3520,7 @@ class SettingsDialog(QDialog):
             page.setMaximumHeight(16777215)
             page.layout().invalidate()
             height = max(1, page.sizeHint().height(), page.heightForWidth(area.viewport().width()))
-            if page is self._about_content:
+            if page in (self._about_content, self._room_page):
                 page.setMinimumHeight(height)
             else:
                 page.setFixedHeight(height)
