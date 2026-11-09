@@ -44,7 +44,7 @@ jobs:
         if: steps.tag.outputs.version != ''
         run: |
           sudo apt-get update
-          sudo apt-get install -y file binutils
+          sudo apt-get install -y file binutils zsync
           sudo apt-get install -y libmpv2 || sudo apt-get install -y libmpv-dev
 
       - name: Build

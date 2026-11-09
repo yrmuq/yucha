@@ -147,6 +147,10 @@ class App(object):
 def main():
     from pathlib import Path
 
+    # Bundled Qt cannot use the host's theme plugins; its portal opens the host chooser.
+    if sys.platform.startswith("linux"):
+        os.environ["QT_QPA_PLATFORMTHEME"] = "xdgdesktopportal"
+
     from PySide6.QtCore import Qt, QTimer
     from PySide6.QtGui import QGuiApplication, QIcon
     from PySide6.QtWidgets import QApplication

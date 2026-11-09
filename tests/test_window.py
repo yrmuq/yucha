@@ -18,9 +18,9 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "third_party" / "syncplay"))
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QTimer, Qt, Signal
-from PySide6.QtGui import QColor, QFontMetrics, QImage, QKeyEvent, QMouseEvent, QPainter, QPalette
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QKeyEvent, QMouseEvent, QPainter, QPalette, QWheelEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog, QFormLayout, QLabel, QLineEdit, QPushButton, QWidget
+from PySide6.QtWidgets import QApplication, QDialog, QFormLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QWidget
 
 from syncplay.messages import getMessage
 from yucha.app import App
@@ -173,10 +173,16 @@ class WindowTests(unittest.TestCase):
     def test_youtube_link_queues_and_quality_switches_without_reloading(self):
         window = self.window
         window.set_panel(True)
+        self.assertEqual(window.link_add.x() - window.files_add.x(), 24)
         url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
 
         def enter_link():
             dialog = QApplication.activeModalWidget()
+            buttons = dialog.findChildren(QPushButton)
+            self.assertEqual(len(buttons), 2)
+            self.assertLessEqual(abs(buttons[0].width() - buttons[1].width()), 1)
+            self.assertLess(buttons[0].x(), buttons[1].x())
+            self.assertTrue(all(button.icon().isNull() for button in buttons))
             field = dialog.findChild(QLineEdit)
             field.setText("https://youtu.be/jNQXAC9IVRw?si=example")
             QTest.keyClick(field, Qt.Key.Key_Return)
@@ -237,6 +243,11 @@ class WindowTests(unittest.TestCase):
         ]})
         window._refresh_transport()
         self.assertEqual(window.quality_btn._quality, "2K")
+        window.quality_btn.set_quality(1080)
+        font = QFont(window.quality_btn.font())
+        font.setPixelSize(18)
+        font.setBold(True)
+        self.assertGreaterEqual(window.quality_btn.width(), QFontMetrics(font).horizontalAdvance("1080p") + 12)
         self.assertIn(("set_property", "aid", 2), window.ctl.calls)
         with patch("yucha.youtube.QLocale.system", return_value=QLocale("ru_RU")):
             window._fill_tracks()
@@ -271,6 +282,68 @@ class WindowTests(unittest.TestCase):
         window._refresh_transport()
         self.assertEqual(window._stream, ("", "", 0))
         self.assertTrue(window.quality_btn.isHidden())
+
+    def test_future_scroll_areas_get_external_chat_style_bars(self):
+        area = QScrollArea(self.window.stage)
+        area.setGeometry(30, 30, 150, 80)
+        body = QWidget()
+        body.setFixedSize(120, 800)
+        area.setWidget(body)
+        area.show()
+        self.qt.processEvents()
+        manager = self.qt._scroll_edges
+        bars = manager._areas[area]
+        bar = next(bar for bar in bars if bar.orientation() == Qt.Orientation.Vertical)
+        self.assertEqual(area.verticalScrollBarPolicy(), Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        area.verticalScrollBar().setValue(20)
+        self.assertTrue(bar.isVisible())
+        self.assertEqual(bar.width(), 3)
+        self.assertEqual(bar.x(), area.geometry().right() + 2)
+        self.assertEqual(bar.objectName(), self.window.chat_scroll.objectName())
+        area.move(60, 40)
+        self.assertEqual(bar.x(), area.geometry().right() + 2)
+        area.hide()
+        self.assertTrue(bar.isHidden())
+        area.deleteLater()
+        self.qt.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        self.assertNotIn(area, manager._areas)
+
+    def test_settings_wheel_scrolls_page_without_changing_fields(self):
+        dialog = self.dialog()
+        dialog.show()
+        dialog._open_dev()
+        self.qt.processEvents()
+        combo = dialog._dev_rows["ui"]["family"]
+        area = combo.parentWidget()
+        while not isinstance(area, QScrollArea):
+            area = area.parentWidget()
+        bar = area.verticalScrollBar()
+        self.assertGreater(bar.maximum(), 0)
+        original = combo.currentIndex()
+        event = QWheelEvent(QPointF(combo.rect().center()), QPointF(combo.mapToGlobal(combo.rect().center())),
+                            QPoint(), QPoint(0, -120), Qt.MouseButton.NoButton,
+                            Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False)
+        QApplication.sendEvent(combo, event)
+        self.assertEqual(combo.currentIndex(), original)
+        self.assertGreater(bar.value(), 0)
+        dialog.reject()
+
+    def test_external_track_scrollbar_keeps_popup_open_and_scrolls(self):
+        window = self.window
+        window.set_panel(True)
+        window.ctl.properties["track-list"] = [
+            {"id": i, "type": "sub", "lang": "en", "title": "English " + str(i)} for i in range(40)]
+        window._toggle_tracks_popup()
+        self.qt.processEvents()
+        area = window.tracks_pop
+        area.verticalScrollBar().setValue(10)
+        bars = self.qt._scroll_edges._areas[area]
+        bar = next(bar for bar in bars if bar.orientation() == Qt.Orientation.Vertical)
+        self.assertTrue(bar.isVisible())
+        QTest.mouseClick(bar, Qt.MouseButton.LeftButton, pos=QPoint(1, bar.height() - 2))
+        self.assertTrue(window._tracks_open)
+        self.assertTrue(window._panel_open)
+        self.assertGreater(area.verticalScrollBar().value(), 10)
 
     def test_playlist_height_adapts_without_covering_chat(self):
         window = self.window

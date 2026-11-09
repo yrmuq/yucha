@@ -44,7 +44,7 @@ case "$VER" in
 esac
 
 if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-    gh release upload "$TAG" dist/yucha-x86_64.AppImage \
+    gh release upload "$TAG" dist/yucha-x86_64.AppImage dist/yucha-x86_64.AppImage.zsync \
         --repo "$GITHUB_REPOSITORY" \
         --clobber
     # shellcheck disable=SC2086
@@ -55,7 +55,7 @@ if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
         --notes-file notes.md
 else
     # shellcheck disable=SC2086
-    gh release create "$TAG" dist/yucha-x86_64.AppImage \
+    gh release create "$TAG" dist/yucha-x86_64.AppImage dist/yucha-x86_64.AppImage.zsync \
         --repo "$GITHUB_REPOSITORY" \
         $extra \
         --title "$title" \

@@ -4,7 +4,7 @@ Read only the row the task needs. Do not read `third_party/` or `packaging/appim
 
 ## Own code
 - `yucha/app.py` — starts Qt, builds the client, calls `launch_player`.
-- `yucha/window.py` — playlist, chat, seek, volume, settings. Large. Search a class. Do not read the whole file.
+- `yucha/window.py` — playlist, chat, seek, volume, settings; `EdgeScroll` and `ScrollEdges` standardize external scrollbars. Large. Search a class. Do not read the whole file.
 - `yucha/engine.py` — `Picture` draws the video through `libmpv`. This is the player.
 - `yucha/youtube.py` — canonical YouTube URLs, quality labels, and language/quality filtering for `libmpv` tracks.
 - `yucha/session.py` — Syncplay client. `mpv --version`, then attach to the `libmpv` socket. Does not start a second player.
@@ -18,7 +18,7 @@ Read only the row the task needs. Do not read `third_party/` or `packaging/appim
 - `tests/test_window.py` — Qt control, settings, and overlay regressions. Runs offscreen without mpv or a room server.
 
 ## Packaging
-- `packaging/appimage/build.sh` — builds the image, copies Ubuntu `libmpv`, writes the `mpv --version` stub.
+- `packaging/appimage/build.sh` — builds the image and `.zsync` with GitHub update metadata, copies Ubuntu `libmpv`, writes the `mpv --version` stub.
 - `packaging/appimage/AppRun` — points `YUCHA_MPV` at that stub and `YUCHA_LIBMPV` at the copied library.
 - `requirements.txt` — `PySide6_Essentials`, Twisted, `python-mpv`, and `yt-dlp` with its default dependencies.
 - `.github/workflows/appimage.yml` — builds a version tag. `X.Y.0` is a release. Any other `X.Y.Z` is a prerelease.

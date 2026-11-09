@@ -32,7 +32,7 @@ jobs:
       - name: Install system libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y file binutils libegl1 libgl1
+          sudo apt-get install -y file binutils zsync libegl1 libgl1
           sudo apt-get install -y libmpv2 || sudo apt-get install -y libmpv-dev
 
       - name: Test
@@ -57,7 +57,7 @@ jobs:
           gh release delete dev --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
           git tag -a dev -m "$(cat notes.md)"
           git push origin refs/tags/dev
-          gh release create dev dist/yucha-x86_64.AppImage \
+          gh release create dev dist/yucha-x86_64.AppImage dist/yucha-x86_64.AppImage.zsync \
             --repo "$GITHUB_REPOSITORY" \
             --draft \
             --title "yucha dev" \

@@ -14,7 +14,9 @@ import time
 from pathlib import Path
 from urllib.parse import urlencode
 
-from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, QUrl, Signal
+from shiboken6 import isValid
+
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QBrush,
     QColor,
@@ -36,6 +38,7 @@ from PySide6.QtGui import (
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QAbstractScrollArea,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -381,6 +384,12 @@ def _stylesheet(theme, accent=None, paint=None):
     QPushButton#panelicon, QPushButton#panelicon:hover, QPushButton#panelicon:pressed, QPushButton#panelicon:checked {{
         background: transparent;
         border: none;
+    }}
+    QPushButton#panelicon[compact="true"] {{
+        min-width: 24px;
+        max-width: 24px;
+        min-height: 24px;
+        max-height: 24px;
     }}
     QCheckBox {{
         color: {fg};
@@ -1283,6 +1292,7 @@ class EdgeScroll(QScrollBar):
 
     def attach(self, native):
         self._native = native
+        native.setProperty("edge-scroll", True)
         native.rangeChanged.connect(self.sync)
         native.valueChanged.connect(self._from_native)
         self.valueChanged.connect(self._from_self)
@@ -1290,7 +1300,7 @@ class EdgeScroll(QScrollBar):
 
     def sync(self, *_args):
         native = self._native
-        if native is None:
+        if native is None or not isValid(native):
             return
         self.blockSignals(True)
         self.setMinimum(native.minimum())
@@ -1327,6 +1337,77 @@ class EdgeScroll(QScrollBar):
         if time.monotonic() >= self._until:
             self.hide()
             self._timer.stop()
+
+
+class ScrollEdges(QObject):
+    """Use the chat's external bars for every current and future scroll area."""
+
+    def __init__(self, app):
+        super().__init__(app)
+        self._areas = {}
+        self._placing = False
+        app.installEventFilter(self)
+
+    def eventFilter(self, watched, event):
+        kind = event.type()
+        if kind == QEvent.Type.Show and isinstance(watched, QAbstractScrollArea) and watched not in self._areas:
+            bars = []
+            for orientation, native in ((Qt.Orientation.Vertical, watched.verticalScrollBar()),
+                                        (Qt.Orientation.Horizontal, watched.horizontalScrollBar())):
+                if native.property("edge-scroll"):
+                    continue
+                bar = EdgeScroll(orientation, watched.parentWidget() or watched)
+                bar.attach(native)
+                native.valueChanged.connect(bar.bump)
+                bars.append(bar)
+            self._areas[watched] = bars
+            watched.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            watched.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            watched.destroyed.connect(lambda: self._forget(watched))
+        if kind in (QEvent.Type.Show, QEvent.Type.Hide, QEvent.Type.Resize, QEvent.Type.Move,
+                    QEvent.Type.ZOrderChange):
+            for area, bars in list(self._areas.items()):
+                if isValid(area) and (watched is area or isinstance(watched, QWidget) and watched.isAncestorOf(area)):
+                    self._place(area, bars)
+        elif kind == QEvent.Type.Wheel:
+            for area, bars in self._areas.items():
+                if watched is area or watched is area.viewport():
+                    for bar in bars:
+                        bar.bump()
+        return False
+
+    def _place(self, area, bars):
+        if self._placing:
+            return
+        self._placing = True
+        try:
+            self._position(area, bars)
+        finally:
+            self._placing = False
+
+    def _position(self, area, bars):
+        for bar in bars:
+            if not isValid(bar):
+                continue
+            if not area.isVisible():
+                bar.hide()
+                continue
+            bar.sync()
+            point = area.mapTo(bar.parentWidget(), QPoint(0, 0))
+            if bar.orientation() == Qt.Orientation.Vertical:
+                bar.setGeometry(min(point.x() + area.width() + 1, bar.parentWidget().width() - 3),
+                                point.y() + 6, 3, max(12, area.height() - 12))
+            else:
+                bar.setGeometry(point.x() + 8,
+                                min(point.y() + area.height() + 1, bar.parentWidget().height() - 3),
+                                max(12, area.width() - 16), 3)
+            if bar.isVisible():
+                bar.raise_()
+
+    def _forget(self, area):
+        for bar in self._areas.pop(area, []):
+            if isValid(bar):
+                bar.deleteLater()
 
 
 class UserTable(QWidget):
@@ -1791,7 +1872,16 @@ class IconButton(QPushButton):
         self.update()
 
     def set_quality(self, height):
-        self._quality = quality_label(height)
+        label = quality_label(height)
+        if label == getattr(self, "_quality", None):
+            return
+        self._quality = label
+        font = QFont(self.font())
+        font.setPixelSize(18)
+        font.setBold(True)
+        width = max(40, QFontMetrics(font).horizontalAdvance(label) + 12)
+        self.setStyleSheet("min-width: {0}px; max-width: {0}px;".format(width))
+        self.setFixedWidth(width)
         self.setAccessibleName(tr(120) + ": " + self._quality)
         self.update()
 
@@ -1911,7 +2001,7 @@ class IconButton(QPushButton):
             painter.drawLine(QPointF(cx - 6, cy + 5), QPointF(cx + 6, cy + 5))
         elif kind == "quality":
             font = painter.font()
-            font.setPixelSize(10)
+            font.setPixelSize(18)
             font.setBold(True)
             painter.setFont(font)
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, getattr(self, "_quality", "—"))
@@ -2202,6 +2292,7 @@ class SettingsDialog(QDialog):
 
     def __init__(self, appearance, connection, parent, page=1):
         super().__init__(parent)
+        QApplication.instance().installEventFilter(self)
         self.setObjectName("settings")
         self.setWindowTitle(tr(15))
         self.setModal(True)
@@ -2594,6 +2685,14 @@ class SettingsDialog(QDialog):
 
     def eventFilter(self, watched, event):
         kind = event.type()
+        if kind == QEvent.Type.Wheel and isinstance(watched, (QComboBox, QSpinBox)) and self.isAncestorOf(watched):
+            event.ignore()
+            area = watched.parentWidget()
+            while area is not None and not isinstance(area, QScrollArea):
+                area = area.parentWidget()
+            if area is not None:
+                QApplication.sendEvent(area.viewport(), event)
+            return True
         if kind == QEvent.Type.Wheel or kind == QEvent.Type.Resize:
             for host, area, bar in self._scrolls:
                 if kind == QEvent.Type.Resize and watched is host:
@@ -3820,12 +3919,13 @@ class MainWindow(QMainWindow):
         self._mark(playlist_title, 2)
         self.playlist_title = playlist_title
         playlist_row = QHBoxLayout()
-        playlist_row.setSpacing(4)
+        playlist_row.setSpacing(0)
         playlist_row.addWidget(playlist_title)
         self.files_add = IconButton("add")
         self.link_add = IconButton("link")
         for button in (self.files_add, self.link_add):
             button.setObjectName("panelicon")
+            button.setProperty("compact", True)
             button.setFixedSize(24, 24)
             playlist_row.addWidget(button)
         playlist_row.addStretch(1)
@@ -3871,6 +3971,9 @@ class MainWindow(QMainWindow):
         self._chat_timer.setSingleShot(True)
         self._chat_timer.timeout.connect(self._close_chat_if_empty)
         self.panel.setMouseTracking(True)
+        qt = QApplication.instance()
+        if not hasattr(qt, "_scroll_edges"):
+            qt._scroll_edges = ScrollEdges(qt)
         QApplication.instance().installEventFilter(self)
         hints = QGuiApplication.styleHints()
         changed = getattr(hints, "colorSchemeChanged", None)
@@ -4076,6 +4179,8 @@ class MainWindow(QMainWindow):
         widget = watched if isinstance(watched, QWidget) else None
         if widget is None or widget.window() is not self:
             return
+        if self._popup_widget(widget):
+            return
         if self._inside(widget, self.panel) or self._inside(widget, self.bar):
             return
         point = event.globalPosition().toPoint()
@@ -4085,6 +4190,8 @@ class MainWindow(QMainWindow):
         self.set_panel(False)
 
     def _popup_widget(self, widget):
+        if isinstance(widget, EdgeScroll) and widget._native is not None:
+            widget = widget._native
         while widget is not None:
             if widget in (self.volume_pop, self.tracks_pop, self.quality_pop,
                           self.volume_btn, self.tracks_btn, self.quality_btn):
@@ -4977,16 +5084,18 @@ class MainWindow(QMainWindow):
         field.setAccessibleName(tr(119))
         field.setMaxLength(4096)
         layout.addWidget(field)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        ok = buttons.button(QDialogButtonBox.StandardButton.Ok)
-        ok.setText(tr(43))
+        buttons = QHBoxLayout()
+        ok = QPushButton(tr(43))
+        cancel = QPushButton(tr(44))
         ok.setDefault(True)
         ok.setEnabled(False)
-        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(tr(44))
+        cancel.setAutoDefault(False)
+        buttons.addWidget(ok, 1)
+        buttons.addWidget(cancel, 1)
         field.textChanged.connect(lambda text: ok.setEnabled(bool(video_url(text))))
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-        layout.addWidget(buttons)
+        ok.clicked.connect(dialog.accept)
+        cancel.clicked.connect(dialog.reject)
+        layout.addLayout(buttons)
         dialog.resize(390, dialog.sizeHint().height())
         field.setFocus()
         try:
