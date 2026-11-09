@@ -6,10 +6,11 @@ them: into the widget's framebuffer."""
 
 import os
 import re
+import sys
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, Qt, Signal
+from PySide6.QtCore import QByteArray, QLocale, Qt, Signal
 from PySide6.QtGui import QOpenGLFunctions, QPainter
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QSizePolicy
@@ -27,6 +28,10 @@ PLAYING_MSG = (
     "</SyncplayUpdateFile>"
 )
 GL_COLOR_BUFFER_BIT = 0x00004000
+
+
+def _player_log(level, prefix, text):
+    print("libmpv [{}] {}: {}".format(level, prefix, text.rstrip()), file=sys.stderr)
 
 
 def _library_version(player):
@@ -93,6 +98,8 @@ class Picture(QOpenGLWidget):
         mpv = _import_mpv()
         self._mpv_mod = mpv
         self.mpv = mpv.MPV(
+            log_handler=_player_log,
+            loglevel="warn",
             vo="libmpv",
             idle="yes",
             force_window="no",
@@ -101,6 +108,10 @@ class Picture(QOpenGLWidget):
             hr_seek="always",
             osc="no",
             config="no",
+            ytdl="yes",
+            script_opts="ytdl_hook-all_formats=yes",
+            ytdl_raw_options="ignore-config=,write-auto-subs=,sub-langs=[en.*,{0}.*,-live_chat]".format(
+                QLocale.languageToCode(QLocale.system().language())),
             input_terminal="no",
             terminal="no",
             hwdec="auto-safe",

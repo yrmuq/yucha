@@ -147,6 +147,10 @@ class App(object):
 def main():
     from pathlib import Path
 
+    # Bundled Qt cannot use the host's theme plugins; its portal opens the host chooser.
+    if sys.platform.startswith("linux"):
+        os.environ["QT_QPA_PLATFORMTHEME"] = "xdgdesktopportal"
+
     from PySide6.QtCore import Qt, QTimer
     from PySide6.QtGui import QGuiApplication, QIcon
     from PySide6.QtWidgets import QApplication
@@ -187,7 +191,7 @@ def main():
     window.set_player(player)
     if paths:
         window.accept_files(paths, "")
-    app.boot()
+    reactor.addSystemEventTrigger("before", "shutdown", app.client.stop, True)
 
     def tick():
         try:
@@ -200,6 +204,13 @@ def main():
     timer = QTimer()
     timer.timeout.connect(tick)
     timer.start(10)
-    qt.aboutToQuit.connect(bridge.stop)
-    qt.aboutToQuit.connect(timer.stop)
-    qt.exec()
+    try:
+        app.boot()
+        qt.exec()
+    finally:
+        timer.stop()
+        bridge.stop()
+        if reactor.running:
+            reactor.stop()
+            # Process shutdown after Qt's timer stops so Twisted joins its DNS workers.
+            reactor.iterate(0)

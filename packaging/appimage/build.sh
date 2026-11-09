@@ -16,6 +16,10 @@ mkdir -p "$CACHE" "$DIST"
 PY_URL="https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.12.15%2B20261013-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
 PY_SHA="178d3d83b6e8e99285a65d3fce9c16b87952cc5efdb4d1a0e3ff3be18ff0fc9c"
 PY_TAR="$CACHE/cpython-3.12.15-install_only_stripped.tar.gz"
+NODE_DIST=node-v24.22.2-linux-x64
+NODE_TAR="$CACHE/$NODE_DIST.tar.xz"
+NODE_URL="https://nodejs.org/download/release/v24.22.2/$NODE_DIST.tar.xz"
+NODE_SHA="48cc0e21e048790e54c0cf5749c2725005313d652651c40b7a21feb9697aaf75"
 TOOL="$CACHE/appimagetool-x86_64.AppImage"
 TOOL_URL="https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage"
 TOOL_SHA="ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"
@@ -38,6 +42,7 @@ fetch() {
 }
 
 fetch "$PY_URL" "$PY_TAR" "$PY_SHA"
+fetch "$NODE_URL" "$NODE_TAR" "$NODE_SHA"
 fetch "$TOOL_URL" "$TOOL" "$TOOL_SHA"
 chmod +x "$TOOL"
 
@@ -54,6 +59,8 @@ mkdir -p "$APPDIR/usr/bin" \
 
 tar -xzf "$PY_TAR" -C "$APPDIR"
 test -x "$APPDIR/python/bin/python3"
+tar -xJf "$NODE_TAR" -C "$APPDIR/usr/bin" --strip-components=2 "$NODE_DIST/bin/node"
+tar -xJOf "$NODE_TAR" "$NODE_DIST/LICENSE" > "$APPDIR/payload/LICENSE.node"
 
 "$APPDIR/python/bin/python3" -m pip install \
     --disable-pip-version-check \
@@ -63,6 +70,16 @@ test -x "$APPDIR/python/bin/python3"
 site=$("$APPDIR/python/bin/python3" -c 'import sysconfig; print(sysconfig.get_path("purelib"))')
 rm -rf "$site/pip" "$site"/pip-*.dist-info
 rm -f "$APPDIR/python/bin/pip" "$APPDIR/python/bin/pip3" "$APPDIR/python/bin/pip3.12"
+
+cat > "$APPDIR/usr/bin/yt-dlp" << 'SH'
+#!/bin/sh
+set -eu
+here="$(dirname "$(readlink -f "$0")")"
+exec "$here/../../python/bin/python3" -m yt_dlp --no-js-runtimes --js-runtimes "node:$here/node" "$@"
+SH
+chmod +x "$APPDIR/usr/bin/yt-dlp"
+PYTHONNOUSERSITE=1 "$APPDIR/usr/bin/yt-dlp" --version
+"$APPDIR/usr/bin/node" --version
 
 cp -a "$ROOT/yucha" "$ROOT/languages" "$ROOT/LICENSE" "$ROOT/NOTICE" "$ROOT/README.md" \
     "$APPDIR/payload/"
@@ -174,7 +191,12 @@ cp "$PACK/yucha.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps/yucha.png"
 
 OUT="$DIST/yucha-x86_64.AppImage"
 rm -f "$OUT"
-ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$TOOL" "$APPDIR" "$OUT"
+(
+    cd "$DIST"
+    ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$TOOL" \
+        -u 'gh-releases-zsync|yrmuq|yucha|latest|yucha-x86_64.AppImage.zsync' "$APPDIR" "$OUT"
+)
+test -s "$OUT.zsync"
 chmod +x "$OUT"
 echo "wrote $OUT"
 ls -lh "$OUT"

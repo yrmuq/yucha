@@ -17,10 +17,14 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "third_party" / "syncplay"))
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, Qt, Signal
-from PySide6.QtGui import QColor, QFontMetrics, QImage, QKeyEvent, QMouseEvent, QPainter, QPalette
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QTimer, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QKeyEvent, QMouseEvent, QPainter, QPalette, QWheelEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog, QFormLayout, QLabel, QWidget
+from PySide6.QtNetwork import QNetworkReply
+from PySide6.QtWidgets import (
+    QApplication, QDialog, QFormLayout, QLabel, QLineEdit, QPushButton,
+    QScrollArea, QScrollBar, QStyle, QStyleOptionSlider, QWidget,
+)
 
 from syncplay.messages import getMessage
 from yucha.app import App
@@ -29,7 +33,7 @@ from yucha.player_ui import PlayerUI
 from yucha.configstore import DEFAULTS, ConfigStore
 from yucha import __version__, i18n
 from yucha.i18n import system_language
-from yucha.window import MainWindow, SettingsDialog, _palette
+from yucha.window import EdgeScroll, MainWindow, SettingsDialog, _palette
 
 
 class PictureStub(QWidget):
@@ -169,6 +173,234 @@ class WindowTests(unittest.TestCase):
         self.assertTrue(self.window.ctl.properties["pause"])
         self.assertEqual(self.window.ctl.calls.count(("cycle", "pause")), 1)
         self.window._toggle_ready.assert_not_called()
+
+    def test_youtube_link_queues_and_quality_switches_without_reloading(self):
+        window = self.window
+        window.set_panel(True)
+        self.assertEqual(window.link_add.x() - window.files_add.x(), 24)
+        url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+
+        def enter_link():
+            dialog = QApplication.activeModalWidget()
+            buttons = dialog.findChildren(QPushButton)
+            self.assertEqual(len(buttons), 2)
+            self.assertLessEqual(abs(buttons[0].width() - buttons[1].width()), 1)
+            self.assertLess(buttons[0].x(), buttons[1].x())
+            self.assertTrue(all(button.icon().isNull() for button in buttons))
+            field = dialog.findChild(QLineEdit)
+            field.setText("https://youtu.be/jNQXAC9IVRw?si=example")
+            QTest.keyClick(field, Qt.Key.Key_Return)
+
+        with patch.object(window, "_fetch_youtube_title") as fetch:
+            QTimer.singleShot(0, enter_link)
+            window.link_add.click()
+        fetch.assert_called_once_with(url)
+        self.assertEqual(window._current_path, "/tmp/video.mkv")
+        self.assertEqual(window._playlist[-1]["path"], url)
+        self.assertTrue(window.quality_btn.isHidden())
+
+        window._play_path(url)
+        window.ctl.properties.update({
+            "path": url, "media-title": "YouTube title", "video-params/h": 1080,
+            "pause": True, "time-pos": 24,
+            "track-list": [
+                {"id": 1, "type": "video", "demux-h": 1080, "selected": True},
+                {"id": 2, "type": "video", "demux-h": 720},
+                {"id": 3, "type": "video", "demux-h": 720},
+                {"id": 4, "type": "audio", "title": "English"},
+                {"id": 5, "type": "audio", "title": "Russian"},
+                {"id": 6, "type": "sub", "lang": "en"},
+            ],
+        })
+        window._users = [{"name": "me", "file": url, "size": 0, "ready": True}]
+        window._refresh_transport()
+        self.assertEqual(window._playlist[-1]["name"], "YouTube title")
+        self.assertEqual(window.room_users.sizes_col.itemAt(0).widget().text(), "1080p")
+        self.assertFalse(window.quality_btn.isHidden())
+        window.quality_btn.click()
+        buttons = window.quality_pop.findChildren(QPushButton)
+        self.assertEqual([button.text() for button in buttons], ["1080p", "720p"])
+        window.ctl.calls.clear()
+        buttons[1].click()
+        self.assertEqual([call for call in window.ctl.calls if call[0] != "get_property"],
+                         [("set_property", "vid", 2)])
+        self.assertEqual(window.ctl.properties["time-pos"], 24)
+        self.assertTrue(window.ctl.properties["pause"])
+        self.assertFalse(window._quality_open)
+        self.assertTrue(window.quality_pop.isHidden())
+        self.assertFalse(window.quality_btn.isChecked())
+        window.tracks_btn.click()
+        self.assertTrue(window._tracks_open)
+        self.assertFalse(window._quality_open)
+
+    def test_youtube_track_menus_and_best_audio_follow_language(self):
+        from PySide6.QtCore import QLocale
+        window = self.window
+        url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+        window._current_path = url
+        window._playlist = [{"path": url, "name": url}]
+        window.ctl.properties.update({"path": url, "track-list": [
+            {"id": 1, "type": "audio", "lang": "en", "demux-bitrate": 64000, "selected": True},
+            {"id": 2, "type": "audio", "lang": "eng", "demux-bitrate": 192000},
+            {"id": 3, "type": "audio", "lang": "ru", "demux-bitrate": 128000},
+            {"id": 4, "type": "sub", "lang": "ru"},
+            {"id": 5, "type": "sub", "lang": "en"},
+            {"id": 6, "type": "sub", "lang": "de"},
+            {"id": 7, "type": "video", "demux-h": 1440, "selected": True},
+        ]})
+        window._refresh_transport()
+        self.assertEqual(window.quality_btn._quality, "2K")
+        window.quality_btn.set_quality(1080)
+        font = QFont(window.quality_btn.font())
+        font.setPixelSize(18)
+        font.setBold(False)
+        self.assertGreaterEqual(window.quality_btn.width(), QFontMetrics(font).horizontalAdvance("1080p") + 12)
+        self.assertIn(("set_property", "aid", 2), window.ctl.calls)
+        with patch("yucha.youtube.QLocale.system", return_value=QLocale("ru_RU")):
+            window._fill_tracks()
+        buttons = window.tracks_pop.findChildren(QPushButton)
+        self.assertEqual([button.text() for button in buttons][-2:], ["English", "Russian"])
+        self.assertEqual(len(buttons), 5)
+        buttons[-1].click()
+        self.assertEqual(window.ctl.properties["aid"], 3)
+
+    def test_youtube_title_reaches_users_before_play_and_when_switching(self):
+        window = self.window
+        url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+        window._playlist = []
+        window._users = [{"name": "me", "file": url, "ready": True}]
+        self.app.client.set_youtube_info = Mock()
+        reply = Mock()
+        reply.error.return_value = QNetworkReply.NetworkError.NoError
+        reply.read.return_value = b'{"title":"Title before play"}'
+        with patch.object(window, "_fetch_youtube_title"), patch(
+                "twisted.internet.reactor.callFromThread", side_effect=lambda fn, *args: fn(*args)):
+            window._add_dropped([url])
+            window.ctl.properties.update({"path": url, "media-title": "jNQXAC9IVRw", "pause": True})
+            window._youtube_title_received(url, reply)
+            window._refresh_transport()
+            self.assertEqual(window.room_users.files_col.itemAt(0).widget().text(), "Title before play")
+            self.app.client.set_youtube_info.assert_called_with(url, "Title before play", 0)
+            self.assertTrue(window.ctl.properties["pause"])
+            next_url = "https://www.youtube.com/watch?v=2iAkQCsSctc"
+            window._playlist.append({"path": next_url, "name": "Queued title"})
+            window.ctl.properties["media-title"] = "Old engine title"
+            window._play_path(next_url)
+            window._refresh_transport()
+            self.assertEqual(window._stream, (next_url, "Queued title", 0))
+            self.app.client.set_youtube_info.assert_called_with(next_url, "Queued title", 0)
+        reply.deleteLater.assert_called_once_with()
+
+    def test_chapter_markers_toggle_and_removed_youtube_does_not_return(self):
+        window = self.window
+        window.ctl.properties["chapter-list"] = [{"time": 0}, {"time": 30}]
+        window._refresh_transport()
+        self.assertEqual(window.slider._chapters, [])
+        window.apply_dev({"chapters": True})
+        self.assertEqual(window.slider._chapters, [0, 30])
+        window.apply_dev({})
+        self.assertEqual(window.slider._chapters, [])
+        url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+        window._current_path = url
+        window._hold_pause = url
+        window._playlist = [{"path": url, "name": url}]
+        window._stream = (url, "Title", 720)
+        window._users = [{"name": "me", "file": url, "youtube": url, "ready": True}]
+        window.ctl.properties["path"] = url
+        self.app.client.clear_file = Mock()
+        with patch("twisted.internet.reactor.callFromThread", side_effect=lambda fn, *args: fn(*args)):
+            window._remove_file(url)
+        self.app.client.clear_file.assert_called_once_with()
+        self.assertEqual(window._users[0]["file"], "")
+        self.assertIsNone(window._hold_pause)
+        window._refresh_transport()
+        self.assertEqual(window._stream, ("", "", 0))
+        self.assertTrue(window.quality_btn.isHidden())
+
+    def test_future_scroll_areas_get_external_chat_style_bars(self):
+        area = QScrollArea(self.window.stage)
+        area.setGeometry(30, 30, 150, 80)
+        body = QWidget()
+        body.setFixedSize(120, 800)
+        area.setWidget(body)
+        area.show()
+        self.qt.processEvents()
+        manager = self.qt._scroll_edges
+        bars = manager._areas[area]
+        bar = next(bar for bar in bars if bar.orientation() == Qt.Orientation.Vertical)
+        self.assertEqual(area.verticalScrollBarPolicy(), Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        area.verticalScrollBar().setValue(20)
+        self.assertTrue(bar.isVisible())
+        self.assertEqual(bar.width(), 3)
+        self.assertEqual(bar.x(), area.geometry().right() + 2)
+        self.assertEqual(bar.objectName(), self.window.chat_scroll.objectName())
+        area.move(60, 40)
+        self.assertEqual(bar.x(), area.geometry().right() + 2)
+        area.hide()
+        self.assertTrue(bar.isHidden())
+        area.deleteLater()
+        self.qt.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        self.assertNotIn(area, manager._areas)
+
+    def test_long_scrollbar_thumb_is_capped_without_changing_page_scroll(self):
+        native = QScrollBar(Qt.Orientation.Vertical, self.window)
+        native.setRange(0, 4000)
+        native.setPageStep(600)
+        bar = EdgeScroll(Qt.Orientation.Vertical, self.window)
+        bar.setGeometry(5, 5, 3, 600)
+        bar.attach(native)
+        bar.show()
+        self.qt.processEvents()
+        for length in (600, 900):
+            bar.resize(3, length)
+            option = QStyleOptionSlider()
+            bar.initStyleOption(option)
+            thumb = bar.style().subControlRect(QStyle.ComplexControl.CC_ScrollBar, option,
+                                               QStyle.SubControl.SC_ScrollBarSlider, bar)
+            self.assertGreaterEqual(thumb.height(), 18)
+            self.assertLessEqual(thumb.height(), 64)
+        bar.triggerAction(bar.SliderAction.SliderPageStepAdd)
+        self.assertEqual(native.value(), 600)
+        self.assertEqual(bar.value(), 600)
+        bar.setValue(bar.maximum())
+        self.assertEqual(native.value(), 4000)
+
+    def test_settings_wheel_scrolls_page_without_changing_fields(self):
+        dialog = self.dialog()
+        dialog.show()
+        dialog._open_dev()
+        self.qt.processEvents()
+        combo = dialog._dev_rows["ui"]["family"]
+        area = combo.parentWidget()
+        while not isinstance(area, QScrollArea):
+            area = area.parentWidget()
+        bar = area.verticalScrollBar()
+        self.assertGreater(bar.maximum(), 0)
+        original = combo.currentIndex()
+        event = QWheelEvent(QPointF(combo.rect().center()), QPointF(combo.mapToGlobal(combo.rect().center())),
+                            QPoint(), QPoint(0, -120), Qt.MouseButton.NoButton,
+                            Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False)
+        QApplication.sendEvent(combo, event)
+        self.assertEqual(combo.currentIndex(), original)
+        self.assertGreater(bar.value(), 0)
+        dialog.reject()
+
+    def test_external_track_scrollbar_keeps_popup_open_and_scrolls(self):
+        window = self.window
+        window.set_panel(True)
+        window.ctl.properties["track-list"] = [
+            {"id": i, "type": "sub", "lang": "en", "title": "English " + str(i)} for i in range(40)]
+        window._toggle_tracks_popup()
+        self.qt.processEvents()
+        area = window.tracks_pop
+        area.verticalScrollBar().setValue(10)
+        bars = self.qt._scroll_edges._areas[area]
+        bar = next(bar for bar in bars if bar.orientation() == Qt.Orientation.Vertical)
+        self.assertTrue(bar.isVisible())
+        QTest.mouseClick(bar, Qt.MouseButton.LeftButton, pos=QPoint(1, bar.height() - 2))
+        self.assertTrue(window._tracks_open)
+        self.assertTrue(window._panel_open)
+        self.assertGreater(area.verticalScrollBar().value(), 10)
 
     def test_playlist_height_adapts_without_covering_chat(self):
         window = self.window
@@ -426,6 +658,40 @@ class WindowTests(unittest.TestCase):
             window._on_users({"list": [me]})
             window._refresh_osd()
             self.assertIn(i18n.tr(110), window.board.notices)
+
+    def test_alone_chat_is_tied_to_entry_not_youtube_quality_updates(self):
+        window = self.window
+        me = {"name": "me", "ready": False, "file": "", "size": None, "duration": None}
+        other = {**me, "name": "other"}
+        line = [{"k": "text", "v": i18n.tr(110)}]
+        window._on_conn({"state": "connecting"})
+        window._on_conn({"state": "connected"})
+        window._add_chat("", "You're alone in the room")
+        self.assertNotIn(line, window._chat_lines)
+        window._on_users({"list": [me]})
+        self.assertEqual(window._chat_lines.count(line), 1)
+        url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+        window._playlist = [{"path": url, "name": "A video"}]
+        window._current_path = url
+        window.ctl.properties.update({"path": url, "video-params/h": 1080})
+        self.app.client.set_youtube_info = Mock(
+            side_effect=lambda *args: window._add_chat("", "You are alone in the room"))
+        with patch("twisted.internet.reactor.callFromThread", side_effect=lambda fn, *args: fn(*args)):
+            for height in (1080, 720, 480):
+                window._pick_track("vid", height)
+                window.ctl.properties["video-params/h"] = height
+                window._refresh_youtube(url)
+        self.assertEqual(self.app.client.set_youtube_info.call_count, 3)
+        self.assertEqual(window._chat_lines.count(line), 1)
+        window._on_users({"list": [me, other]})
+        window._on_users({"list": [me]})
+        window._add_chat("", "You're alone in the room")
+        self.assertEqual(window._chat_lines.count(line), 1)
+        window._on_conn({"state": "connecting"})
+        window._on_users({"list": [me]})
+        window._on_conn({"state": "connected"})
+        window._add_chat("", "You're alone in the room")
+        self.assertEqual(window._chat_lines.count(line), 2)
 
     def test_panel_bottom_follows_chat_limit_with_unchanged_padding_and_top(self):
         window = self.window
@@ -855,15 +1121,18 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(dialog._chat_max.value(), 340)
         self.assertTrue(dialog._panel_flags["panel_center"].isChecked())
         self.assertTrue(dialog._panel_flags["panel_drag"].isChecked())
-        self.assertEqual(dialog._bar_min.value(), 0)
+        self.assertEqual(dialog._bar_min.value(), 500)
+        self.assertFalse(dialog._panel_flags["chapters"].isChecked())
         dialog._panel_flags["panel_center"].setChecked(False)
         dialog._panel_flags["panel_drag"].setChecked(False)
         dialog._bar_min.setValue(1000)
+        dialog._panel_flags["chapters"].setChecked(True)
         self.assertEqual(self.window._bar_rect().width(), 1000)
         dialog._accept()
         self.app.on_command({"c": "appearance", **dialog.appearance})
         self.app.store = ConfigStore()
         restarted = self.make_window()
+        self.assertTrue(restarted._dev["chapters"])
         self.assertFalse(restarted._dev["panel_center"])
         self.assertFalse(restarted._dev["panel_drag"])
         self.assertFalse(restarted.panel_home.isVisible())
@@ -882,6 +1151,7 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(self.window._dev["bar_min"], 1000)
         dialog = self.dialog()
         dialog._reset_dev()
+        self.assertFalse(dialog._panel_flags["chapters"].isChecked())
         self.assertEqual(self.window._dev, {})
         self.assertTrue(self.window.panel_home.isHidden())
         self.assertTrue(dialog._panel_flags["panel_center"].isChecked())
@@ -1069,6 +1339,19 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(self.window.apply_theme.call_count, 1)
         self.assertEqual(self.window.font().pointSize(), 14)
 
+    def test_closed_settings_dialogs_are_released(self):
+        execute = SettingsDialog.exec
+
+        def close(dialog):
+            QTimer.singleShot(0, dialog.reject if cancel else dialog._accept)
+            return execute(dialog)
+
+        with patch.object(SettingsDialog, "exec", close):
+            for cancel in (True, False):
+                self.window._open_settings()
+                self.qt.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+                self.assertEqual(self.window.findChildren(SettingsDialog), [])
+
     def test_dev_ui_osd_and_title_sizes_are_effective(self):
         dialog = self.dialog()
         dialog._dev_rows["ui"]["size"].setValue(15)
@@ -1217,7 +1500,7 @@ class WindowTests(unittest.TestCase):
         dialog.reset_other.click()
         self.assertEqual(tuple(field.text() for field in dialog._room_fields), fields)
         self.assertEqual(self.window._dev, {})
-        self.assertIsNone(dialog._dev_page)
+        self.assertEqual(dialog.tabs.indexOf(dialog._dev_page), -1)
         self.assertEqual((dialog._page_w, dialog._page_h), (450, 375))
         self.assertEqual(self.window._panel_width, 380)
         self.assertEqual(self.window.ctl.properties["volume-max"], 100)
@@ -1380,13 +1663,14 @@ class WindowTests(unittest.TestCase):
         self.assertTrue(button.isChecked())
         dialog.tabs.setCurrentIndex(0)
         self.assertFalse(button.isChecked())
+        dev_page = dialog._dev_page
         for _ in range(5):
             dialog._logo_pressed()
-        self.assertIsNone(dialog._dev_page)
+        self.assertEqual(dialog.tabs.indexOf(dev_page), -1)
         self.assertTrue(button.isHidden())
         for _ in range(5):
             dialog._logo_pressed()
-        self.assertIs(dialog.tabs.currentWidget(), dialog._dev_page)
+        self.assertIs(dialog.tabs.currentWidget(), dev_page)
         self.assertFalse(button.isHidden())
         self.assertTrue(button.isChecked())
         dialog.reject()

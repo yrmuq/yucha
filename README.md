@@ -45,6 +45,10 @@
 | :--- | :--- |
 | `Drag & Drop` | Append media files to the playlist (sorted alphabetically), keeping the current video. The first file opens paused. |
 | `Open With` | Add the opened video to the playlist. A window that is already open receives it. |
+| `+` (Playlist) | Choose local files to add to the playlist. |
+| Link icon (Playlist) | Enter a YouTube video URL and press `Enter` to queue it. For synchronized viewing, open the same video in each client. |
+| Tracks icon / quality label | Choose audio or subtitles, or set YouTube quality from `480p` upward. YouTube audio lists languages with their best audio quality; subtitles list the system language and English. |
+| `Dev` → `Show chapter markers` | Show chapter marks on the seek bar. Disabled by default. |
 | `Right Click` / `Space` | Toggle Play / Pause. |
 | `Double Click` | Toggle Fullscreen. |
 | `Left Click` (left or right screen edge, fullscreen) | Toggle the side panel. |
@@ -75,7 +79,9 @@
 
 Pre-built `AppImage` packages bundle `Python`, the `Syncplay` client, and `libmpv` copied from the build machine. No separate `mpv` program is included. Download the latest `.AppImage` from the [Releases](https://github.com/yrmuq/yucha/releases) page.
 
-For seamless desktop integration and updates, use `Gear Lever` ([Flathub](https://flathub.org/apps/it.mijorus.gearlever)) to manage and launch the `AppImage` directly from your application menu. If the menu entry is from an older image, add it again so the file manager can open videos in `yucha`.
+For desktop integration and updates, use `Gear Lever` ([Flathub](https://flathub.org/apps/it.mijorus.gearlever)). The `AppImage` embeds its GitHub update source for the latest stable release; the accompanying `.zsync` file supports update tools. Private drafts are not available through this public update source. If the menu entry is from an older image, add it again so the file manager can open videos in `yucha`.
+
+The `+` file chooser uses the system's `xdg-desktop-portal` through Qt. When no portal service is available, Qt falls back to its file chooser.
 
 Alternatively, grant execution permissions and launch it from the terminal:
 
@@ -110,5 +116,7 @@ If the host system lacks `FUSE` support, extract and run the bundle directly:
 | --- | --- | --- | --- |
 | `libmpv` | [mpv-player/mpv](https://github.com/mpv-player/mpv) | `GPL-2.0-or-later` | Copied from the build machine. `third_party/mpv` is not built or shipped. |
 | `Syncplay` | [Syncplay/syncplay](https://github.com/Syncplay/syncplay) | `Apache-2.0` | Unmodified source snapshot in `third_party/syncplay` (including `ISC`, `BSD`, and `MIT` submodules). |
+| `yt-dlp` / `yt-dlp-ejs` | [yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp), [yt-dlp/ejs](https://github.com/yt-dlp/ejs) | `Unlicense` | Resolve YouTube streams and their available tracks. |
+| `Node.js` | [nodejs/node](https://github.com/nodejs/node) | `MIT` and bundled notices | Runs the YouTube challenge solver. |
 
 *Copyright (C) 2026 yrmuq.*

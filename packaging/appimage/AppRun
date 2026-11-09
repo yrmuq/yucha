@@ -7,6 +7,7 @@ HERE="$(dirname "$(readlink -f "$0")")"
 export YUCHA_MPV="${YUCHA_MPV:-$HERE/mpv-launch}"
 export YUCHA_LIBMPV="${YUCHA_LIBMPV:-$HERE/usr/lib/yucha/libmpv.so.2}"
 export LD_LIBRARY_PATH="$HERE/usr/lib/yucha${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export PATH="$HERE/usr/bin${PATH:+:$PATH}"
 export PYTHONPATH="$HERE/payload${PYTHONPATH:+:$PYTHONPATH}"
 export PYTHONNOUSERSITE=1
 export PYTHONDONTWRITEBYTECODE=1
