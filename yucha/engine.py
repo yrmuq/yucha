@@ -131,6 +131,8 @@ class Picture(QOpenGLWidget):
             input_ipc_server=str(self.ipc_path),
             term_playing_msg=PLAYING_MSG,
         )
+        # Retry a transient CDN denial twice (immediately, then after one second).
+        self.mpv.stream_lavf_o = {"reconnect_on_http_error": "403", "reconnect_delay_max": "1"}
         self.mpv.ytdl_raw_options = playback_options()
         found = _library_version(self.mpv)
         if found is None or (found[0] == 0 and found[1] < 23):
