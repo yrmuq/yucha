@@ -8,7 +8,9 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
+
+from PySide6.QtCore import QLocale
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "third_party" / "syncplay"))
 
@@ -18,10 +20,42 @@ from twisted.internet.testing import StringTransport
 from syncplay.server import SyncFactory
 from yucha.player_ui import PlayerUI, room_file_notes
 from yucha.session import RoomClient
-from yucha.youtube import video_url
+from yucha.youtube import audio_tracks, quality_label, quality_tracks, subtitle_tracks, video_url
 
 
 class YouTubeTests(unittest.TestCase):
+    def test_quality_choices_start_at_480_and_use_resolution_labels(self):
+        tracks = [{"id": height, "type": "video", "demux-h": height}
+                  for height in (144, 360, 480, 720, 1080, 1440, 2160)]
+        self.assertEqual([quality_label(height) for height, _ in quality_tracks(tracks)],
+                         ["4K", "2K", "1080p", "720p", "480p"])
+
+    def test_languages_filter_subtitles_and_choose_best_audio_per_language(self):
+        tracks = [
+            {"id": 1, "type": "audio", "title": "251 - audio only (Russian, low)", "demux-bitrate": 64000},
+            {"id": 2, "type": "audio", "title": "251 - audio only (Russian, medium)", "demux-bitrate": 128000},
+            {"id": 3, "type": "audio", "lang": "eng", "demux-bitrate": 192000},
+            {"id": 4, "type": "audio", "lang": "en-US", "demux-bitrate": 96000},
+            *[{"id": code, "type": "sub", "lang": code} for code in ("ru", "en-US", "de", "rus", "en-orig")],
+        ]
+        self.assertEqual([(name, track["id"]) for name, track in audio_tracks(tracks)],
+                         [("Russian", 2), ("English", 3)])
+        with patch("yucha.youtube.QLocale.system", return_value=QLocale("ru_RU")):
+            self.assertEqual([track["id"] for track in subtitle_tracks(tracks)], ["ru", "en-US", "rus", "en-orig"])
+        with patch("yucha.youtube.QLocale.system", return_value=QLocale("de_DE")):
+            self.assertEqual([track["id"] for track in subtitle_tracks(tracks)], ["en-US", "de", "en-orig"])
+
+    def test_clearing_file_publishes_empty_room_file(self):
+        client = RoomClient.__new__(RoomClient)
+        client.userlist = SimpleNamespace(currentUser=SimpleNamespace(file={"name": "old URL"}))
+        client._protocol = Mock(logged=True)
+        client.ui = Mock()
+        client.clear_file()
+        self.assertIsNone(client.userlist.currentUser.file)
+        self.assertEqual(client._youtube_info, ("", "", 0))
+        client._protocol.sendFileSetting.assert_called_once_with({"name": "", "size": 0, "duration": 0})
+        client.ui.userListChange.assert_called_once_with()
+
     def test_video_identity_rejects_other_hosts_and_collapses_link_variants(self):
         url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
         self.assertEqual(video_url("https://youtu.be/jNQXAC9IVRw?t=30"), url)
@@ -75,3 +109,17 @@ class YouTubeTests(unittest.TestCase):
         ui.userListChange()
         person = ui.bridge.emit.call_args.args[0]["list"][0]
         self.assertEqual((person["youtube"], person["title"], person["height"]), (url, "A video", 720))
+        client.ui = Mock()
+        transport.clear()
+        client.clear_file()
+        second.sendList()
+        updates = [json.loads(line) for line in transport.value().splitlines()]
+        cleared = {"name": "", "size": 0, "duration": 0}
+        self.assertEqual(updates[0]["Set"]["user"]["first"]["file"], cleared)
+        self.assertEqual(updates[-1]["List"]["room"]["first"]["file"], cleared)
+        watcher.file = cleared
+        ui.userListChange()
+        person = ui.bridge.emit.call_args.args[0]["list"][0]
+        self.assertEqual(person["file"], "")
+        self.assertIsNone(person["size"])
+        self.assertIsNone(person["duration"])

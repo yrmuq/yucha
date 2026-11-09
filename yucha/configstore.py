@@ -68,12 +68,12 @@ def dev_settings(value):
         "settings_h": (375, 240, 900), "settings_w": (450, 360, 1100),
         "settings_pad": (23, 0, 160), "settings_top": (23, 0, 160),
         "gamma": (10, 1, 96),
-        "chat_max": (340, 0, 2160), "bar_min": (0, 0, 3840),
+        "chat_max": (340, 0, 2160), "bar_min": (500, 0, 3840),
     }
     for key, limits in ranges.items():
         if key in value:
             result[key] = bounded_int(value[key], *limits)
-    for key in ("slider_numbers", "bold_names", "panel_center", "panel_drag"):
+    for key in ("slider_numbers", "bold_names", "panel_center", "panel_drag", "chapters"):
         if isinstance(value.get(key), bool):
             result[key] = value[key]
     for key in ("ui", "alfa", "titles", "osd", "sub"):

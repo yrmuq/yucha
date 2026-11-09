@@ -194,7 +194,7 @@ class PlayerUI(object):
             duration = None
             stream = {}
             current_file = getattr(user, "file", None)
-            if isinstance(current_file, dict):
+            if isinstance(current_file, dict) and current_file.get("name"):
                 filename = str(current_file.get("name") or "")
                 raw = current_file.get("size")
                 if isinstance(raw, (int, float)) and not isinstance(raw, bool):

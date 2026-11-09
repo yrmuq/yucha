@@ -220,6 +220,58 @@ class WindowTests(unittest.TestCase):
         self.assertTrue(window._tracks_open)
         self.assertFalse(window._quality_open)
 
+    def test_youtube_track_menus_and_best_audio_follow_language(self):
+        from PySide6.QtCore import QLocale
+        window = self.window
+        url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+        window._current_path = url
+        window._playlist = [{"path": url, "name": url}]
+        window.ctl.properties.update({"path": url, "track-list": [
+            {"id": 1, "type": "audio", "lang": "en", "demux-bitrate": 64000, "selected": True},
+            {"id": 2, "type": "audio", "lang": "eng", "demux-bitrate": 192000},
+            {"id": 3, "type": "audio", "lang": "ru", "demux-bitrate": 128000},
+            {"id": 4, "type": "sub", "lang": "ru"},
+            {"id": 5, "type": "sub", "lang": "en"},
+            {"id": 6, "type": "sub", "lang": "de"},
+            {"id": 7, "type": "video", "demux-h": 1440, "selected": True},
+        ]})
+        window._refresh_transport()
+        self.assertEqual(window.quality_btn._quality, "2K")
+        self.assertIn(("set_property", "aid", 2), window.ctl.calls)
+        with patch("yucha.youtube.QLocale.system", return_value=QLocale("ru_RU")):
+            window._fill_tracks()
+        buttons = window.tracks_pop.findChildren(QPushButton)
+        self.assertEqual([button.text() for button in buttons][-2:], ["English", "Russian"])
+        self.assertEqual(len(buttons), 5)
+        buttons[-1].click()
+        self.assertEqual(window.ctl.properties["aid"], 3)
+
+    def test_chapter_markers_toggle_and_removed_youtube_does_not_return(self):
+        window = self.window
+        window.ctl.properties["chapter-list"] = [{"time": 0}, {"time": 30}]
+        window._refresh_transport()
+        self.assertEqual(window.slider._chapters, [])
+        window.apply_dev({"chapters": True})
+        self.assertEqual(window.slider._chapters, [0, 30])
+        window.apply_dev({})
+        self.assertEqual(window.slider._chapters, [])
+        url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+        window._current_path = url
+        window._hold_pause = url
+        window._playlist = [{"path": url, "name": url}]
+        window._stream = (url, "Title", 720)
+        window._users = [{"name": "me", "file": url, "youtube": url, "ready": True}]
+        window.ctl.properties["path"] = url
+        self.app.client.clear_file = Mock()
+        with patch("twisted.internet.reactor.callFromThread", side_effect=lambda fn, *args: fn(*args)):
+            window._remove_file(url)
+        self.app.client.clear_file.assert_called_once_with()
+        self.assertEqual(window._users[0]["file"], "")
+        self.assertIsNone(window._hold_pause)
+        window._refresh_transport()
+        self.assertEqual(window._stream, ("", "", 0))
+        self.assertTrue(window.quality_btn.isHidden())
+
     def test_playlist_height_adapts_without_covering_chat(self):
         window = self.window
         window.set_panel(True)
@@ -905,15 +957,18 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(dialog._chat_max.value(), 340)
         self.assertTrue(dialog._panel_flags["panel_center"].isChecked())
         self.assertTrue(dialog._panel_flags["panel_drag"].isChecked())
-        self.assertEqual(dialog._bar_min.value(), 0)
+        self.assertEqual(dialog._bar_min.value(), 500)
+        self.assertFalse(dialog._panel_flags["chapters"].isChecked())
         dialog._panel_flags["panel_center"].setChecked(False)
         dialog._panel_flags["panel_drag"].setChecked(False)
         dialog._bar_min.setValue(1000)
+        dialog._panel_flags["chapters"].setChecked(True)
         self.assertEqual(self.window._bar_rect().width(), 1000)
         dialog._accept()
         self.app.on_command({"c": "appearance", **dialog.appearance})
         self.app.store = ConfigStore()
         restarted = self.make_window()
+        self.assertTrue(restarted._dev["chapters"])
         self.assertFalse(restarted._dev["panel_center"])
         self.assertFalse(restarted._dev["panel_drag"])
         self.assertFalse(restarted.panel_home.isVisible())
@@ -932,6 +987,7 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(self.window._dev["bar_min"], 1000)
         dialog = self.dialog()
         dialog._reset_dev()
+        self.assertFalse(dialog._panel_flags["chapters"].isChecked())
         self.assertEqual(self.window._dev, {})
         self.assertTrue(self.window.panel_home.isHidden())
         self.assertTrue(dialog._panel_flags["panel_center"].isChecked())

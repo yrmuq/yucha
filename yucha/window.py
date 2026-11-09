@@ -70,7 +70,10 @@ from yucha.engine import Picture
 from yucha.i18n import languages, system_language, tr, trf
 from yucha.player_ui import replace_seek_toast, room_file_notes
 from yucha.system import Notifier, SleepInhibit, join_line, people_joined
-from yucha.youtube import quality_tracks, resolution, stream_title, video_url
+from yucha.youtube import (
+    audio_tracks, quality_label, quality_tracks, resolution, stream_title,
+    subtitle_tracks, track_language, video_url,
+)
 
 HIDE_AFTER = 3.0
 CHAT_LIFE = 5.0
@@ -146,7 +149,8 @@ def _dev_values(appearance, overrides=None):
         "chat_max": 340,
         "panel_center": True,
         "panel_drag": True,
-        "bar_min": 0,
+        "bar_min": 500,
+        "chapters": False,
         "face": face,
         "panel": PANEL_WIDTH,
         "bar": BAR_HEIGHT,
@@ -1786,6 +1790,11 @@ class IconButton(QPushButton):
         self._silent = silent
         self.update()
 
+    def set_quality(self, height):
+        self._quality = quality_label(height)
+        self.setAccessibleName(tr(120) + ": " + self._quality)
+        self.update()
+
     def paintEvent(self, event):
         if self.kind == "send":
             painter = QPainter(self)
@@ -1902,16 +1911,15 @@ class IconButton(QPushButton):
             painter.drawLine(QPointF(cx - 6, cy + 5), QPointF(cx + 6, cy + 5))
         elif kind == "quality":
             font = painter.font()
-            font.setPixelSize(13)
+            font.setPixelSize(10)
             font.setBold(True)
             painter.setFont(font)
-            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "HD")
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, getattr(self, "_quality", "—"))
         elif kind == "add":
             painter.drawLine(QPointF(cx - 5, cy), QPointF(cx + 5, cy))
             painter.drawLine(QPointF(cx, cy - 5), QPointF(cx, cy + 5))
         elif kind == "link":
             painter.translate(cx, cy)
-            painter.rotate(-45)
             for x in (-8, 0):
                 painter.drawRoundedRect(QRectF(x, -3, 8, 6), 2, 2)
             painter.drawLine(QPointF(-3, 0), QPointF(3, 0))
@@ -2717,7 +2725,7 @@ class SettingsDialog(QDialog):
         form.addRow(tr(108), self._chat_max)
         self._panel_flags = {}
         look = _palette(self._look_theme, self._look_accent)
-        for key, number in (("panel_center", 111), ("panel_drag", 112)):
+        for key, number in (("panel_center", 111), ("panel_drag", 112), ("chapters", 123)):
             box = BoxCheck()
             box.setChecked(bool(seed[key]))
             box.set_colors(look["field"], look["border"], look["on_fg"], look["accent"])
@@ -4196,17 +4204,24 @@ class MainWindow(QMainWindow):
     def _fill_tracks(self):
         layout = self._clear_track_rows(self.tracks_pop)
         raw = self._read_tracks()
-        subs = [track for track in raw if track.get("type") == "sub"]
+        all_subs = [track for track in raw if track.get("type") == "sub"]
         audios = [track for track in raw if track.get("type") == "audio"]
-        if subs:
+        subs = subtitle_tracks(raw)
+        if all_subs:
             self._track_heading(layout, tr(12))
-            self._track_row(layout, {"id": "no", "selected": not any(t.get("selected") for t in subs)},
+            self._track_row(layout, {"id": "no", "selected": not any(t.get("selected") for t in all_subs)},
                             "sid", tr(122))
             for track in subs:
                 self._track_row(layout, track, "sid")
         self._track_heading(layout, tr(13))
-        for track in audios:
-            self._track_row(layout, track, "aid")
+        if self._stream[0]:
+            selected = next((track for track in audios if track.get("selected")), {})
+            for name, track in audio_tracks(raw):
+                self._track_row(layout, {**track, "selected": bool(selected) and
+                                        track_language(track) == track_language(selected)}, "aid", name)
+        else:
+            for track in audios:
+                self._track_row(layout, track, "aid")
         layout.activate()
 
     def _fill_quality(self):
@@ -4214,7 +4229,7 @@ class MainWindow(QMainWindow):
         self._track_heading(layout, tr(120))
         tracks = quality_tracks(self._read_tracks())
         for height, track in tracks:
-            self._track_row(layout, track, "vid", "{}p".format(height))
+            self._track_row(layout, track, "vid", quality_label(height))
         if not tracks:
             self._track_heading(layout, tr(121))
         layout.activate()
@@ -4260,6 +4275,7 @@ class MainWindow(QMainWindow):
         self._bar_h = values["bar"]
         self._panel_width = values["panel"]
         self.apply_theme()
+        self._sync_chapters()
 
     def _fill_from_store(self):
         self._refresh_banner()
@@ -4543,7 +4559,7 @@ class MainWindow(QMainWindow):
         gap = FLOAT_GAP if self._is_modern() else 0
         side = max(gap, int(round(width * self._bar_cut() / 100.0)))
         # Fixed-size controls must fit even when the floating bar is narrow.
-        minimum = max(self.bar.layout().minimumSize().width(), int(self._dev.get("bar_min", 0)))
+        minimum = max(self.bar.layout().minimumSize().width(), int(self._dev.get("bar_min", 500)))
         side = max(0, min(side, (width - minimum) // 2))
         return QRect(side, max(0, height - inset - gap), max(1, width - side * 2), inset)
 
@@ -5072,7 +5088,17 @@ class MainWindow(QMainWindow):
             return
         if not self._playlist:
             self._current_path = ""
+            self._arm_play = self._hold_pause = None
             self._cmd("stop")
+            me = str(self.app.store.data["connection"].get("name") or "")
+            self._users = [{**person, "file": "", "size": None, "duration": None,
+                            "youtube": "", "title": "", "height": 0}
+                           if person["name"] == me else person for person in self._users]
+            self._refresh_youtube("")
+            client = getattr(self.app, "client", None)
+            if client is not None and hasattr(client, "clear_file"):
+                from twisted.internet import reactor
+                reactor.callFromThread(client.clear_file)
             self._refresh_files()
             return
         nxt = min(max(index, 0), len(self._playlist) - 1)
@@ -5634,11 +5660,23 @@ class MainWindow(QMainWindow):
         self._move_knob()
         loaded = bool(self._current_path or current)
         self._awake.set_playing(loaded and not self._paused and not ended)
-        self._refresh_youtube(video_url(current))
+        self._refresh_youtube(video_url(current) if self._playlist else "")
         self._apply_bar_buttons()
 
     def _refresh_youtube(self, url):
-        height = resolution(self._get("video-params/h")) if url else 0
+        if url:
+            tracks = self._read_tracks()
+            selected = next((track for track in tracks if track.get("type") == "audio" and track.get("selected")), None)
+            if selected:
+                for _name, best in audio_tracks(tracks):
+                    if track_language(best) == track_language(selected) and best.get("id") != selected.get("id"):
+                        self._set("aid", best["id"])
+        height = 0
+        if url:
+            height = next((resolution(track.get("demux-h")) for track in tracks
+                           if track.get("type") == "video" and track.get("selected")), 0)
+            height = height or resolution(self._get("video-params/h"))
+        self.quality_btn.set_quality(height)
         title = stream_title(self._get("media-title")) if url else ""
         if video_url(title):
             title = ""
@@ -5663,7 +5701,7 @@ class MainWindow(QMainWindow):
             reactor.callFromThread(publish, *self._stream)
 
     def _sync_chapters(self):
-        raw = self._get("chapter-list") if self.ctl is not None else None
+        raw = self._get("chapter-list") if self.ctl is not None and self._dev.get("chapters", False) else None
         times = []
         if isinstance(raw, list):
             for item in raw:

@@ -6,7 +6,7 @@ Read only the row the task needs. Do not read `third_party/` or `packaging/appim
 - `yucha/app.py` — starts Qt, builds the client, calls `launch_player`.
 - `yucha/window.py` — playlist, chat, seek, volume, settings. Large. Search a class. Do not read the whole file.
 - `yucha/engine.py` — `Picture` draws the video through `libmpv`. This is the player.
-- `yucha/youtube.py` — canonical YouTube URLs and display metadata from the room and `libmpv`.
+- `yucha/youtube.py` — canonical YouTube URLs, quality labels, and language/quality filtering for `libmpv` tracks.
 - `yucha/session.py` — Syncplay client. `mpv --version`, then attach to the `libmpv` socket. Does not start a second player.
 - `yucha/player_ui.py` — methods Syncplay calls. Forwards them. Does not draw.
 - `yucha/bridge.py` — writes those calls to `events.jsonl` for the window.

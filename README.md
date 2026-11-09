@@ -47,7 +47,8 @@
 | `Open With` | Add the opened video to the playlist. A window that is already open receives it. |
 | `+` (Playlist) | Choose local files to add to the playlist. |
 | Link icon (Playlist) | Enter a YouTube video URL and press `Enter` to queue it. For synchronized viewing, open the same video in each client. |
-| Tracks icon / `HD` | Choose available audio and subtitle tracks, or set YouTube video quality locally. |
+| Tracks icon / quality label | Choose audio or subtitles, or set YouTube quality from `480p` upward. YouTube audio lists languages with their best audio quality; subtitles list the system language and English. |
+| `Dev` → `Show chapter markers` | Show chapter marks on the seek bar. Disabled by default. |
 | `Right Click` / `Space` | Toggle Play / Pause. |
 | `Double Click` | Toggle Fullscreen. |
 | `Left Click` (left or right screen edge, fullscreen) | Toggle the side panel. |

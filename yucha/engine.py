@@ -10,7 +10,7 @@ import sys
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, Qt, Signal
+from PySide6.QtCore import QByteArray, QLocale, Qt, Signal
 from PySide6.QtGui import QOpenGLFunctions, QPainter
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QSizePolicy
@@ -110,7 +110,8 @@ class Picture(QOpenGLWidget):
             config="no",
             ytdl="yes",
             script_opts="ytdl_hook-all_formats=yes",
-            ytdl_raw_options="ignore-config=,write-auto-subs=,sub-langs=[all,-live_chat]",
+            ytdl_raw_options="ignore-config=,write-auto-subs=,sub-langs=[en.*,{0}.*,-live_chat]".format(
+                QLocale.languageToCode(QLocale.system().language())),
             input_terminal="no",
             terminal="no",
             hwdec="auto-safe",

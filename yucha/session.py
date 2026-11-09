@@ -145,6 +145,13 @@ def load_client_tls(host, cert_path):
 class RoomClient(SyncplayClient):
     _youtube_info = ("", "", 0)
 
+    def clear_file(self):
+        self._youtube_info = ("", "", 0)
+        self.userlist.currentUser.file = None
+        if self._protocol and self._protocol.logged:
+            self._protocol.sendFileSetting({"name": "", "size": 0, "duration": 0})
+        self.ui.userListChange()
+
     def set_youtube_info(self, url, title, height):
         self._youtube_info = (url, title, height)
         file = self.userlist.currentUser.file
