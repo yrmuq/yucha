@@ -3,9 +3,13 @@
 
 import io
 import json
+import os
 import sys
+import tempfile
+import time
 import unittest
 from contextlib import redirect_stdout
+from http.cookiejar import Cookie
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -20,10 +24,91 @@ from twisted.internet.testing import StringTransport
 from syncplay.server import SyncFactory
 from yucha.player_ui import PlayerUI, room_file_notes
 from yucha.session import RoomClient
-from yucha.youtube import audio_tracks, quality_label, quality_tracks, subtitle_tracks, video_url
+from yucha.youtube import (
+    audio_tracks, cookie_file, detected_browsers, extract_youtube_cookies, has_account_cookies,
+    playback_options, quality_label,
+    quality_tracks, save_cookies, subtitle_tracks, video_url,
+)
 
 
 class YouTubeTests(unittest.TestCase):
+    def test_playback_subtitle_options_pass_the_real_ytdlp_parser(self):
+        from yt_dlp import YoutubeDL, parse_options
+
+        with tempfile.TemporaryDirectory() as home, patch.dict(os.environ, {"XDG_CONFIG_HOME": home}), \
+                patch("yucha.youtube.QLocale.system", return_value=QLocale("ru_RU")):
+            options = playback_options()
+            parsed = parse_options(["--ignore-config", "--quiet", "--write-auto-subs",
+                                    "--sub-langs", options["sub-langs"]])
+            subtitles = {lang: [{"ext": "vtt", "url": "https://example.test/" + lang}]
+                         for lang in ("en", "en-orig", "ru", "de", "live_chat")}
+            with YoutubeDL(parsed.ydl_opts, auto_init=False) as downloader:
+                selected = downloader.process_subtitles("test", {}, subtitles)
+            self.assertEqual(set(selected), {"en", "en-orig", "ru"})
+
+    def test_browser_detection_uses_available_native_flatpak_and_snap_sources(self):
+        directories = {"/test/config/mozilla/firefox",
+                       "/test/home/.var/app/com.google.Chrome/config/google-chrome",
+                       "/test/home/snap/chromium/common/chromium"}
+        with patch("yucha.youtube.Path.home", return_value=Path("/test/home")), \
+                patch.dict(os.environ, {"XDG_CONFIG_HOME": "/test/config", "XDG_DATA_HOME": "/test/data"}), \
+                patch.object(Path, "is_dir", autospec=True, side_effect=lambda path: str(path) in directories), \
+                patch.object(Path, "is_file", return_value=False), \
+                patch("yucha.youtube.shutil.which", side_effect=lambda command: "/usr/bin/vivaldi" if command == "vivaldi" else None):
+            self.assertEqual(detected_browsers(), [
+                ("Firefox", "firefox", "/test/config/mozilla/firefox"),
+                ("Chrome (Flatpak)", "chrome", "/test/home/.var/app/com.google.Chrome/config/google-chrome"),
+                ("Chromium (Snap)", "chromium", "/test/home/snap/chromium/common/chromium"),
+                ("Vivaldi", "vivaldi", "/test/config/vivaldi"),
+            ])
+            directories.clear()
+            with patch("yucha.youtube.shutil.which", return_value=None):
+                self.assertEqual(detected_browsers(), [])
+
+    def test_account_cookie_check_distinguishes_guest_and_incomplete_sessions(self):
+        from yt_dlp.cookies import YoutubeDLCookieJar
+
+        cookies = YoutubeDLCookieJar()
+        for name, expected in (("PREF", False), ("__Secure-3PAPISID", False), ("LOGIN_INFO", True)):
+            cookies.set_cookie(Cookie(0, name, "test-session", None, False, ".youtube.com", True,
+                                      True, "/", True, True, None, True, None, None, {}))
+            self.assertEqual(has_account_cookies(cookies), expected)
+
+    def test_cookie_import_filters_domains_and_saves_a_private_playback_session(self):
+        from yt_dlp.cookies import YoutubeDLCookieJar
+
+        source = YoutubeDLCookieJar()
+        for domain, expires in ((".youtube.com", None), ("www.youtube.com", time.time() + 3600),
+                                (".youtube.com", time.time() - 3600), ("youtube.com.evil.test", None),
+                                ("notyoutube.com", None), (".google.com", None)):
+            source.set_cookie(Cookie(0, str(expires), "test-session", None, False, domain, True,
+                                     domain.startswith("."), "/", True, True, expires, False, None, None, {}))
+        with tempfile.TemporaryDirectory(prefix="yucha, cookies=") as home, \
+                patch.dict(os.environ, {"XDG_CONFIG_HOME": home}), \
+                patch("yt_dlp.cookies.extract_cookies_from_browser", return_value=source) as extract:
+            self.assertNotIn("cookies", playback_options())
+            cookies = extract_youtube_cookies("firefox", "/test/profile")
+            extract.assert_called_once()
+            self.assertEqual(extract.call_args.kwargs["profile"], "/test/profile")
+            self.assertEqual({cookie.domain for cookie in cookies}, {".youtube.com", "www.youtube.com"})
+            self.assertEqual(len(cookies), 2)
+            save_cookies(cookies)
+            path = cookie_file()
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            restored = YoutubeDLCookieJar(str(path))
+            restored.load()
+            self.assertEqual(len(restored), 2)
+            self.assertEqual(playback_options()["cookies"], str(path))
+            before = path.read_bytes()
+            with patch.object(cookies, "save", side_effect=OSError("disk full")):
+                with self.assertRaises(OSError):
+                    save_cookies(cookies)
+            self.assertEqual(path.read_bytes(), before)
+            self.assertEqual(list(path.parent.glob(".youtube-cookies-*")), [])
+            extract.return_value = YoutubeDLCookieJar()
+            with self.assertRaises(ValueError):
+                extract_youtube_cookies("firefox")
+
     def test_quality_choices_start_at_480_and_use_resolution_labels(self):
         tracks = [{"id": height, "type": "video", "demux-h": height}
                   for height in (144, 360, 480, 720, 1080, 1440, 2160)]

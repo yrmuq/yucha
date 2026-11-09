@@ -7,6 +7,22 @@ HERE="$(dirname "$(readlink -f "$0")")"
 export YUCHA_MPV="${YUCHA_MPV:-$HERE/mpv-launch}"
 export YUCHA_LIBMPV="${YUCHA_LIBMPV:-$HERE/usr/lib/yucha/libmpv.so.2}"
 export LD_LIBRARY_PATH="$HERE/usr/lib/yucha${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+# Keep host libva paired with its drivers; retain a fallback for hosts without it.
+if ! "$HERE/python/bin/python3" -I -c 'import ctypes, os; ctypes.CDLL(os.environ["YUCHA_LIBMPV"])' >/dev/null 2>&1; then
+    export LD_LIBRARY_PATH="$HERE/usr/lib/yucha/libva-fallback:$LD_LIBRARY_PATH"
+fi
+if [ -z "${LIBVA_DRIVERS_PATH:-}" ]; then
+    for directory in /usr/lib64/dri-nonfree /usr/lib64/dri-freeworld /usr/lib64/dri \
+        /usr/lib64/va/drivers /usr/lib/dri /usr/lib/va/drivers /usr/lib/x86_64-linux-gnu/dri; do
+        if [ -d "$directory" ]; then
+            LIBVA_DRIVERS_PATH="${LIBVA_DRIVERS_PATH:+$LIBVA_DRIVERS_PATH:}$directory"
+        fi
+    done
+    export LIBVA_DRIVERS_PATH
+fi
+export SPA_PLUGIN_DIR="${SPA_PLUGIN_DIR:-$HERE/usr/lib/yucha/spa-0.2}"
+export PIPEWIRE_MODULE_DIR="${PIPEWIRE_MODULE_DIR:-$HERE/usr/lib/yucha/pipewire-0.3}"
+export PIPEWIRE_CONFIG_DIR="${PIPEWIRE_CONFIG_DIR:-$HERE/usr/share/pipewire}"
 export PATH="$HERE/usr/bin${PATH:+:$PATH}"
 export PYTHONPATH="$HERE/payload${PYTHONPATH:+:$PYTHONPATH}"
 export PYTHONNOUSERSITE=1

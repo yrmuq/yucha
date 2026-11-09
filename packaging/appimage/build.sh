@@ -75,10 +75,9 @@ cat > "$APPDIR/usr/bin/yt-dlp" << 'SH'
 #!/bin/sh
 set -eu
 here="$(dirname "$(readlink -f "$0")")"
-exec "$here/../../python/bin/python3" -m yt_dlp --no-js-runtimes --js-runtimes "node:$here/node" "$@"
+exec "$here/../../python/bin/python3" -m yucha.ytdl --no-js-runtimes --js-runtimes "node:$here/node" "$@"
 SH
 chmod +x "$APPDIR/usr/bin/yt-dlp"
-PYTHONNOUSERSITE=1 "$APPDIR/usr/bin/yt-dlp" --version
 "$APPDIR/usr/bin/node" --version
 
 cp -a "$ROOT/yucha" "$ROOT/languages" "$ROOT/LICENSE" "$ROOT/NOTICE" "$ROOT/README.md" \
@@ -86,6 +85,7 @@ cp -a "$ROOT/yucha" "$ROOT/languages" "$ROOT/LICENSE" "$ROOT/NOTICE" "$ROOT/READ
 cp -a "$ROOT/third_party/syncplay" "$ROOT/third_party/README.md" \
     "$APPDIR/payload/third_party/"
 cp -a "$PACK/BUNDLED.txt" "$APPDIR/payload/BUNDLED.txt"
+PYTHONNOUSERSITE=1 PYTHONPATH="$APPDIR/payload" "$APPDIR/usr/bin/yt-dlp" --version
 find "$APPDIR/payload" -type d -name __pycache__ -print0 | xargs -0r rm -rf
 find "$APPDIR/payload" -name '*.pyc' -delete
 
@@ -118,7 +118,7 @@ seen = set()
 def skipped(name):
     return any(name.startswith(prefix) for prefix in skip)
 
-def take(path):
+def take(path, subdir=""):
     # Keep the name the loader asks for. ldd prints libavcodec.so.60, which
     # is a link to libavcodec.so.60.31.102. Copying only the real file leaves
     # the short name missing, and the player dies on startup.
@@ -128,13 +128,16 @@ def take(path):
     if skipped(name):
         return
     real = os.path.realpath(path)
+    if not os.path.isfile(real):
+        return
     real_name = os.path.basename(real)
-    link = dest / name
+    folder = dest / subdir
+    folder.mkdir(parents=True, exist_ok=True)
+    link = folder / name
+    if not (folder / real_name).exists():
+        shutil.copy2(real, folder / real_name)
     if real not in seen:
-        if not os.path.isfile(real):
-            return
         seen.add(real)
-        shutil.copy2(real, dest / real_name)
         out = subprocess.check_output(["ldd", real], text=True, errors="replace")
         for line in out.splitlines():
             if "=>" not in line:
@@ -150,6 +153,32 @@ entry = dest / "libmpv.so.2"
 if not entry.exists():
     shutil.copy2(os.path.realpath(src), entry)
 
+# PipeWire loads its client modules and SPA factories with dlopen, outside ldd.
+pipewire = next((line.split("=>", 1)[1].strip() for line in listed.splitlines()
+                 if "libpipewire-0.3.so.0 " in line and "=>" in line), None)
+if pipewire:
+    base = Path(pipewire).resolve().parent
+    config_dest = Path(os.environ["APPDIR"]) / "usr/share/pipewire"
+    config_dest.mkdir(parents=True, exist_ok=True)
+    modules = set()
+    for name in ("client.conf", "client-rt.conf"):
+        config = Path("/usr/share/pipewire") / name
+        if name == "client-rt.conf" and not config.exists():
+            continue
+        shutil.copy2(config, config_dest / name)
+        modules.update(re.findall(r"\bname\s*=\s*(libpipewire-module-[\w-]+)", config.read_text()))
+    for name in modules:
+        path = base / "pipewire-0.3" / (name + ".so")
+        if not path.is_file():
+            raise SystemExit("Missing PipeWire client module: " + str(path))
+        take(str(path), "pipewire-0.3")
+    for directory in ("support", "audioconvert", "videoconvert"):
+        plugins = list((base / "spa-0.2" / directory).glob("*.so"))
+        if not plugins:
+            raise SystemExit("Missing SPA plugins: " + directory)
+        for plugin in plugins:
+            take(str(plugin), "spa-0.2/" + directory)
+
 missing = []
 out = subprocess.check_output(["readelf", "-d", str(entry)], text=True, errors="replace")
 for name in re.findall(r"Shared library: \[([^\]]+)\]", out):
@@ -159,8 +188,19 @@ for name in re.findall(r"Shared library: \[([^\]]+)\]", out):
         missing.append(name)
 if missing:
     raise SystemExit("libmpv is missing libraries:\n" + "\n".join(missing))
+fallback = dest / "libva-fallback"
+fallback.mkdir(exist_ok=True)
+for pattern in ("libva.so*", "libva-drm.so*", "libva-x11.so*", "libva-wayland.so*"):
+    for library in dest.glob(pattern):
+        library.rename(fallback / library.name)
 print("bundled libmpv from", src)
 PY
+
+QT_QPA_PLATFORM=offscreen PYTHONNOUSERSITE=1 PYTHONPATH="$APPDIR/payload" \
+    YUCHA_LIBMPV="$APPDIR/usr/lib/yucha/libmpv.so.2" \
+    LD_LIBRARY_PATH="$APPDIR/usr/lib/yucha${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+    "$APPDIR/python/bin/python3" -m unittest discover -s "$ROOT/tests" -v
+python3 "$PACK/check-abi.py" "$APPDIR"
 
 cp "$PACK/AppRun" "$APPDIR/AppRun"
 # Syncplay runs `mpv --version` and then attaches to libmpv. The stub
@@ -197,6 +237,7 @@ rm -f "$OUT"
         -u 'gh-releases-zsync|yrmuq|yucha|latest|yucha-x86_64.AppImage.zsync' "$APPDIR" "$OUT"
 )
 test -s "$OUT.zsync"
+python3 "$PACK/check-abi.py" "$OUT"
 chmod +x "$OUT"
 echo "wrote $OUT"
 ls -lh "$OUT"

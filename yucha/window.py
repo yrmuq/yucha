@@ -74,8 +74,9 @@ from yucha.i18n import languages, system_language, tr, trf
 from yucha.player_ui import replace_seek_toast, room_file_notes
 from yucha.system import Notifier, SleepInhibit, join_line, people_joined
 from yucha.youtube import (
-    audio_tracks, quality_label, quality_tracks, resolution, stream_title,
-    subtitle_tracks, track_language, video_url,
+    audio_tracks, cookie_file, detected_browsers, extract_youtube_cookies, has_account_cookies,
+    playback_options, quality_label,
+    quality_tracks, resolution, save_cookies, stream_title, subtitle_tracks, track_language, video_url,
 )
 
 HIDE_AFTER = 3.0
@@ -2301,6 +2302,117 @@ class StarPassword(QLineEdit):
         self._show()
 
 
+class YouTubeConnect(QDialog):
+    cookies_ready = Signal(object, int)
+    changed = Signal()
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle(tr(124))
+        layout = QVBoxLayout(self)
+        note = QLabel(tr(136))
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        form = QFormLayout()
+        self.browser = QComboBox()
+        browsers = detected_browsers()
+        if not browsers:
+            browsers = [(trf(141, name), key, "") for name, key in
+                        (("Firefox", "firefox"), ("Chromium", "chromium"))]
+        for name, key, profile in browsers:
+            self.browser.addItem(name, key)
+            self.browser.setItemData(self.browser.count() - 1, profile, Qt.ItemDataRole.UserRole + 1)
+        form.addRow(tr(125), self.browser)
+        self.profile = QLineEdit()
+        self.profile.setPlaceholderText(tr(127))
+        self.browser.currentIndexChanged.connect(lambda _index: self.profile.clear())
+        profile_row = QHBoxLayout()
+        profile_row.addWidget(self.profile, 1)
+        self.browse = QPushButton("…")
+        self.browse.setAutoDefault(False)
+        self.browse.setToolTip(tr(128))
+        self.browse.setAccessibleName(tr(128))
+        self.browse.clicked.connect(self._choose_profile)
+        profile_row.addWidget(self.browse)
+        form.addRow(tr(126), profile_row)
+        layout.addLayout(form)
+        self.status = QLabel(tr(137) if cookie_file().is_file() else "")
+        self.status.setWordWrap(True)
+        self.status.setTextFormat(Qt.TextFormat.PlainText)
+        layout.addWidget(self.status)
+        self.remove = QPushButton(tr(134))
+        self.remove.setAutoDefault(False)
+        self.remove.setEnabled(cookie_file().is_file())
+        self.remove.clicked.connect(self._remove)
+        layout.addWidget(self.remove)
+        buttons = QHBoxLayout()
+        self.start = QPushButton(tr(129))
+        self.start.setDefault(True)
+        self.start.clicked.connect(self._import)
+        close = QPushButton(tr(140))
+        close.setAutoDefault(False)
+        close.clicked.connect(self.reject)
+        buttons.addWidget(self.start, 1)
+        buttons.addWidget(close, 1)
+        layout.addLayout(buttons)
+        self.cookies_ready.connect(self._import_done)
+        self.resize(440, self.sizeHint().height())
+
+    def _choose_profile(self):
+        path = QFileDialog.getExistingDirectory(self, tr(128))
+        if path:
+            self.profile.setText(path)
+
+    def _import(self):
+        self.status.setText(tr(130))
+        for field in (self.browser, self.profile, self.browse, self.start, self.remove):
+            field.setEnabled(False)
+        threading.Thread(target=self._read_cookies,
+                         args=(self.browser.currentData(), self.profile.text().strip()
+                               or self.browser.currentData(Qt.ItemDataRole.UserRole + 1) or None),
+                         daemon=True).start()
+
+    def _read_cookies(self, browser, profile):
+        cookies, error = None, 0
+        try:
+            cookies = extract_youtube_cookies(browser, profile)
+        except FileNotFoundError:
+            error = 139
+        except ValueError:
+            error = 132
+        except Exception:
+            error = 133
+        try:
+            self.cookies_ready.emit(cookies, error)
+        except RuntimeError:
+            pass
+
+    def _import_done(self, cookies, error):
+        if not self.isVisible():
+            return
+        account = has_account_cookies(cookies) if not error else False
+        if not error:
+            try:
+                save_cookies(cookies)
+                self.changed.emit()
+            except OSError:
+                error = 138
+        self.status.setText(tr(error or (131 if account else 142)))
+        for field in (self.browser, self.profile, self.browse, self.start):
+            field.setEnabled(True)
+        self.remove.setEnabled(cookie_file().is_file())
+
+    def _remove(self):
+        try:
+            cookie_file().unlink(missing_ok=True)
+        except OSError:
+            self.status.setText(tr(138))
+            return
+        self.changed.emit()
+        self.remove.setEnabled(False)
+        self.status.setText(tr(135))
+
+
 class SettingsDialog(QDialog):
     release_text = Signal(str)
 
@@ -2429,6 +2541,7 @@ class SettingsDialog(QDialog):
             field.setFixedHeight(row_h)
 
         room = QWidget()
+        self._room_page = room
         room_box = QVBoxLayout(room)
         room_box.setContentsMargins(23, 23, 23, 12)
         self._keep_side(room_box)
@@ -2467,6 +2580,10 @@ class SettingsDialog(QDialog):
         self.port_error.setWordWrap(True)
         self.port_error.hide()
         room_box.addWidget(self.port_error)
+        room_box.addStretch(1)
+        self.youtube_connect = QPushButton(tr(124))
+        self.youtube_connect.clicked.connect(self._connect_youtube)
+        room_box.addWidget(self.youtube_connect)
         self._room_fields = (self.host, self.port, self.name, self.password, self.room_name)
         self._room_editing = False
         self._apply_room_lock()
@@ -2663,7 +2780,7 @@ class SettingsDialog(QDialog):
         page.setMinimumWidth(max(1, self._page_w - gutter))
         hint_h = max(page.sizeHint().height(), 1)
         page.setMinimumHeight(hint_h)
-        if page is self._about_content:
+        if page in (self._about_content, self._room_page):
             page.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         else:
             page.setMaximumHeight(hint_h)
@@ -3403,7 +3520,7 @@ class SettingsDialog(QDialog):
             page.setMaximumHeight(16777215)
             page.layout().invalidate()
             height = max(1, page.sizeHint().height(), page.heightForWidth(area.viewport().width()))
-            if page is self._about_content:
+            if page in (self._about_content, self._room_page):
                 page.setMinimumHeight(height)
             else:
                 page.setFixedHeight(height)
@@ -3415,6 +3532,14 @@ class SettingsDialog(QDialog):
     def _set_settings_top(self, _top):
         self._apply_settings_edges()
         self._push_dev()
+
+    def _connect_youtube(self):
+        dialog = YouTubeConnect(self)
+        dialog.changed.connect(lambda: self.parent()._set("ytdl-raw-options", playback_options()))
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
 
     def _edit_room(self):
         window = self.parent()

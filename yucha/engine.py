@@ -10,12 +10,13 @@ import sys
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QLocale, Qt, Signal
+from PySide6.QtCore import QByteArray, Qt, Signal
 from PySide6.QtGui import QOpenGLFunctions, QPainter
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QSizePolicy
 
 from yucha.i18n import trf
+from yucha.youtube import playback_options
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "third_party" / "syncplay" / "syncplay" / "resources" / "syncplayintf.lua"
@@ -44,6 +45,17 @@ def _library_version(player):
     if not found:
         return None
     return int(found.group(1)), int(found.group(2))
+
+
+def _hardware_decoding(vendor, renderer):
+    name = (str(vendor or "") + " " + str(renderer or "")).casefold()
+    if any(word in name for word in ("llvmpipe", "softpipe", "swrast", "swiftshader", "software")):
+        return "no", "no"
+    if "nvidia" in name:
+        return "nvdec,nvdec-copy", "cuda"
+    if re.search(r"\b(amd|ati|radeon|intel)\b", name):
+        return "vaapi,vaapi-copy", "vaapi"
+    return "auto-safe", "auto"
 
 
 def _import_mpv():
@@ -108,16 +120,20 @@ class Picture(QOpenGLWidget):
             hr_seek="always",
             osc="no",
             config="no",
+            demuxer_max_bytes="512MiB",
             ytdl="yes",
+            # libmpv merges streams itself; yt-dlp otherwise prefers 360p without ffmpeg.
+            ytdl_format="bestvideo+bestaudio/best",
             script_opts="ytdl_hook-all_formats=yes",
-            ytdl_raw_options="ignore-config=,write-auto-subs=,sub-langs=[en.*,{0}.*,-live_chat]".format(
-                QLocale.languageToCode(QLocale.system().language())),
             input_terminal="no",
             terminal="no",
             hwdec="auto-safe",
             input_ipc_server=str(self.ipc_path),
             term_playing_msg=PLAYING_MSG,
         )
+        # Retry a transient CDN denial twice (immediately, then after one second).
+        self.mpv.stream_lavf_o = {"reconnect_on_http_error": "403", "reconnect_delay_max": "1"}
+        self.mpv.ytdl_raw_options = playback_options()
         found = _library_version(self.mpv)
         if found is None or (found[0] == 0 and found[1] < 23):
             raise RuntimeError("yucha needs libmpv 0.23 or newer")
@@ -150,6 +166,13 @@ class Picture(QOpenGLWidget):
         mpv = self._mpv_mod
         self._proc_cb = mpv.MpvGlGetProcAddressFn(self._addr)
         try:
+            if sys.platform.startswith("linux") and _library_version(self.mpv) >= (0, 40):
+                gl = QOpenGLFunctions()
+                gl.initializeOpenGLFunctions()
+                # libmpv's auto interop loads every vendor's driver before decoding.
+                hwdec, interop = _hardware_decoding(gl.glGetString(0x1F00), gl.glGetString(0x1F01))
+                self.mpv.hwdec = hwdec
+                self.mpv.gpu_hwdec_interop = interop
             self.ctx = mpv.MpvRenderContext(
                 self.mpv,
                 "opengl",

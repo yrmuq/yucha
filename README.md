@@ -48,6 +48,7 @@
 | `+` (Playlist) | Choose local files to add to the playlist. |
 | Link icon (Playlist) | Enter a YouTube video URL and press `Enter` to queue it. For synchronized viewing, open the same video in each client. |
 | Tracks icon / quality label | Choose audio or subtitles, or set YouTube quality from `480p` upward. YouTube audio lists languages with their best audio quality; subtitles list the system language and English. |
+| `Settings` → `Room` → `Connect YouTube` | Choose a detected browser or profile source and import its YouTube cookies automatically. An optional folder selects another profile. Without detected browsers, choose a Firefox or Chromium profile manually. Only YouTube cookies are stored locally, with `0600` permissions; `Remove session` deletes the imported copy. Import does not verify access to YouTube. |
 | `Dev` → `Show chapter markers` | Show chapter marks on the seek bar. Disabled by default. |
 | `Right Click` / `Space` | Toggle Play / Pause. |
 | `Double Click` | Toggle Fullscreen. |
@@ -76,6 +77,8 @@
 | `Flatpak` | ❌ | ❌ |
 
 ### AppImage
+
+Requires `x86_64` Linux with `glibc 2.41` or newer and working desktop graphics drivers.
 
 Pre-built `AppImage` packages bundle `Python`, the `Syncplay` client, and `libmpv` copied from the build machine. No separate `mpv` program is included. Download the latest `.AppImage` from the [Releases](https://github.com/yrmuq/yucha/releases) page.
 

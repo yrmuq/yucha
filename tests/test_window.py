@@ -9,6 +9,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from http.cookiejar import Cookie
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
@@ -33,7 +34,8 @@ from yucha.player_ui import PlayerUI
 from yucha.configstore import DEFAULTS, ConfigStore
 from yucha import __version__, i18n
 from yucha.i18n import system_language
-from yucha.window import EdgeScroll, MainWindow, SettingsDialog, _palette
+from yucha.window import EdgeScroll, MainWindow, SettingsDialog, YouTubeConnect, _palette
+from yucha.youtube import cookie_file
 
 
 class PictureStub(QWidget):
@@ -97,6 +99,8 @@ class WindowTests(unittest.TestCase):
         self.env = patch.dict(os.environ, {"XDG_CONFIG_HOME": self.temp.name})
         self.env.start()
         self.patches = [patch("yucha.window.Picture", PictureStub),
+                        patch("yucha.window.detected_browsers", return_value=[
+                            ("Firefox", "firefox", "/test/firefox"), ("Chromium", "chromium", "/test/chromium")]),
                         patch("yucha.window.Notifier"), patch("yucha.window.SleepInhibit"),
                         patch("yucha.window.SettingsDialog._check_release"),
                         patch("yucha.window.MainWindow._begin_release_check")]
@@ -163,6 +167,70 @@ class WindowTests(unittest.TestCase):
             QPointF(widget.mapFromGlobal(destination)), QPointF(destination),
             Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier))
         self.qt.processEvents()
+
+    def test_room_imports_and_removes_youtube_cookies_without_restarting_the_player(self):
+        from yt_dlp.cookies import YoutubeDLCookieJar
+
+        cookies = YoutubeDLCookieJar()
+        for name in ("LOGIN_INFO", "SAPISID"):
+            cookies.set_cookie(Cookie(0, name, "test-session", None, False, ".youtube.com", True,
+                                      True, "/", True, True, None, True, None, None, {}))
+        settings = self.dialog()
+        settings.show()
+        self.qt.processEvents()
+        self.assertFalse(settings.youtube_connect.isVisible())
+        size = settings.size()
+        settings.tabs.setCurrentIndex(0)
+        self.qt.processEvents()
+        self.assertTrue(settings.youtube_connect.isVisible())
+        self.assertEqual(settings.size(), size)
+        area = settings.tabs.currentWidget().findChild(QScrollArea)
+        self.assertTrue(area.widget().isAncestorOf(settings.youtube_connect))
+        position = settings.youtube_connect.mapTo(area.viewport(), QPoint())
+        self.assertTrue(area.viewport().rect().contains(position))
+        self.assertTrue(area.viewport().rect().contains(position + QPoint(
+            settings.youtube_connect.width() - 1, settings.youtube_connect.height() - 1)))
+        ok = next(button for button in settings.findChildren(QPushButton) if button.text() == i18n.tr(43))
+        bottom = settings.youtube_connect.mapTo(settings, QPoint(0, settings.youtube_connect.height())).y()
+        self.assertLess(bottom, ok.mapTo(settings, QPoint()).y())
+
+        def finish_import(dialog):
+            dialog.start.click()
+            self.assertFalse(dialog.start.isEnabled())
+            for _ in range(100):
+                self.qt.processEvents()
+                if dialog.start.isEnabled():
+                    break
+                QTest.qWait(10)
+            self.assertTrue(dialog.start.isEnabled())
+
+        def interact(dialog):
+            dialog.show()
+            self.assertEqual(dialog.browser.currentData(), "firefox")
+            self.assertGreater(dialog.browser.count(), 1)
+            finish_import(dialog)
+            self.assertEqual(dialog.status.text(), i18n.tr(131))
+            extract.assert_called_once_with("firefox", "/test/firefox")
+            self.assertTrue(cookie_file().is_file())
+            self.assertEqual(self.window.ctl.properties["ytdl-raw-options"]["cookies"], str(cookie_file()))
+            dialog.remove.click()
+            self.assertFalse(cookie_file().exists())
+            self.assertNotIn("cookies", self.window.ctl.properties["ytdl-raw-options"])
+            extract.side_effect = FileNotFoundError("test profile missing")
+            finish_import(dialog)
+            self.assertEqual(dialog.status.text(), i18n.tr(139))
+            self.assertFalse(cookie_file().exists())
+            dialog.reject()
+            dialog._import_done(cookies, 0)
+            self.assertFalse(cookie_file().exists(), "A closed import dialog saved a session")
+
+        try:
+            with patch("yucha.window.extract_youtube_cookies", return_value=cookies) as extract, \
+                    patch.object(YouTubeConnect, "exec", new=interact):
+                settings._connect_youtube()
+        finally:
+            settings.reject()
+            settings.deleteLater()
 
     def test_space_pauses_once_when_ready_and_playing(self):
         self.window.ready.setChecked(True)
@@ -289,6 +357,24 @@ class WindowTests(unittest.TestCase):
             window._refresh_transport()
             self.assertEqual(window._stream, (next_url, "Queued title", 0))
             self.app.client.set_youtube_info.assert_called_with(next_url, "Queued title", 0)
+        reply.deleteLater.assert_called_once_with()
+
+    def test_youtube_title_auth_error_does_not_interrupt_playback(self):
+        window = self.window
+        url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+        window._playlist = [{"path": url, "name": url}]
+        window._current_path = url
+        window.ctl.properties.update({"path": url, "media-title": "Stream title"})
+        reply = Mock()
+        reply.error.return_value = QNetworkReply.NetworkError.AuthenticationRequiredError
+        window._title_requests[url] = reply
+        window._youtube_title_received(url, reply)
+        window._refresh_youtube(url)
+        self.assertEqual(window._playlist[0]["name"], "Stream title")
+        self.assertFalse(window.ctl.properties["pause"])
+        self.assertFalse([call for call in window.ctl.calls if call[0] in ("stop", "loadfile", "set_property")])
+        self.assertNotIn(url, window._title_requests)
+        reply.read.assert_not_called()
         reply.deleteLater.assert_called_once_with()
 
     def test_chapter_markers_toggle_and_removed_youtube_does_not_return(self):

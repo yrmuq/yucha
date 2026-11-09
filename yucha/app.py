@@ -171,9 +171,10 @@ def main():
     if paths and handoff(paths, sock, os.environ.get("XDG_ACTIVATION_TOKEN") or ""):
         return
 
+    # Qt may contact the portal during construction; register the desktop ID first.
+    QApplication.setApplicationName("yucha")
+    QGuiApplication.setDesktopFileName("yucha")
     qt = QApplication([])
-    qt.setApplicationName("yucha")
-    qt.setDesktopFileName("yucha")
     icon = Path(__file__).resolve().parent / "icon.png"
     if icon.is_file():
         qt.setWindowIcon(QIcon(str(icon)))

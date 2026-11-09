@@ -1,12 +1,108 @@
 # Copyright (C) 2026 yrmuq
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""YouTube video identity and the stream metadata shown by yucha."""
+"""YouTube identity, stream metadata, and locally imported browser cookies."""
 
+import os
 import re
+import shutil
+import tempfile
 from functools import lru_cache
+from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from PySide6.QtCore import QLocale
+
+from yucha.configstore import config_dir
+
+
+def cookie_file():
+    return config_dir() / "youtube-cookies.txt"
+
+
+def detected_browsers():
+    home = Path.home()
+    config = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config")
+    data = Path(os.environ.get("XDG_DATA_HOME") or home / ".local/share")
+    found = []
+    for name, key, commands, folder, app_id in (
+        ("Firefox", "firefox", ("firefox", "firefox-esr"), "mozilla/firefox", "org.mozilla.firefox"),
+        ("Chrome", "chrome", ("google-chrome", "google-chrome-stable"), "google-chrome", "com.google.Chrome"),
+        ("Chromium", "chromium", ("chromium", "chromium-browser"), "chromium", "org.chromium.Chromium"),
+        ("Brave", "brave", ("brave", "brave-browser"), "BraveSoftware/Brave-Browser", "com.brave.Browser"),
+        ("Edge", "edge", ("microsoft-edge", "microsoft-edge-stable"), "microsoft-edge", "com.microsoft.Edge"),
+        ("Opera", "opera", ("opera",), "opera", "com.opera.Opera"),
+        ("Vivaldi", "vivaldi", ("vivaldi", "vivaldi-stable"), "vivaldi", "com.vivaldi.Vivaldi"),
+    ):
+        roots = [config / folder]
+        flatpak_roots = [home / ".var/app" / app_id / "config" / folder]
+        if key == "firefox":
+            roots.append(home / ".mozilla/firefox")
+            flatpak_roots.append(home / ".var/app" / app_id / ".mozilla/firefox")
+        profile = next((root for root in roots if root.is_dir()), None)
+        if profile is not None or any(shutil.which(command) for command in commands):
+            found.append((name, key, str(profile or roots[0])))
+        flatpak = next((root for root in flatpak_roots if root.is_dir()), None)
+        if flatpak is not None or any((base / "flatpak/app" / app_id).is_dir()
+                                      for base in (data, Path("/var/lib"))):
+            found.append((name + " (Flatpak)", key, str(flatpak or flatpak_roots[0])))
+        if key in ("firefox", "chromium"):
+            snap = home / "snap" / key / "common" / (".mozilla/firefox" if key == "firefox" else "chromium")
+            if snap.is_dir() or (Path("/snap/bin") / key).is_file():
+                found.append((name + " (Snap)", key, str(snap)))
+    return sorted(found, key=lambda item: not Path(item[2]).is_dir())
+
+
+def has_account_cookies(cookies):
+    names = {cookie.name for cookie in cookies.get_cookies_for_url("https://www.youtube.com") if cookie.value}
+    return "LOGIN_INFO" in names and bool(names & {"SAPISID", "__Secure-1PAPISID", "__Secure-3PAPISID"})
+
+
+def playback_options():
+    options = {
+        "ignore-config": "",
+        "write-auto-subs": "",
+        "sub-langs": "en.*,{0}.*,-live_chat".format(QLocale.languageToCode(QLocale.system().language())),
+    }
+    path = cookie_file()
+    if path.is_file():
+        options["cookies"] = str(path)
+    return options
+
+
+class _CookieLogger:
+    # Browser diagnostics may contain private profile data.
+    def debug(self, *args, **kwargs):
+        pass
+
+    info = warning = error = debug
+
+
+def extract_youtube_cookies(browser, profile=None):
+    from yt_dlp.cookies import YoutubeDLCookieJar, extract_cookies_from_browser
+
+    source = extract_cookies_from_browser(browser, profile=profile, logger=_CookieLogger())
+    cookies = YoutubeDLCookieJar()
+    for cookie in source:
+        domain = cookie.domain.lstrip(".").casefold()
+        if (domain == "youtube.com" or domain.endswith(".youtube.com")) and not cookie.is_expired():
+            cookies.set_cookie(cookie)
+    if not len(cookies):
+        raise ValueError("No YouTube cookies found")
+    return cookies
+
+
+def save_cookies(cookies):
+    path = cookie_file()
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                         prefix=".youtube-cookies-", delete=False) as output:
+            temporary = output.name
+            cookies.save(output, ignore_discard=True, ignore_expires=True)
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            Path(temporary).unlink(missing_ok=True)
 
 
 def video_url(value):
