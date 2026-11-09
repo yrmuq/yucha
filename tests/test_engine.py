@@ -15,6 +15,29 @@ from yucha.engine import Picture, _hardware_decoding
 
 
 class EngineTests(unittest.TestCase):
+    def test_youtube_selects_high_resolution_without_an_external_ffmpeg(self):
+        from yt_dlp import YoutubeDL
+
+        with tempfile.TemporaryDirectory() as runtime, patch.dict(os.environ, {"XDG_CONFIG_HOME": runtime}):
+            engine = SimpleNamespace(ipc_path=Path(runtime) / "mpv.sock")
+            Picture._start_engine(engine)
+            try:
+                info = {"id": "test", "title": "Test", "formats": [
+                    {"format_id": "18", "url": "https://example.test/360", "ext": "mp4",
+                     "vcodec": "avc1", "acodec": "mp4a", "height": 360},
+                    {"format_id": "140", "url": "https://example.test/audio", "ext": "m4a",
+                     "vcodec": "none", "acodec": "mp4a", "abr": 128},
+                    {"format_id": "399", "url": "https://example.test/1080", "ext": "mp4",
+                     "vcodec": "av01", "acodec": "none", "height": 1080},
+                ]}
+                with patch("yt_dlp.YoutubeDL.FFmpegMergerPP") as merger, \
+                        YoutubeDL({"format": engine.mpv.ytdl_format, "quiet": True}, auto_init=False) as downloader:
+                    merger.return_value.available = False
+                    result = downloader.process_ie_result(info, download=False)
+                self.assertEqual([track["format_id"] for track in result["requested_formats"]], ["399", "140"])
+            finally:
+                engine.mpv.terminate()
+
     def test_hardware_decoding_follows_the_active_rendering_gpu(self):
         for vendor, renderer, expected in (
             ("AMD", "AMD Radeon RX 7800 XT", ("vaapi,vaapi-copy", "vaapi")),

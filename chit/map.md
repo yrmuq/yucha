@@ -18,8 +18,8 @@ Read only the row the task needs. Do not read `third_party/` or `packaging/appim
 - `tests/test_window.py` — Qt control, settings, and overlay regressions. Runs offscreen without mpv or a room server.
 
 ## Packaging
-- `packaging/appimage/build.sh` — builds the image and `.zsync` with GitHub update metadata, copies Ubuntu `libmpv`, writes the `mpv --version` stub.
-- `packaging/appimage/AppRun` — points `YUCHA_MPV` at that stub and `YUCHA_LIBMPV` at the copied library.
+- `packaging/appimage/build.sh` — builds the image and `.zsync`, bundles `libmpv` and PipeWire client modules/config, stages a separate libva fallback, writes the `mpv --version` stub.
+- `packaging/appimage/AppRun` — selects host libva when the loader accepts it, otherwise the staged fallback; sets driver and bundled PipeWire paths, `YUCHA_MPV`, and `YUCHA_LIBMPV`.
 - `requirements.txt` — `PySide6_Essentials`, Twisted, `python-mpv`, and `yt-dlp` with its default dependencies.
 - `.github/workflows/appimage.yml` — builds a version tag. `X.Y.0` is a release. Any other `X.Y.Z` is a prerelease.
 - `.github/workflows/release.yml` — a merge from `dev` into `main` raises Y, publishes, then merges the published commit back into `dev`. An explicit `[refresh-release]` merge replaces the current release once.

@@ -350,6 +350,24 @@ class WindowTests(unittest.TestCase):
             self.app.client.set_youtube_info.assert_called_with(next_url, "Queued title", 0)
         reply.deleteLater.assert_called_once_with()
 
+    def test_youtube_title_auth_error_does_not_interrupt_playback(self):
+        window = self.window
+        url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+        window._playlist = [{"path": url, "name": url}]
+        window._current_path = url
+        window.ctl.properties.update({"path": url, "media-title": "Stream title"})
+        reply = Mock()
+        reply.error.return_value = QNetworkReply.NetworkError.AuthenticationRequiredError
+        window._title_requests[url] = reply
+        window._youtube_title_received(url, reply)
+        window._refresh_youtube(url)
+        self.assertEqual(window._playlist[0]["name"], "Stream title")
+        self.assertFalse(window.ctl.properties["pause"])
+        self.assertFalse([call for call in window.ctl.calls if call[0] in ("stop", "loadfile", "set_property")])
+        self.assertNotIn(url, window._title_requests)
+        reply.read.assert_not_called()
+        reply.deleteLater.assert_called_once_with()
+
     def test_chapter_markers_toggle_and_removed_youtube_does_not_return(self):
         window = self.window
         window.ctl.properties["chapter-list"] = [{"time": 0}, {"time": 30}]

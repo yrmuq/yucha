@@ -122,6 +122,8 @@ class Picture(QOpenGLWidget):
             config="no",
             demuxer_max_bytes="512MiB",
             ytdl="yes",
+            # libmpv merges streams itself; yt-dlp otherwise prefers 360p without ffmpeg.
+            ytdl_format="bestvideo+bestaudio/best",
             script_opts="ytdl_hook-all_formats=yes",
             input_terminal="no",
             terminal="no",

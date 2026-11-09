@@ -32,7 +32,7 @@ jobs:
       - name: Install file
         run: |
           sudo apt-get update
-          sudo apt-get install -y file binutils zsync
+          sudo apt-get install -y file binutils zsync pipewire-bin libpipewire-0.3-modules libspa-0.2-modules
           sudo apt-get install -y libmpv2 || sudo apt-get install -y libmpv-dev
 
       - name: Tag the next prerelease

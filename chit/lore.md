@@ -3,7 +3,7 @@
 Reply in Russian, short and plain.
 Start the Development build on `dev` only when the user explicitly asks for a draft.
 After successful publication, CI merges the published release commit back into `dev` without requesting another draft build. A conflict or rejected push stops synchronization without overwriting `dev`.
-If a user approval is needed, notify in Mattermost immediately so the user can reopen the chat and approve.
+Whenever asking for user input through a question, choice, or approval dialog, immediately notify in Mattermost so the user returns to the chat. Do not read Mattermost.
 Repository: `https://github.com/yrmuq/yucha`. Commit as `yrmuq <76932153+yrmuq@users.noreply.github.com>`.
 Own code is `yucha/`. Do not patch `third_party/syncplay` or `third_party/mpv`.
 Picture: build-machine `libmpv`. No third-party `mpv` program. Syncplay `mpv --version` is a stub that prints that package's version.
