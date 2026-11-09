@@ -191,8 +191,11 @@ cp "$PACK/yucha.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps/yucha.png"
 
 OUT="$DIST/yucha-x86_64.AppImage"
 rm -f "$OUT"
-ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$TOOL" \
-    -u 'gh-releases-zsync|yrmuq|yucha|latest|yucha-x86_64.AppImage.zsync' "$APPDIR" "$OUT"
+(
+    cd "$DIST"
+    ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$TOOL" \
+        -u 'gh-releases-zsync|yrmuq|yucha|latest|yucha-x86_64.AppImage.zsync' "$APPDIR" "$OUT"
+)
 test -s "$OUT.zsync"
 chmod +x "$OUT"
 echo "wrote $OUT"
