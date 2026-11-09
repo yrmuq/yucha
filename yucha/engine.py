@@ -108,6 +108,7 @@ class Picture(QOpenGLWidget):
             hr_seek="always",
             osc="no",
             config="no",
+            demuxer_max_bytes="512MiB",
             ytdl="yes",
             script_opts="ytdl_hook-all_formats=yes",
             ytdl_raw_options="ignore-config=,write-auto-subs=,sub-langs=[en.*,{0}.*,-live_chat]".format(
