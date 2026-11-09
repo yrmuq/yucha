@@ -40,16 +40,9 @@ jobs:
             *) echo "version=" >> "$GITHUB_OUTPUT" ;;
           esac
 
-      - name: Install file
-        if: steps.tag.outputs.version != ''
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y file binutils zsync pipewire-bin libpipewire-0.3-modules libspa-0.2-modules
-          sudo apt-get install -y libmpv2 || sudo apt-get install -y libmpv-dev
-
       - name: Build
         if: steps.tag.outputs.version != ''
-        run: bash packaging/appimage/build.sh
+        run: bash packaging/appimage/build-ci.sh
 
       - name: Publish
         if: steps.tag.outputs.version != ''

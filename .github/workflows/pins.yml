@@ -23,12 +23,6 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Install file
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y file binutils zsync pipewire-bin libpipewire-0.3-modules libspa-0.2-modules
-          sudo apt-get install -y libmpv2 || sudo apt-get install -y libmpv-dev
-
       - name: Update pin
         id: pins
         run: |
@@ -58,7 +52,7 @@ jobs:
           git add packaging/appimage/build.sh
           git commit -m "Update the pinned appimagetool."
           ver="$(bash packaging/release/prerelease.sh | tail -n 1)"
-          bash packaging/appimage/build.sh
+          bash packaging/appimage/build-ci.sh
           git push --force origin HEAD:refs/heads/deps
           git push origin "refs/tags/v${ver}"
           bash packaging/release/publish.sh "v${ver}"

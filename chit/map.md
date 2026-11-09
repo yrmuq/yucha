@@ -7,6 +7,7 @@ Read only the row the task needs. Do not read `third_party/` or `packaging/appim
 - `yucha/window.py` — playlist, chat, seek, volume, settings; `EdgeScroll` and `ScrollEdges` standardize external scrollbars. Large. Search a class. Do not read the whole file.
 - `yucha/engine.py` — `Picture` draws the video through `libmpv`. This is the player.
 - `yucha/youtube.py` — canonical YouTube URLs, track filtering, browser cookie import and private local storage, `yt-dlp` playback options.
+- `yucha/ytdl.py` — yt-dlp entry point; keeps extractor cookie changes in memory so it cannot overwrite imported sessions.
 - `yucha/session.py` — Syncplay client. `mpv --version`, then attach to the `libmpv` socket. Does not start a second player.
 - `yucha/player_ui.py` — methods Syncplay calls. Forwards them. Does not draw.
 - `yucha/bridge.py` — writes those calls to `events.jsonl` for the window.
@@ -19,6 +20,8 @@ Read only the row the task needs. Do not read `third_party/` or `packaging/appim
 
 ## Packaging
 - `packaging/appimage/build.sh` — builds the image and `.zsync`, bundles `libmpv` and PipeWire client modules/config, stages a separate libva fallback, writes the `mpv --version` stub.
+- `packaging/appimage/build-ci.sh` — all CI builds use Debian 13 with glibc 2.41; tests run with the bundled Python and libraries.
+- `packaging/appimage/check-abi.py` — rejects ELF dependencies newer than glibc 2.41 before publication, including dependency prereleases.
 - `packaging/appimage/AppRun` — selects host libva when the loader accepts it, otherwise the staged fallback; sets driver and bundled PipeWire paths, `YUCHA_MPV`, and `YUCHA_LIBMPV`.
 - `requirements.txt` — `PySide6_Essentials`, Twisted, `python-mpv`, and `yt-dlp` with its default dependencies.
 - `.github/workflows/appimage.yml` — builds a version tag. `X.Y.0` is a release. Any other `X.Y.Z` is a prerelease.
@@ -29,7 +32,7 @@ Read only the row the task needs. Do not read `third_party/` or `packaging/appim
 - `packaging/release/` — version bump, notes, and synchronization of the published release into `dev`. Not the player.
 
 ## Libraries
-- `libmpv` — decodes and draws. Ubuntu package copied at build time.
+- `libmpv` — decodes and draws. Debian 13 package copied at build time.
 - `python-mpv` — the binding `engine.py` uses to call `libmpv`.
 - `yt-dlp` with `yt-dlp-ejs` and `Node.js` — resolve YouTube streams for `libmpv` and import browser cookies; `secretstorage` reads Chromium keys through Linux Secret Service. AppImage bundles the runtime and Python wheels.
 - `PySide6_Essentials` — the window. Used modules: QtCore, QtGui, QtWidgets, QtDBus, QtOpenGLWidgets.

@@ -29,12 +29,6 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Install file
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y file binutils zsync pipewire-bin libpipewire-0.3-modules libspa-0.2-modules
-          sudo apt-get install -y libmpv2 || sudo apt-get install -y libmpv-dev
-
       - name: Tag the next prerelease
         id: tag
         env:
@@ -48,7 +42,7 @@ jobs:
           echo "version=${ver}" >> "$GITHUB_OUTPUT"
 
       - name: Build
-        run: bash packaging/appimage/build.sh
+        run: bash packaging/appimage/build-ci.sh
 
       - name: Publish and drop the previous prerelease
         env:

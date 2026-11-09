@@ -78,6 +78,8 @@
 
 ### AppImage
 
+Requires `x86_64` Linux with `glibc 2.41` or newer and working desktop graphics drivers.
+
 Pre-built `AppImage` packages bundle `Python`, the `Syncplay` client, and `libmpv` copied from the build machine. No separate `mpv` program is included. Download the latest `.AppImage` from the [Releases](https://github.com/yrmuq/yucha/releases) page.
 
 For desktop integration and updates, use `Gear Lever` ([Flathub](https://flathub.org/apps/it.mijorus.gearlever)). The `AppImage` embeds its GitHub update source for the latest stable release; the accompanying `.zsync` file supports update tools. Private drafts are not available through this public update source. If the menu entry is from an older image, add it again so the file manager can open videos in `yucha`.

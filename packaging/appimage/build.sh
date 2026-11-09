@@ -75,10 +75,9 @@ cat > "$APPDIR/usr/bin/yt-dlp" << 'SH'
 #!/bin/sh
 set -eu
 here="$(dirname "$(readlink -f "$0")")"
-exec "$here/../../python/bin/python3" -m yt_dlp --no-js-runtimes --js-runtimes "node:$here/node" "$@"
+exec "$here/../../python/bin/python3" -m yucha.ytdl --no-js-runtimes --js-runtimes "node:$here/node" "$@"
 SH
 chmod +x "$APPDIR/usr/bin/yt-dlp"
-PYTHONNOUSERSITE=1 "$APPDIR/usr/bin/yt-dlp" --version
 "$APPDIR/usr/bin/node" --version
 
 cp -a "$ROOT/yucha" "$ROOT/languages" "$ROOT/LICENSE" "$ROOT/NOTICE" "$ROOT/README.md" \
@@ -86,6 +85,7 @@ cp -a "$ROOT/yucha" "$ROOT/languages" "$ROOT/LICENSE" "$ROOT/NOTICE" "$ROOT/READ
 cp -a "$ROOT/third_party/syncplay" "$ROOT/third_party/README.md" \
     "$APPDIR/payload/third_party/"
 cp -a "$PACK/BUNDLED.txt" "$APPDIR/payload/BUNDLED.txt"
+PYTHONNOUSERSITE=1 PYTHONPATH="$APPDIR/payload" "$APPDIR/usr/bin/yt-dlp" --version
 find "$APPDIR/payload" -type d -name __pycache__ -print0 | xargs -0r rm -rf
 find "$APPDIR/payload" -name '*.pyc' -delete
 
@@ -196,6 +196,12 @@ for pattern in ("libva.so*", "libva-drm.so*", "libva-x11.so*", "libva-wayland.so
 print("bundled libmpv from", src)
 PY
 
+QT_QPA_PLATFORM=offscreen PYTHONNOUSERSITE=1 PYTHONPATH="$APPDIR/payload" \
+    YUCHA_LIBMPV="$APPDIR/usr/lib/yucha/libmpv.so.2" \
+    LD_LIBRARY_PATH="$APPDIR/usr/lib/yucha${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+    "$APPDIR/python/bin/python3" -m unittest discover -s "$ROOT/tests" -v
+python3 "$PACK/check-abi.py" "$APPDIR"
+
 cp "$PACK/AppRun" "$APPDIR/AppRun"
 # Syncplay runs `mpv --version` and then attaches to libmpv. The stub
 # prints the version of the libmpv package copied above.
@@ -231,6 +237,7 @@ rm -f "$OUT"
         -u 'gh-releases-zsync|yrmuq|yucha|latest|yucha-x86_64.AppImage.zsync' "$APPDIR" "$OUT"
 )
 test -s "$OUT.zsync"
+python3 "$PACK/check-abi.py" "$OUT"
 chmod +x "$OUT"
 echo "wrote $OUT"
 ls -lh "$OUT"

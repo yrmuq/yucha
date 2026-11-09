@@ -2,15 +2,38 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import json
+import importlib.util
 import os
 import shutil
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 class AppImageTests(unittest.TestCase):
+    def test_abi_gate_rejects_newer_dependencies_but_ignores_provided_versions(self):
+        script = Path(__file__).resolve().parents[1] / "packaging/appimage/check-abi.py"
+        spec = importlib.util.spec_from_file_location("check_abi", script)
+        abi = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(abi)
+        output = """Version definition section '.gnu.version_d' contains 1 entry:
+  Name: GLIBC_2.43
+Version needs section '.gnu.version_r' contains 1 entry:
+  Name: GLIBC_2.41
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "library.so"
+            library.write_bytes(b"\x7fELFtest fixture")
+            (library.parent / "library-link.so").symlink_to(library.name)
+            with patch.object(abi.subprocess, "check_output", return_value=output) as readelf:
+                abi.check([library.parent])
+                self.assertEqual(readelf.call_count, 1)
+                readelf.return_value = output + "  Name: GLIBC_2.43\n"
+                with self.assertRaisesRegex(SystemExit, r"requires GLIBC_2\.43"):
+                    abi.check([library.parent])
+
     def test_launcher_selects_host_vaapi_or_fallback_and_relocates_pipewire(self):
         with tempfile.TemporaryDirectory(prefix="yucha appimage ") as directory:
             root = Path(directory)
