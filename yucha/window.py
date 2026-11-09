@@ -5630,6 +5630,7 @@ class MainWindow(QMainWindow):
             self._alone_pending = False
             if len(self._users) == 1:
                 self._alone_until = time.monotonic() + CHAT_LIFE
+                self._append_chat_line([{"k": "text", "v": tr(110)}])
 
     def _start_when_everyone_ready(self, people):
         names = {person["name"] for person in people}
@@ -5699,6 +5700,11 @@ class MainWindow(QMainWindow):
             self.chat.append(_spans_html(spans, me, mine, other, bad))
 
     def _append_chat_line(self, spans):
+        self._chat_lines.append(spans)
+        if len(self._chat_lines) > CHAT_CAP:
+            del self._chat_lines[:-CHAT_CAP]
+            self._paint_chat()
+            return
         if not hasattr(self, "chat"):
             return
         me, mine, other = self._nick_colors()
@@ -5709,26 +5715,20 @@ class MainWindow(QMainWindow):
         if not text or _hidden_line(text):
             return
         alone = not user and text.strip().rstrip(".!").casefold() in ("you're alone in the room", "you are alone in the room")
+        if alone:
+            self._check_alone_on_entry()
+            self._refresh_osd()
+            return
         if user:
             spans = [{"k": "nick", "v": user}, {"k": "text", "v": ": " + text}]
         elif re.match(r"^.+ has left\s*$", text):
             spans = [{"k": "leave", "v": text}]
-        elif alone:
-            self._check_alone_on_entry()
-            spans = [{"k": "text", "v": tr(110)}]
         else:
             spans = _status_spans(text) or [{"k": "text", "v": text}]
             if any(span["k"] == "nick" and span["v"] in ("", "None") for span in spans):
                 return
-        self._chat_lines.append(spans)
-        if len(self._chat_lines) > CHAT_CAP:
-            del self._chat_lines[:-CHAT_CAP]
-            self._paint_chat()
-        else:
-            self._append_chat_line(spans)
-        if alone:
-            self._refresh_osd()
-        elif not _startup_line(text) and (user or not _PLAYING_LINE.fullmatch(" ".join(text.split()))):
+        self._append_chat_line(spans)
+        if not _startup_line(text) and (user or not _PLAYING_LINE.fullmatch(" ".join(text.split()))):
             now = time.monotonic()
             if not replace_seek_toast(self._osd, spans, now, SLIDE):
                 self._osd.append({"born": now, "fresh": now, "spans": spans, "leave": None})

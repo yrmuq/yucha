@@ -659,6 +659,40 @@ class WindowTests(unittest.TestCase):
             window._refresh_osd()
             self.assertIn(i18n.tr(110), window.board.notices)
 
+    def test_alone_chat_is_tied_to_entry_not_youtube_quality_updates(self):
+        window = self.window
+        me = {"name": "me", "ready": False, "file": "", "size": None, "duration": None}
+        other = {**me, "name": "other"}
+        line = [{"k": "text", "v": i18n.tr(110)}]
+        window._on_conn({"state": "connecting"})
+        window._on_conn({"state": "connected"})
+        window._add_chat("", "You're alone in the room")
+        self.assertNotIn(line, window._chat_lines)
+        window._on_users({"list": [me]})
+        self.assertEqual(window._chat_lines.count(line), 1)
+        url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+        window._playlist = [{"path": url, "name": "A video"}]
+        window._current_path = url
+        window.ctl.properties.update({"path": url, "video-params/h": 1080})
+        self.app.client.set_youtube_info = Mock(
+            side_effect=lambda *args: window._add_chat("", "You are alone in the room"))
+        with patch("twisted.internet.reactor.callFromThread", side_effect=lambda fn, *args: fn(*args)):
+            for height in (1080, 720, 480):
+                window._pick_track("vid", height)
+                window.ctl.properties["video-params/h"] = height
+                window._refresh_youtube(url)
+        self.assertEqual(self.app.client.set_youtube_info.call_count, 3)
+        self.assertEqual(window._chat_lines.count(line), 1)
+        window._on_users({"list": [me, other]})
+        window._on_users({"list": [me]})
+        window._add_chat("", "You're alone in the room")
+        self.assertEqual(window._chat_lines.count(line), 1)
+        window._on_conn({"state": "connecting"})
+        window._on_users({"list": [me]})
+        window._on_conn({"state": "connected"})
+        window._add_chat("", "You're alone in the room")
+        self.assertEqual(window._chat_lines.count(line), 2)
+
     def test_panel_bottom_follows_chat_limit_with_unchanged_padding_and_top(self):
         window = self.window
         window._dev["panel_center"] = False
