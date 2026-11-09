@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """yucha — mpv window plus the Syncplay client, without Syncplay's window."""
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 
 
 def version_tuple(text):
