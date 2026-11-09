@@ -74,7 +74,8 @@ from yucha.i18n import languages, system_language, tr, trf
 from yucha.player_ui import replace_seek_toast, room_file_notes
 from yucha.system import Notifier, SleepInhibit, join_line, people_joined
 from yucha.youtube import (
-    audio_tracks, cookie_file, extract_youtube_cookies, playback_options, quality_label,
+    audio_tracks, cookie_file, detected_browsers, extract_youtube_cookies, has_account_cookies,
+    playback_options, quality_label,
     quality_tracks, resolution, save_cookies, stream_title, subtitle_tracks, track_language, video_url,
 )
 
@@ -2314,12 +2315,17 @@ class YouTubeConnect(QDialog):
         layout.addWidget(note)
         form = QFormLayout()
         self.browser = QComboBox()
-        for name, key in (("Firefox", "firefox"), ("Chrome", "chrome"), ("Chromium", "chromium"),
-                          ("Brave", "brave"), ("Edge", "edge"), ("Opera", "opera"), ("Vivaldi", "vivaldi")):
+        browsers = detected_browsers()
+        if not browsers:
+            browsers = [(trf(141, name), key, "") for name, key in
+                        (("Firefox", "firefox"), ("Chromium", "chromium"))]
+        for name, key, profile in browsers:
             self.browser.addItem(name, key)
+            self.browser.setItemData(self.browser.count() - 1, profile, Qt.ItemDataRole.UserRole + 1)
         form.addRow(tr(125), self.browser)
         self.profile = QLineEdit()
         self.profile.setPlaceholderText(tr(127))
+        self.browser.currentIndexChanged.connect(lambda _index: self.profile.clear())
         profile_row = QHBoxLayout()
         profile_row.addWidget(self.profile, 1)
         self.browse = QPushButton("…")
@@ -2362,7 +2368,8 @@ class YouTubeConnect(QDialog):
         for field in (self.browser, self.profile, self.browse, self.start, self.remove):
             field.setEnabled(False)
         threading.Thread(target=self._read_cookies,
-                         args=(self.browser.currentData(), self.profile.text().strip() or None),
+                         args=(self.browser.currentData(), self.profile.text().strip()
+                               or self.browser.currentData(Qt.ItemDataRole.UserRole + 1) or None),
                          daemon=True).start()
 
     def _read_cookies(self, browser, profile):
@@ -2383,13 +2390,14 @@ class YouTubeConnect(QDialog):
     def _import_done(self, cookies, error):
         if not self.isVisible():
             return
+        account = has_account_cookies(cookies) if not error else False
         if not error:
             try:
                 save_cookies(cookies)
                 self.changed.emit()
             except OSError:
                 error = 138
-        self.status.setText(tr(error or 131))
+        self.status.setText(tr(error or (131 if account else 142)))
         for field in (self.browser, self.profile, self.browse, self.start):
             field.setEnabled(True)
         self.remove.setEnabled(cookie_file().is_file())

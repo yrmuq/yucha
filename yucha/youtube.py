@@ -4,6 +4,7 @@
 
 import os
 import re
+import shutil
 import tempfile
 from functools import lru_cache
 from pathlib import Path
@@ -18,11 +19,49 @@ def cookie_file():
     return config_dir() / "youtube-cookies.txt"
 
 
+def detected_browsers():
+    home = Path.home()
+    config = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config")
+    data = Path(os.environ.get("XDG_DATA_HOME") or home / ".local/share")
+    found = []
+    for name, key, commands, folder, app_id in (
+        ("Firefox", "firefox", ("firefox", "firefox-esr"), "mozilla/firefox", "org.mozilla.firefox"),
+        ("Chrome", "chrome", ("google-chrome", "google-chrome-stable"), "google-chrome", "com.google.Chrome"),
+        ("Chromium", "chromium", ("chromium", "chromium-browser"), "chromium", "org.chromium.Chromium"),
+        ("Brave", "brave", ("brave", "brave-browser"), "BraveSoftware/Brave-Browser", "com.brave.Browser"),
+        ("Edge", "edge", ("microsoft-edge", "microsoft-edge-stable"), "microsoft-edge", "com.microsoft.Edge"),
+        ("Opera", "opera", ("opera",), "opera", "com.opera.Opera"),
+        ("Vivaldi", "vivaldi", ("vivaldi", "vivaldi-stable"), "vivaldi", "com.vivaldi.Vivaldi"),
+    ):
+        roots = [config / folder]
+        flatpak_roots = [home / ".var/app" / app_id / "config" / folder]
+        if key == "firefox":
+            roots.append(home / ".mozilla/firefox")
+            flatpak_roots.append(home / ".var/app" / app_id / ".mozilla/firefox")
+        profile = next((root for root in roots if root.is_dir()), None)
+        if profile is not None or any(shutil.which(command) for command in commands):
+            found.append((name, key, str(profile or roots[0])))
+        flatpak = next((root for root in flatpak_roots if root.is_dir()), None)
+        if flatpak is not None or any((base / "flatpak/app" / app_id).is_dir()
+                                      for base in (data, Path("/var/lib"))):
+            found.append((name + " (Flatpak)", key, str(flatpak or flatpak_roots[0])))
+        if key in ("firefox", "chromium"):
+            snap = home / "snap" / key / "common" / (".mozilla/firefox" if key == "firefox" else "chromium")
+            if snap.is_dir() or (Path("/snap/bin") / key).is_file():
+                found.append((name + " (Snap)", key, str(snap)))
+    return sorted(found, key=lambda item: not Path(item[2]).is_dir())
+
+
+def has_account_cookies(cookies):
+    names = {cookie.name for cookie in cookies.get_cookies_for_url("https://www.youtube.com") if cookie.value}
+    return "LOGIN_INFO" in names and bool(names & {"SAPISID", "__Secure-1PAPISID", "__Secure-3PAPISID"})
+
+
 def playback_options():
     options = {
         "ignore-config": "",
         "write-auto-subs": "",
-        "sub-langs": "[en.*,{0}.*,-live_chat]".format(QLocale.languageToCode(QLocale.system().language())),
+        "sub-langs": "en.*,{0}.*,-live_chat".format(QLocale.languageToCode(QLocale.system().language())),
     }
     path = cookie_file()
     if path.is_file():

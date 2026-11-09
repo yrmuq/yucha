@@ -99,6 +99,8 @@ class WindowTests(unittest.TestCase):
         self.env = patch.dict(os.environ, {"XDG_CONFIG_HOME": self.temp.name})
         self.env.start()
         self.patches = [patch("yucha.window.Picture", PictureStub),
+                        patch("yucha.window.detected_browsers", return_value=[
+                            ("Firefox", "firefox", "/test/firefox"), ("Chromium", "chromium", "/test/chromium")]),
                         patch("yucha.window.Notifier"), patch("yucha.window.SleepInhibit"),
                         patch("yucha.window.SettingsDialog._check_release"),
                         patch("yucha.window.MainWindow._begin_release_check")]
@@ -170,8 +172,9 @@ class WindowTests(unittest.TestCase):
         from yt_dlp.cookies import YoutubeDLCookieJar
 
         cookies = YoutubeDLCookieJar()
-        cookies.set_cookie(Cookie(0, "SID", "test-session", None, False, ".youtube.com", True,
-                                  True, "/", True, True, None, True, None, None, {}))
+        for name in ("LOGIN_INFO", "SAPISID"):
+            cookies.set_cookie(Cookie(0, name, "test-session", None, False, ".youtube.com", True,
+                                      True, "/", True, True, None, True, None, None, {}))
         settings = self.dialog()
         settings.show()
         self.qt.processEvents()
@@ -198,6 +201,7 @@ class WindowTests(unittest.TestCase):
             self.assertGreater(dialog.browser.count(), 1)
             finish_import(dialog)
             self.assertEqual(dialog.status.text(), i18n.tr(131))
+            extract.assert_called_once_with("firefox", "/test/firefox")
             self.assertTrue(cookie_file().is_file())
             self.assertEqual(self.window.ctl.properties["ytdl-raw-options"]["cookies"], str(cookie_file()))
             dialog.remove.click()

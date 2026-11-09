@@ -48,7 +48,7 @@
 | `+` (Playlist) | Choose local files to add to the playlist. |
 | Link icon (Playlist) | Enter a YouTube video URL and press `Enter` to queue it. For synchronized viewing, open the same video in each client. |
 | Tracks icon / quality label | Choose audio or subtitles, or set YouTube quality from `480p` upward. YouTube audio lists languages with their best audio quality; subtitles list the system language and English. |
-| `Settings` → `Room` → `Connect YouTube` | Select a browser and import its YouTube cookies automatically. An optional profile folder supports other browser profiles. Only YouTube cookies are stored locally, with `0600` permissions; `Remove session` deletes the imported copy. |
+| `Settings` → `Room` → `Connect YouTube` | Choose a detected browser or profile source and import its YouTube cookies automatically. An optional folder selects another profile. Without detected browsers, choose a Firefox or Chromium profile manually. Only YouTube cookies are stored locally, with `0600` permissions; `Remove session` deletes the imported copy. Import does not verify access to YouTube. |
 | `Dev` → `Show chapter markers` | Show chapter marks on the seek bar. Disabled by default. |
 | `Right Click` / `Space` | Toggle Play / Pause. |
 | `Double Click` | Toggle Fullscreen. |
