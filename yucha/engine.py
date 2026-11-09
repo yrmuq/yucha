@@ -46,6 +46,17 @@ def _library_version(player):
     return int(found.group(1)), int(found.group(2))
 
 
+def _hardware_decoding(vendor, renderer):
+    name = (str(vendor or "") + " " + str(renderer or "")).casefold()
+    if any(word in name for word in ("llvmpipe", "softpipe", "swrast", "swiftshader", "software")):
+        return "no", "no"
+    if "nvidia" in name:
+        return "nvdec,nvdec-copy", "cuda"
+    if re.search(r"\b(amd|ati|radeon|intel)\b", name):
+        return "vaapi,vaapi-copy", "vaapi"
+    return "auto-safe", "auto"
+
+
 def _import_mpv():
     import ctypes.util
 
@@ -151,6 +162,13 @@ class Picture(QOpenGLWidget):
         mpv = self._mpv_mod
         self._proc_cb = mpv.MpvGlGetProcAddressFn(self._addr)
         try:
+            if sys.platform.startswith("linux") and _library_version(self.mpv) >= (0, 40):
+                gl = QOpenGLFunctions()
+                gl.initializeOpenGLFunctions()
+                # libmpv's auto interop loads every vendor's driver before decoding.
+                hwdec, interop = _hardware_decoding(gl.glGetString(0x1F00), gl.glGetString(0x1F01))
+                self.mpv.hwdec = hwdec
+                self.mpv.gpu_hwdec_interop = interop
             self.ctx = mpv.MpvRenderContext(
                 self.mpv,
                 "opengl",

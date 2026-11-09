@@ -9,10 +9,22 @@ from contextlib import redirect_stderr
 from pathlib import Path
 from types import SimpleNamespace
 
-from yucha.engine import Picture
+from yucha.engine import Picture, _hardware_decoding
 
 
 class EngineTests(unittest.TestCase):
+    def test_hardware_decoding_follows_the_active_rendering_gpu(self):
+        for vendor, renderer, expected in (
+            ("AMD", "AMD Radeon RX 7800 XT", ("vaapi,vaapi-copy", "vaapi")),
+            ("Mesa/X.org", "AMD Radeon Graphics", ("vaapi,vaapi-copy", "vaapi")),
+            ("Intel", "Mesa Intel Iris Xe", ("vaapi,vaapi-copy", "vaapi")),
+            ("NVIDIA Corporation", "NVIDIA GeForce RTX 4060", ("nvdec,nvdec-copy", "cuda")),
+            ("Mesa", "llvmpipe (LLVM 19.1.7)", ("no", "no")),
+            (None, None, ("auto-safe", "auto")),
+        ):
+            with self.subTest(vendor=vendor, renderer=renderer):
+                self.assertEqual(_hardware_decoding(vendor, renderer), expected)
+
     def test_playback_failure_reaches_stderr_with_terminal_disabled(self):
         with tempfile.TemporaryDirectory() as runtime, redirect_stderr(io.StringIO()) as output:
             engine = SimpleNamespace(ipc_path=Path(runtime) / "mpv.sock")
