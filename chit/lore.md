@@ -12,7 +12,7 @@
 - Save only explicit Dev overrides; opening Dev must not seed its defaults, and resetting Dev must preserve ordinary appearance settings.
 - Preserve manual side-panel placement until its reset arrow is used, dragging is disabled, or the app restarts; movement must respect the bottom controls.
 - Keep scrollbars outside their content using the chat's shared EdgeScroll style, including newly created scroll areas.
-- Do not publish Flatpak releases yet; only an explicitly requested optional standalone test bundle may appear in the dev draft.
+- Do not publish Flatpak packages anywhere, including dev drafts, until the user explicitly requests it.
 
 ## Compatibility Workarounds
 - Keep AppImage native dependencies compatible with glibc 2.41; the earlier newer baseline prevented startup on the test environment, and raising this floor requires an explicit compatibility decision.

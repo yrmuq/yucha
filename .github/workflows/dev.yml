@@ -3,11 +3,6 @@ on:
   push:
     branches: [dev]
   workflow_dispatch:
-    inputs:
-      include_flatpak:
-        description: Include a standalone x86_64 Flatpak test bundle
-        type: boolean
-        default: false
 permissions:
   contents: write
 jobs:
@@ -20,8 +15,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build
-        with:
-          include_flatpak: ${{ github.event_name == 'workflow_dispatch' && inputs.include_flatpak && 'true' || 'false' }}
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ github.sha }}-${{ github.run_id }}

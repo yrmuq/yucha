@@ -8,6 +8,10 @@ set -eu
 TAG="${1:?tag}"
 ROOT="$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
+if [ -f dist/yucha-x86_64-test.flatpak ]; then
+    echo "Flatpak publication is on hold until explicitly requested." >&2
+    exit 1
+fi
 
 case "$TAG" in
     *-test)

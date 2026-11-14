@@ -106,7 +106,7 @@ The file chooser uses `xdg-desktop-portal` through Qt, with Qt's own chooser as 
 
 ### Flatpak
 
-Stable Flatpak distribution is planned and is not published on GitHub Releases or Flathub. A manual dev build can optionally include a standalone `x86_64` test bundle; it has no configured update repository.
+Flatpak distribution is planned. Flatpak packages are not published in stable releases or development drafts.
 
 ---
 

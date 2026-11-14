@@ -3,6 +3,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 set -eu
 cd "$(dirname "$0")/../.."
+if [ -f dist/yucha-x86_64-test.flatpak ]; then
+    echo "Flatpak publication is on hold until explicitly requested." >&2
+    exit 1
+fi
 python3 packaging/appimage/verify.py dist
 current="$(git ls-remote origin refs/heads/dev | cut -f1)"
 if [ "$current" != "$GITHUB_SHA" ]; then
