@@ -12,6 +12,7 @@ CACHE="$WORK/cache"
 APPDIR="$WORK/AppDir"
 DIST="$ROOT/dist"
 mkdir -p "$CACHE" "$DIST"
+rm -f "$DIST/yucha-x86_64-test.flatpak" "$DIST/SHA256SUMS"
 
 PY_URL="https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.12.15%2B20261013-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
 PY_SHA="178d3d83b6e8e99285a65d3fce9c16b87952cc5efdb4d1a0e3ff3be18ff0fc9c"
@@ -62,7 +63,7 @@ test -x "$APPDIR/python/bin/python3"
 tar -xJf "$NODE_TAR" -C "$APPDIR/usr/bin" --strip-components=2 "$NODE_DIST/bin/node"
 tar -xJOf "$NODE_TAR" "$NODE_DIST/LICENSE" > "$APPDIR/payload/LICENSE.node"
 
-"$APPDIR/python/bin/python3" -m pip install \
+PIP_CACHE_DIR="$CACHE/pip" "$APPDIR/python/bin/python3" -m pip install \
     --disable-pip-version-check \
     --no-warn-script-location \
     -r "$ROOT/requirements.txt"
@@ -241,3 +242,5 @@ python3 "$PACK/check-abi.py" "$OUT"
 chmod +x "$OUT"
 echo "wrote $OUT"
 ls -lh "$OUT"
+
+python3 "$PACK/verify.py" "$DIST" --write

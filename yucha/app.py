@@ -124,7 +124,7 @@ class App(object):
             appearance["mainPanel"] = "left" if side == "left" else "right"
             language = command.get("language", appearance.get("language") or "English")
             language = str(language or "English")
-            if language not in languages():
+            if language != "System" and language not in languages():
                 language = "English"
             appearance["language"] = language
             appearance["subFont"] = font_name(command.get("subFont", appearance.get("subFont")))
@@ -173,7 +173,7 @@ def main():
 
     # Qt may contact the portal during construction; register the desktop ID first.
     QApplication.setApplicationName("yucha")
-    QGuiApplication.setDesktopFileName("yucha")
+    QGuiApplication.setDesktopFileName(os.environ.get("FLATPAK_ID") or "yucha")
     qt = QApplication([])
     icon = Path(__file__).resolve().parent / "icon.png"
     if icon.is_file():

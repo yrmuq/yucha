@@ -60,6 +60,8 @@ from PySide6.QtWidgets import (
     QScrollBar,
     QSizePolicy,
     QSlider,
+    QStyle,
+    QStyleOptionSlider,
     QSpinBox,
     QStyledItemDelegate,
     QTabWidget,
@@ -70,7 +72,7 @@ from PySide6.QtWidgets import (
 from yucha import __version__, fetch_newer_stable
 from yucha.configstore import DEFAULTS, dev_settings, font_name, hex_color, move_entry, wheel_rgb
 from yucha.engine import Picture
-from yucha.i18n import languages, system_language, tr, trf
+from yucha.i18n import languages, tr, trf
 from yucha.player_ui import replace_seek_toast, room_file_notes
 from yucha.system import Notifier, SleepInhibit, join_line, people_joined
 from yucha.youtube import (
@@ -1618,6 +1620,7 @@ class SeekBar(QSlider):
         super().__init__(orientation)
         self._chapters = []
         self._chapter_duration = 0
+        self._buffered = []
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -1654,12 +1657,42 @@ class SeekBar(QSlider):
         self._chapter_duration = float(duration or 0)
         self.update()
 
+    def set_buffered(self, ranges, duration):
+        buffered = []
+        if duration > 0:
+            for item in ranges if isinstance(ranges, list) else []:
+                try:
+                    start, end = float(item["start"]), float(item["end"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if math.isfinite(start) and math.isfinite(end):
+                    start, end = max(0, start / duration), min(1, end / duration)
+                    if start < end:
+                        buffered.append((start, end))
+        if buffered != self._buffered:
+            self._buffered = buffered
+            self.update()
+
     def paintEvent(self, event):
         super().paintEvent(event)
+        painter = QPainter(self)
+        if self._buffered:
+            option = QStyleOptionSlider()
+            self.initStyleOption(option)
+            groove = self.style().subControlRect(QStyle.ComplexControl.CC_Slider, option,
+                                                 QStyle.SubControl.SC_SliderGroove, self)
+            handle = self.style().subControlRect(QStyle.ComplexControl.CC_Slider, option,
+                                                 QStyle.SubControl.SC_SliderHandle, self)
+            left, span = handle.width() / 2, self.width() - handle.width()
+            for start, end in self._buffered:
+                x = max(left + start * span, handle.right() + 1)
+                width = left + end * span - x
+                if width > 0:
+                    painter.fillRect(QRectF(x, groove.y(), width, groove.height()), QColor("#808080"))
         duration = self._chapter_duration
         if duration <= 0 or not self._chapters:
+            painter.end()
             return
-        painter = QPainter(self)
         color = self.palette().color(QPalette.ColorRole.WindowText)
         painter.setPen(QPen(color, 2))
         groove = self.height() / 2
@@ -2598,6 +2631,7 @@ class SettingsDialog(QDialog):
         self._keep_side(other_form)
         self._name_forms.append(other_form)
         self.language = QComboBox()
+        self.language.addItem(tr(143), "System")
         for name in languages():
             label = tr(105) if name == "English" else tr(106) if name == "Russian" else name
             self.language.addItem(label, name)
@@ -2657,7 +2691,7 @@ class SettingsDialog(QDialog):
         self.reset_other = QPushButton(tr(70))
         self.reset_other.clicked.connect(self._reset_standard)
         other_form.addRow(self.reset_other)
-        self.tabs.addTab(other, tr(30))
+        self.tabs.insertTab(1, other, tr(30))
 
         about = QWidget()
         self._about_content = about
@@ -3291,7 +3325,7 @@ class SettingsDialog(QDialog):
 
     def _reset_standard(self):
         defaults = deepcopy(DEFAULTS["appearance"])
-        defaults["language"] = system_language()
+        defaults["language"] = "System"
         self._theme_timer.stop()
         combos = ((self.theme, "theme"), (self.style_pick, "style"),
                   (self.sub_font, "subFont"), (self.language, "language"),
@@ -3302,7 +3336,7 @@ class SettingsDialog(QDialog):
                  (self.slowdown, "slowOnDesync"), (self.check_updates, "checkUpdates"))
         for widget, key in combos + scales + boxes:
             widget.blockSignals(True)
-            value = system_language() if key == "language" else defaults[key]
+            value = defaults[key]
             if isinstance(widget, QComboBox):
                 widget.setCurrentIndex(max(0, widget.findData(value)))
             elif isinstance(widget, QCheckBox):
@@ -5108,7 +5142,10 @@ class MainWindow(QMainWindow):
         key = int(event.key())
         if key == int(Qt.Key.Key_Space):
             if not event.isAutoRepeat():
-                self._toggle_pause()
+                if self._connected and not self.ready.isChecked():
+                    self._toggle_ready()
+                else:
+                    self._toggle_pause()
             return True
         # XKB adds eight to Linux key codes, independently of the layout.
         physical = event.nativeScanCode() if QGuiApplication.platformName() in ("xcb", "wayland", "wayland-egl") else 0
@@ -5303,6 +5340,7 @@ class MainWindow(QMainWindow):
         self._refresh_files()
 
     def _play_path(self, path, start=False):
+        self.slider.set_buffered([], 0)
         if path != self._current_path and (self._tracks_open or self._quality_open):
             self._close_popups(None)
         self._current_path = path
@@ -5896,6 +5934,11 @@ class MainWindow(QMainWindow):
         else:
             self._eof_seen = False
         current = self._get("path") or ""
+        cache = self._get("demuxer-cache-state") if video_url(current) and current == self._current_path else None
+        ranges = cache.get("seekable-ranges", []) if isinstance(cache, dict) else []
+        if isinstance(cache, dict) and not any(stream.get("type") == "video" for stream in cache.get("ts-per-stream", [])):
+            ranges = []
+        self.slider.set_buffered(ranges, self._duration)
         if self._arm_play and self._duration > 0:
             same = current == self._arm_play or Path(str(current)).name == Path(self._arm_play).name
             if same and current:

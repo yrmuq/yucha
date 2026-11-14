@@ -103,68 +103,141 @@ class ReleaseNotes(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(git("ls-remote", "origin", "refs/heads/dev").split()[0], conflicted_dev)
 
-    def test_refresh_keeps_version_and_the_next_merge_bumps_it(self):
+    def test_release_requires_tested_dependencies_and_preserves_published_tags(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            work = root / "work"
+            work = Path(tmp) / "work"
             work.mkdir()
-            remote = root / "origin.git"
-            output = root / "outputs"
-            env = {**os.environ, "GITHUB_OUTPUT": str(output)}
-
+            remote = Path(tmp) / "origin.git"
             def git(*args):
-                return subprocess.check_output(["git", *args], cwd=work, env=env,
-                                               text=True, stderr=subprocess.STDOUT).strip()
-
+                return subprocess.check_output(["git", *args], cwd=work, text=True,
+                                               stderr=subprocess.STDOUT).strip()
             git("init", "--bare", str(remote))
             git("init", "-b", "main")
             git("config", "user.name", "Release Test")
             git("config", "user.email", "release@example.test")
-            for folder in ("packaging/release", "chit", "yucha"):
-                (work / folder).mkdir(parents=True)
+            (work / "packaging/release").mkdir(parents=True)
+            (work / "yucha").mkdir()
             for name in ("cut.sh", "bump.py", "notes.py"):
                 shutil.copy(NOTES.parent / name, work / "packaging/release" / name)
             init = work / "yucha/__init__.py"
             init.write_text('__version__ = "0.6.0"\n')
-            (work / "chit/lore.md").write_text('Current: `0.6.0`.\n')
             git("add", ".")
-            git("commit", "-m", "Add initial release.")
-            git("tag", "-a", "v0.6.0", "-m", "Initial release.")
-            original_tag = git("rev-parse", "refs/tags/v0.6.0")
+            git("commit", "-m", "Add initial release")
+            git("tag", "-a", "v0.6.0", "-m", "Initial release")
+            original = git("rev-parse", "v0.6.0")
             git("remote", "add", "origin", str(remote))
-            git("checkout", "-b", "dev")
+            git("branch", "deps")
+            git("branch", "dev")
+            git("push", "origin", "main", "dev", "deps", "--tags")
+            git("checkout", "dev")
             (work / "feature").write_text("first change\n")
             git("add", "feature")
-            git("commit", "-m", "Fix the settings.")
-            git("push", "origin", "dev")
-            git("checkout", "main")
-            git("merge", "--no-ff", "dev", "-m", "Merge branch 'dev'", "-m", "[refresh-release]")
-            merge = git("rev-parse", "HEAD")
-            result = subprocess.check_output(["bash", "packaging/release/cut.sh"], cwd=work,
-                                             env=env, text=True, stderr=subprocess.STDOUT)
-            self.assertEqual(result.splitlines()[-1], "0.6.0")
-            self.assertEqual(git("rev-parse", "HEAD"), merge)
-            self.assertEqual(git("rev-parse", "v0.6.0^{}"), merge)
-            self.assertIn('"0.6.0"', init.read_text())
-            self.assertIn("refresh=true", output.read_text())
-            self.assertIn("previous_tag=" + original_tag, output.read_text())
-            refreshed_tag = git("rev-parse", "refs/tags/v0.6.0")
-
-            git("checkout", "dev")
-            (work / "feature").write_text("second change\n")
-            git("add", "feature")
-            git("commit", "-m", "Fix the next thing.")
+            git("commit", "-m", "Fix the settings")
             git("push", "origin", "dev")
             git("checkout", "main")
             git("merge", "--no-ff", "dev", "-m", "Merge branch 'dev'")
-            output.write_text("")
             result = subprocess.check_output(["bash", "packaging/release/cut.sh"], cwd=work,
-                                             env=env, text=True, stderr=subprocess.STDOUT)
+                                             text=True, stderr=subprocess.STDOUT)
             self.assertEqual(result.splitlines()[-1], "0.7.0")
+            self.assertEqual(git("rev-parse", "v0.6.0"), original)
             self.assertIn('"0.7.0"', init.read_text())
-            self.assertEqual(git("rev-parse", "v0.7.0^{}"), git("rev-parse", "HEAD"))
-            self.assertEqual(git("rev-parse", "refs/tags/v0.6.0"), refreshed_tag)
-            self.assertEqual(output.read_text(), "")
+            git("checkout", "deps")
+            (work / "requirements.txt").write_text("example>=2\n")
+            git("add", ".")
+            git("commit", "-m", "Update a pending dependency")
+            git("push", "origin", "deps")
+            git("checkout", "dev")
+            (work / "feature").write_text("second change\n")
+            git("commit", "-am", "Fix the next setting")
+            git("push", "origin", "dev")
+            git("checkout", "main")
+            git("merge", "--no-ff", "dev", "-m", "Merge branch 'dev'")
+            result = subprocess.run(["bash", "packaging/release/cut.sh"], cwd=work,
+                                    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Merge deps into dev", result.stdout)
+            self.assertEqual(git("tag", "-l", "v0.8.0"), "")
+
+    def test_main_sync_preserves_pending_dependencies_and_stops_on_other_conflicts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp) / "work"
+            work.mkdir()
+            remote = Path(tmp) / "origin.git"
+            def git(*args):
+                return subprocess.check_output(["git", *args], cwd=work, text=True,
+                                               stderr=subprocess.STDOUT).strip()
+            git("init", "--bare", str(remote))
+            git("init", "-b", "main")
+            git("config", "user.name", "Release Test")
+            git("config", "user.email", "release@example.test")
+            (work / "packaging/release").mkdir(parents=True)
+            (work / "yucha").mkdir()
+            for name in ("sync-deps.sh", "bump.py"):
+                shutil.copy(NOTES.parent / name, work / "packaging/release" / name)
+            init = work / "yucha/__init__.py"
+            init.write_text('__version__ = "0.6.0"\n')
+            (work / "requirements.txt").write_text("example>=1\n")
+            git("add", ".")
+            git("commit", "-m", "Add initial release")
+            git("remote", "add", "origin", str(remote))
+            git("checkout", "-b", "deps")
+            init.write_text('__version__ = "0.6.1"\n')
+            (work / "requirements.txt").write_text("example>=2\n")
+            git("commit", "-am", "Update a dependency")
+            pending = git("rev-parse", "HEAD")
+            git("push", "origin", "deps")
+            git("checkout", "main")
+            init.write_text('__version__ = "0.7.0"\nNEW = True\n')
+            git("commit", "-am", "Version 0.7.0")
+            git("push", "origin", "main")
+            sync = subprocess.run(["bash", "packaging/release/sync-deps.sh"], cwd=work,
+                                  text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            self.assertEqual(sync.returncode, 0, sync.stdout)
+            self.assertEqual(git("show", "origin/deps:requirements.txt"), "example>=2")
+            self.assertIn('"0.7.0"', git("show", "origin/deps:yucha/__init__.py"))
+            self.assertIn("NEW = True", git("show", "origin/deps:yucha/__init__.py"))
+            git("merge-base", "--is-ancestor", pending, "origin/deps")
+            synced = git("rev-parse", "origin/deps")
+            git("checkout", "main")
+            (work / "requirements.txt").write_text("incompatible-main-change\n")
+            git("commit", "-am", "Change the dependency differently")
+            git("push", "origin", "main")
+            result = subprocess.run(["bash", "packaging/release/sync-deps.sh"], cwd=work,
+                                    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(git("ls-remote", "origin", "refs/heads/deps").split()[0], synced)
+
+    def test_prerelease_allocation_survives_deleted_tags(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp) / "work"
+            work.mkdir()
+            remote = Path(tmp) / "origin.git"
+            def git(*args):
+                return subprocess.check_output(["git", *args], cwd=work, text=True,
+                                               stderr=subprocess.STDOUT).strip()
+            git("init", "--bare", str(remote))
+            git("init", "-b", "main")
+            git("config", "user.name", "Release Test")
+            git("config", "user.email", "release@example.test")
+            (work / "packaging/release").mkdir(parents=True)
+            (work / "yucha").mkdir()
+            (work / ".github").mkdir()
+            for name in ("prerelease.sh", "bump.py", "notes.py"):
+                shutil.copy(NOTES.parent / name, work / "packaging/release" / name)
+            (work / "yucha/__init__.py").write_text('__version__ = "0.7.0"\n')
+            (work / ".github/allocated-versions.txt").write_text("0.6.99\n0.7.9\n")
+            (work / "requirements.txt").write_text("example>=1\n")
+            git("add", ".")
+            git("commit", "-m", "Add an allocation record without its deleted tag")
+            git("remote", "add", "origin", str(remote))
+            git("push", "origin", "main")
+            (work / "requirements.txt").write_text("example>=2\n")
+            git("commit", "-am", "Update the pending dependency")
+            result = subprocess.run(["bash", "packaging/release/prerelease.sh"], cwd=work,
+                                    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            self.assertEqual(result.returncode, 0, result.stdout)
+            self.assertEqual(result.stdout.splitlines()[-1], "0.7.10")
+            self.assertIn("0.7.10", (work / ".github/allocated-versions.txt").read_text())
 
     def test_dependency_notes_name_the_old_and_new_versions(self):
         self.assertEqual(
@@ -195,14 +268,14 @@ class ReleaseNotes(unittest.TestCase):
             text,
             "\n".join(
                 [
-                    "Added",
-                    "- Add a language file.",
+                    "### Added",
+                    "- Added a language file.",
                     "",
-                    "Changed",
-                    "- Move the pin.",
+                    "### Changed",
+                    "- Moved the pin.",
                     "",
-                    "Fixed",
-                    "- Fix the seek bar.",
+                    "### Fixed",
+                    "- Fixed the seek bar.",
                     "",
                 ]
             ),

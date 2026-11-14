@@ -16,20 +16,24 @@ Read only the row the task needs. Do not read `third_party/` or `packaging/appim
 - `yucha/i18n.py` — reads `languages/*.ini`. A line is `id = English original = text shown`.
 - `languages/` — English and Russian ini files. The id is a number.
 - `tests/test_guards.py`, `tests/test_system.py`, `tests/test_release.py`, `tests/test_color.py` — config, system, release, and room checks.
+- `tests/test_automation.py` — runtime-pin refresh and uploaded asset/channel verification.
 - `tests/test_window.py` — Qt control, settings, and overlay regressions. Runs offscreen without mpv or a room server.
 
 ## Packaging
 - `packaging/appimage/build.sh` — builds the image and `.zsync`, bundles `libmpv` and PipeWire client modules/config, stages a separate libva fallback, writes the `mpv --version` stub.
 - `packaging/appimage/build-ci.sh` — all CI builds use Debian 13 with glibc 2.41; tests run with the bundled Python and libraries.
+- `packaging/appimage/verify.py` — checks final update metadata, zsync contents and release checksums.
+- `packaging/flatpak/build-test.sh` — optional standalone x86_64 test bundle; no stable Flatpak remote.
+- `.github/actions/build/` — shared desktop build and dependency cache.
 - `packaging/appimage/check-abi.py` — rejects ELF dependencies newer than glibc 2.41 before publication, including dependency prereleases.
 - `packaging/appimage/AppRun` — selects host libva when the loader accepts it, otherwise the staged fallback; sets driver and bundled PipeWire paths, `YUCHA_MPV`, and `YUCHA_LIBMPV`.
 - `requirements.txt` — `PySide6_Essentials`, Twisted, `python-mpv`, and `yt-dlp` with its default dependencies.
-- `.github/workflows/appimage.yml` — builds a version tag. `X.Y.0` is a release. Any other `X.Y.Z` is a prerelease.
-- `.github/workflows/release.yml` — a merge from `dev` into `main` raises Y, publishes, then merges the published commit back into `dev`. An explicit `[refresh-release]` merge replaces the current release once.
-- `.github/workflows/dev.yml` — tests and updates the draft on a manual request or an explicit `[draft]` commit on `dev`. Ordinary pushes skip the build. It does not take a version number.
+- `.github/workflows/appimage.yml` — manual package checks without publication.
+- `.github/workflows/release.yml` — a merge from `dev` into `main` raises Y, publishes, then merges the published commit back into `dev`. Pending dependency changes block publication; successful publication refreshes the dev draft.
+- `.github/workflows/dev.yml` — tests every dev push and updates the existing draft without a tag; a manual input optionally includes a standalone Flatpak test bundle.
 - `.github/workflows/deps.yml` — Dependabot prerelease on `deps`. It does not change `main`.
-- `.github/workflows/pins.yml` — `appimagetool` pin, on the 28th. Same prerelease path, not `main`.
-- `packaging/release/` — version bump, notes, and synchronization of the published release into `dev`. Not the player.
+- `.github/workflows/pins.yml` — Python, Node.js and appimagetool pins, weekly on Friday. Preserves accumulated changes on `deps`.
+- `packaging/release/` — version allocation, notes, verified asset publication and safe synchronization of `main`, `dev` and `deps`. Not the player.
 
 ## Libraries
 - `libmpv` — decodes and draws. Debian 13 package copied at build time.

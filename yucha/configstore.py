@@ -7,7 +7,6 @@ import math
 import os
 from pathlib import Path
 
-from yucha.i18n import system_language
 
 
 def config_dir():
@@ -189,7 +188,7 @@ DEFAULTS = {
         "volumeMax": 100,
         "volumeOverlay": "horizontal",
         "mainPanel": "right",
-        "language": "English",
+        "language": "System",
         "subFont": "sans-serif",
         "subFontSize": 55,
         "subColor": "#FFFFFF",
@@ -204,11 +203,8 @@ DEFAULTS = {
 class ConfigStore(object):
     def __init__(self):
         self.path = config_dir() / "config.json"
-        fresh = not self.path.is_file()
         self.data = json.loads(json.dumps(DEFAULTS))
         self.load()
-        if fresh:
-            self.data["appearance"]["language"] = system_language()
 
     def load(self):
         if not self.path.is_file():

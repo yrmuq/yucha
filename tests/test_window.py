@@ -33,7 +33,6 @@ from yucha.bridge import Bridge
 from yucha.player_ui import PlayerUI
 from yucha.configstore import DEFAULTS, ConfigStore
 from yucha import __version__, i18n
-from yucha.i18n import system_language
 from yucha.window import EdgeScroll, MainWindow, SettingsDialog, YouTubeConnect, _palette
 from yucha.youtube import cookie_file
 
@@ -1021,16 +1020,47 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(self.window.bar_message.text(), "hello world")
         self.assertFalse(self.window.ctl.properties["pause"])
 
-    def test_space_pauses_playing_video_even_before_ready_state_arrives(self):
+    def test_space_marks_ready_before_toggling_playback(self):
         self.window.ready.setChecked(False)
         self.window._toggle_ready = Mock()
         self.window.video.setFocus()
         self.qt.processEvents()
         QTest.keyClick(self.window.video, Qt.Key.Key_Space)
+        self.assertFalse(self.window.ctl.properties["pause"])
+        self.window._toggle_ready.assert_called_once()
+        self.window.ready.setChecked(True)
+        QTest.keyClick(self.window.video, Qt.Key.Key_Space)
         self.assertTrue(self.window.ctl.properties["pause"])
-        self.window._toggle_ready.assert_not_called()
+
+    def test_youtube_cache_ranges_clear_when_media_changes(self):
+        window = self.window
+        url = "https://www.youtube.com/watch?v=axKvmNnflQM"
+        window._current_path = url
+        window.ctl.properties.update({"path": url, "demuxer-cache-state": {
+            "ts-per-stream": [{"type": "video"}, {"type": "audio"}],
+            "seekable-ranges": [{"start": -1, "end": 60}, {"start": 90, "end": 150},
+                                {"start": "bad", "end": 70}, {"start": 80, "end": float("nan")}]}})
+        window._refresh_transport()
+        self.assertEqual(window.slider._buffered, [(0, .5), (.75, 1)])
+        rendered = window.slider.grab().toImage()
+        self.assertTrue(any(rendered.pixelColor(x, rendered.height() // 2).name() == "#808080"
+                            for x in range(rendered.width())))
+        window.ctl.properties["demuxer-cache-state"]["ts-per-stream"] = [{"type": "audio"}]
+        window._refresh_transport()
+        self.assertEqual(window.slider._buffered, [])
+        window.ctl.properties["path"] = "/tmp/other.mkv"
+        window._refresh_transport()
+        self.assertEqual(window.slider._buffered, [])
+
+    def test_general_tab_follows_room_and_system_language_persists(self):
+        dialog = self.dialog()
+        self.assertEqual(dialog.tabs.tabText(1), i18n.tr(30))
+        dialog.language.setCurrentIndex(dialog.language.findData("System"))
+        dialog._accept()
+        self.assertEqual(dialog.appearance["language"], "System")
 
     def test_space_in_readonly_chat_and_volume_popup_pauses_once(self):
+        self.window.ready.setChecked(True)
         self.window.set_panel(True)
         self.window.chat.setFocus()
         self.qt.processEvents()
@@ -1592,7 +1622,7 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(self.window.ctl.properties["volume-max"], 100)
         saved = ConfigStore().data
         for key, value in DEFAULTS["appearance"].items():
-            self.assertEqual(saved["appearance"][key], system_language() if key == "language" else value, key)
+            self.assertEqual(saved["appearance"][key], value, key)
         self.assertEqual(saved["connection"], room)
         self.assertEqual([call.args[0]["c"] for call in self.app.on_command.call_args_list], ["appearance"])
         dialog.ui_size.setValue(16)
@@ -1679,7 +1709,7 @@ class WindowTests(unittest.TestCase):
                 with self.subTest(language=language):
                     i18n.use(language)
                     dialog = self.dialog()
-                    dialog.tabs.setCurrentIndex(2)
+                    dialog.tabs.setCurrentIndex(1)
                     dialog.show()
                     self.qt.processEvents()
                     self.assertEqual(dialog.gamma_size.value(), 10)

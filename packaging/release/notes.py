@@ -5,7 +5,7 @@
 import re
 import sys
 
-SECTIONS = ("Added", "Changed", "Fixed", "Removed", "Security")
+SECTIONS = ("Added", "Changed", "Fixed", "Removed")
 
 
 def deps_notes(diff):
@@ -52,14 +52,15 @@ def commit_notes(subjects):
         section, text = _classify(subject)
         if section is None:
             continue
-        buckets[section].append(text)
+        if text not in buckets[section]:
+            buckets[section].append(text)
     lines = []
     for name in SECTIONS:
         if not buckets[name]:
             continue
         if lines:
             lines.append("")
-        lines.append(name)
+        lines.append("### " + name)
         for text in buckets[name]:
             lines.append("- %s" % text)
     if not lines:
@@ -74,6 +75,12 @@ def _classify(subject):
         return None, None
     if re.search(r"chmod |\./yucha|Test build", text):
         return None, None
+    verbs = {"add": "Added", "implement": "Implemented", "fix": "Fixed", "resolve": "Resolved",
+             "prevent": "Prevented", "remove": "Removed", "move": "Moved", "increase": "Increased",
+             "update": "Updated", "change": "Changed", "redact": "Redacted", "restrict": "Restricted"}
+    first, _, rest = text.partition(" ")
+    if first.lower() in verbs:
+        text = verbs[first.lower()] + " " + rest
     if not text.endswith("."):
         text = text + "."
     if re.match(r"^(add|implement)\b", lowered):
@@ -83,7 +90,7 @@ def _classify(subject):
     if re.match(r"^remove\b", lowered):
         return "Removed", text
     if re.match(r"^(redact|restrict)\b", lowered):
-        return "Security", text
+        return "Fixed", text
     return "Changed", text
 
 
@@ -134,20 +141,20 @@ def _actions(lines):
 
 
 def _tool_pairs(minus, plus):
-    old = _tool(minus)
-    new = _tool(plus)
-    if old and new and old != new:
-        return [("appimagetool", old, new)]
-    return []
-
-
-def _tool(lines):
-    pattern = re.compile(r"download/([^/\s\"]+)/appimagetool")
-    for line in lines:
-        match = pattern.search(line)
-        if match:
-            return match.group(1)
-    return None
+    patterns = {
+        "appimagetool": r'TOOL_URL=.*download/([^/]+)/appimagetool',
+        "CPython": r'PY_URL=.*cpython-([0-9.]+(?:%2B|\+)[0-9]+)-x86_64',
+        "Node.js": r'NODE_DIST="?node-v([0-9.]+)-linux-x64',
+    }
+    pairs = []
+    for name, pattern in patterns.items():
+        def version(lines):
+            found = re.search(pattern, "\n".join(lines))
+            return found[1].replace("%2B", "+") if found else None
+        old, new = version(minus), version(plus)
+        if old and new and old != new:
+            pairs.append((name, old, new))
+    return pairs
 
 
 def main():

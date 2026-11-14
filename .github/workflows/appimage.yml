@@ -1,40 +1,11 @@
-# Copyright (C) 2026 yrmuq
-# SPDX-License-Identifier: GPL-3.0-or-later
-# An annotated tag vX.Y.Z builds the AppImage.
-# X.Y.0 is a normal release. Any other X.Y.Z is a prerelease.
-# The tag message is the release body.
-# No run commands and no test-build banner. Those stay in the README.
-# A manual run builds the image and does not publish a release.
-
-name: AppImage
-
+name: Package checks
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
-
 permissions:
-  contents: write
-
+  contents: read
 jobs:
   appimage:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: actions/cache@v4
-        with:
-          path: packaging/appimage/build/cache
-          key: appimage-deps-20261013
-
-      - name: Build
-        run: bash packaging/appimage/build-ci.sh
-
-      - name: Publish release
-        if: github.ref_type == 'tag'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash packaging/release/publish.sh "$GITHUB_REF_NAME"
+      - uses: ./.github/actions/build
