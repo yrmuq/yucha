@@ -13,7 +13,8 @@ from pathlib import Path
 
 def verify(tag, draft):
     release = json.loads(subprocess.check_output(
-        ["gh", "api", "repos/" + os.environ["GITHUB_REPOSITORY"] + "/releases/tags/" + tag], text=True))
+        ["gh", "api", "--paginate", "repos/" + os.environ["GITHUB_REPOSITORY"] + "/releases?per_page=100",
+         "--jq", ".[] | select(.tag_name == " + json.dumps(tag) + ")"], text=True))
     prerelease = False if draft else int(tag.lstrip("v").split(".")[2]) > 0
     if release["draft"] != draft or release["prerelease"] != prerelease:
         raise SystemExit("Release channel flags do not match")

@@ -54,8 +54,10 @@ class AutomationTests(unittest.TestCase):
                 {"name": path.name, "state": "uploaded", "digest": "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()}]}
             with patch.dict(os.environ, {"GITHUB_REPOSITORY": "test/project", "GITHUB_SHA": "source-sha"}), \
                     patch.object(Path, "iterdir", return_value=[path]), \
-                    patch.object(uploaded.subprocess, "check_output", side_effect=lambda *a, **k: json.dumps(release)):
+                    patch.object(uploaded.subprocess, "check_output", side_effect=lambda *a, **k: json.dumps(release)) as api:
                 uploaded.verify("dev", True)
+                self.assertIn("--paginate", api.call_args.args[0])
+                self.assertIn("repos/test/project/releases?per_page=100", api.call_args.args[0])
                 release["body"] = "Commit: stale-sha"
                 with self.assertRaisesRegex(SystemExit, "source commit"):
                     uploaded.verify("dev", True)
