@@ -7,6 +7,11 @@ import math
 import os
 from pathlib import Path
 
+YOUTUBE_QUALITIES = (480, 720, 1080, 1440, 2160)
+
+
+def youtube_quality(value):
+    return value if type(value) is int and value in YOUTUBE_QUALITIES else 720
 
 
 def config_dir():
@@ -189,6 +194,7 @@ DEFAULTS = {
         "volumeOverlay": "horizontal",
         "mainPanel": "right",
         "language": "System",
+        "youtubeQuality": 720,
         "subFont": "sans-serif",
         "subFontSize": 55,
         "subColor": "#FFFFFF",
@@ -217,6 +223,7 @@ class ConfigStore(object):
             if isinstance(loaded.get(section), dict):
                 self.data[section].update(loaded[section])
         look = self.data["appearance"]
+        look["youtubeQuality"] = youtube_quality(look.get("youtubeQuality"))
         look["uiFontSize"] = bounded_int(look.get("uiFontSize"), 13, 10, 16)
         look["chatFontSize"] = bounded_int(look.get("chatFontSize"), 17, 14, 20)
         look["checkUpdates"] = bool(look.get("checkUpdates", True))

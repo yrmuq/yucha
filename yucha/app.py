@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT / "third_party" / "syncplay"))
 from twisted.internet import reactor
 
 from yucha.bridge import Bridge
-from yucha.configstore import ConfigStore, bounded_int, dev_settings, font_name, hex_color, port_number, runtime_dir
+from yucha.configstore import ConfigStore, bounded_int, dev_settings, font_name, hex_color, port_number, runtime_dir, youtube_quality
 from yucha.i18n import languages, tr, use
 from yucha.player_ui import PlayerUI
 from yucha.session import launch_player, make_client, submit_login
@@ -127,6 +127,7 @@ class App(object):
             if language != "System" and language not in languages():
                 language = "English"
             appearance["language"] = language
+            appearance["youtubeQuality"] = youtube_quality(command.get("youtubeQuality", appearance.get("youtubeQuality")))
             appearance["subFont"] = font_name(command.get("subFont", appearance.get("subFont")))
             appearance["subFontSize"] = bounded_int(command.get("subFontSize"), 55, 52, 58)
             appearance["subColor"] = hex_color(command.get("subColor"), "#FFFFFF")

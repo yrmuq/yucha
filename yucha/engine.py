@@ -16,7 +16,7 @@ from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QSizePolicy
 
 from yucha.i18n import trf
-from yucha.youtube import playback_options
+from yucha.youtube import playback_options, youtube_format
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "third_party" / "syncplay" / "syncplay" / "resources" / "syncplayintf.lua"
@@ -123,7 +123,7 @@ class Picture(QOpenGLWidget):
             demuxer_max_bytes="512MiB",
             ytdl="yes",
             # libmpv merges streams itself; yt-dlp otherwise prefers 360p without ffmpeg.
-            ytdl_format="bestvideo+bestaudio/best",
+            ytdl_format=youtube_format(),
             script_opts="ytdl_hook-all_formats=yes",
             input_terminal="no",
             terminal="no",

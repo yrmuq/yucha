@@ -73,7 +73,7 @@ class EngineTests(unittest.TestCase):
                     server.server_close()
                     worker.join()
 
-    def test_youtube_selects_high_resolution_without_an_external_ffmpeg(self):
+    def test_youtube_selects_default_quality_without_an_external_ffmpeg(self):
         from yt_dlp import YoutubeDL
 
         with tempfile.TemporaryDirectory() as runtime, patch.dict(os.environ, {"XDG_CONFIG_HOME": runtime}):
@@ -85,14 +85,14 @@ class EngineTests(unittest.TestCase):
                      "vcodec": "avc1", "acodec": "mp4a", "height": 360},
                     {"format_id": "140", "url": "https://example.test/audio", "ext": "m4a",
                      "vcodec": "none", "acodec": "mp4a", "abr": 128},
-                    {"format_id": "399", "url": "https://example.test/1080", "ext": "mp4",
-                     "vcodec": "av01", "acodec": "none", "height": 1080},
+                    {"format_id": "398", "url": "https://example.test/720", "ext": "mp4",
+                     "vcodec": "av01", "acodec": "none", "height": 720},
                 ]}
                 with patch("yt_dlp.YoutubeDL.FFmpegMergerPP") as merger, \
                         YoutubeDL({"format": engine.mpv.ytdl_format, "quiet": True}, auto_init=False) as downloader:
                     merger.return_value.available = False
                     result = downloader.process_ie_result(info, download=False)
-                self.assertEqual([track["format_id"] for track in result["requested_formats"]], ["399", "140"])
+                self.assertEqual([track["format_id"] for track in result["requested_formats"]], ["398", "140"])
             finally:
                 engine.mpv.terminate()
 

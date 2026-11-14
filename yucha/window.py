@@ -70,7 +70,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from yucha import __version__, fetch_newer_stable
-from yucha.configstore import DEFAULTS, dev_settings, font_name, hex_color, move_entry, wheel_rgb
+from yucha.configstore import DEFAULTS, YOUTUBE_QUALITIES, dev_settings, font_name, hex_color, move_entry, wheel_rgb, youtube_quality
 from yucha.engine import Picture
 from yucha.i18n import languages, tr, trf
 from yucha.player_ui import replace_seek_toast, room_file_notes
@@ -78,7 +78,7 @@ from yucha.system import Notifier, SleepInhibit, join_line, people_joined
 from yucha.youtube import (
     audio_tracks, cookie_file, detected_browsers, extract_youtube_cookies, has_account_cookies,
     playback_options, quality_label,
-    quality_tracks, resolution, save_cookies, stream_title, subtitle_tracks, track_language, video_url,
+    quality_tracks, resolution, save_cookies, stream_title, subtitle_tracks, track_language, video_url, youtube_format,
 )
 
 HIDE_AFTER = 3.0
@@ -2640,6 +2640,10 @@ class SettingsDialog(QDialog):
         if index < 0:
             index = max(0, self.language.findData("English"))
         self.language.setCurrentIndex(index)
+        self.youtube_quality = QComboBox()
+        for height in YOUTUBE_QUALITIES:
+            self.youtube_quality.addItem(quality_label(height), height)
+        self.youtube_quality.setCurrentIndex(self.youtube_quality.findData(youtube_quality(appearance.get("youtubeQuality"))))
         row_h = self.language.sizeHint().height()
         self.overlay = QComboBox()
         self.overlay.addItem(tr(36), "horizontal")
@@ -2669,6 +2673,7 @@ class SettingsDialog(QDialog):
         self.volume_max = _volume_limit(appearance.get("volumeMax"))
         self._show_volume_max()
         other_form.addRow(tr(38), self.language)
+        other_form.addRow(tr(144), self.youtube_quality)
         other_form.addRow(tr(115), self.main_panel)
         other_form.addRow(tr(35), self.overlay)
         other_form.addRow(tr(34), stepper)
@@ -2684,60 +2689,14 @@ class SettingsDialog(QDialog):
         for box in (self.autoplay, self.fastforward, self.slowdown, self.check_updates):
             box.set_colors(look["field"], look["border"], look["on_fg"], look["accent"])
         self._check_row(other_form, tr(31), self.autoplay, row_h)
-        self._check_row(other_form, tr(32), self.fastforward, row_h)
-        self._check_row(other_form, tr(33), self.slowdown, row_h)
         self._check_row(other_form, tr(67), self.check_updates, row_h)
         self.check_updates.toggled.connect(lambda _checked: self._sync_update_row())
         self.reset_other = QPushButton(tr(70))
         self.reset_other.clicked.connect(self._reset_standard)
-        other_form.addRow(self.reset_other)
-        self.tabs.insertTab(1, other, tr(30))
-
-        about = QWidget()
-        self._about_content = about
-        self._about_page = about
-        about_layout = QVBoxLayout(about)
-        about_layout.setContentsMargins(23, 23, 23, 12)
-        self._keep_side(about_layout)
-        logo_line = QHBoxLayout()
-        logo_line.setContentsMargins(0, 0, 0, 0)
-        logo = QLabel()
-        logo.setFixedSize(96, 96)
-        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        logo.setCursor(Qt.CursorShape.PointingHandCursor)
-        icon = Path(__file__).resolve().parent / "icon.png"
-        if icon.is_file():
-            logo.setPixmap(QPixmap(str(icon)).scaled(96, 96, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
-        logo.installEventFilter(self)
-        self._logo = logo
-        self._logo_n = 0
-        self._logo_at = 0.0
-        logo_line.addStretch(1)
-        logo_line.addWidget(logo)
-        logo_line.addStretch(1)
-        name = QLabel("yucha")
-        name.setObjectName("heading")
-        name.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        repo = QLabel('{}: <a href="https://github.com/yrmuq/yucha">{}</a>'.format(
-            html.escape(tr(75)), html.escape(tr(76))))
-        repo.setTextFormat(Qt.TextFormat.RichText)
-        repo.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
-        repo.setOpenExternalLinks(True)
-        from yucha import __version__
-        version = QLabel(trf(42, __version__))
-        heart = appearance.get("accentColor") or "#9A3A52"
-        thanks = QLabel(
-            '{} <span style="color: {};">♥</span> '
-            '<a href="https://syncplay.pl">Syncplay</a> {} '
-            '<a href="https://mpv.io">mpv</a>'.format(tr(40), heart, tr(41))
-        )
-        thanks.setTextFormat(Qt.TextFormat.RichText)
-        thanks.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
-        thanks.setOpenExternalLinks(True)
-        about_layout.addLayout(logo_line)
-        about_layout.addWidget(name)
-        about_layout.addWidget(repo)
-        about_layout.addWidget(version)
+        self.update_group = QWidget()
+        update_layout = QVBoxLayout(self.update_group)
+        update_layout.setContentsMargins(0, 0, 0, 0)
+        update_layout.setSpacing(7)
         self.update_button = QPushButton(tr(62))
         self.update_button.clicked.connect(self._check_release)
         self.update_note = QLabel("")
@@ -2746,11 +2705,37 @@ class SettingsDialog(QDialog):
         self.download_button.clicked.connect(self._open_release)
         self.download_button.hide()
         self._download_version = ""
-        about_layout.addWidget(self.update_button, 0, Qt.AlignmentFlag.AlignLeft)
-        about_layout.addWidget(self.update_note)
-        about_layout.addWidget(self.download_button, 0, Qt.AlignmentFlag.AlignLeft)
+        update_layout.addWidget(self.update_button, 0, Qt.AlignmentFlag.AlignLeft)
+        update_layout.addWidget(self.update_note)
+        update_layout.addWidget(self.download_button, 0, Qt.AlignmentFlag.AlignLeft)
+        other_form.addRow(self.update_group)
+        other_form.addRow(self.reset_other)
+        self.tabs.insertTab(1, other, tr(30))
+
+        about = QWidget()
+        self._about_content = about
+        self._about_page = about
+        about_layout = QVBoxLayout(about)
+        about_layout.setContentsMargins(8, 8, 8, 8)
+        about_layout.setSpacing(8)
+        description = QLabel(tr(145))
+        description.setWordWrap(True)
+        self._version = QLabel(__version__)
+        self._version.setFixedHeight(22)
+        self._version.setAccessibleName(trf(42, __version__))
+        self._version.installEventFilter(self)
+        self._version_n = 0
+        self._version_at = 0.0
+        accent = hex_color(appearance.get("accentColor"), "#9A3A52")
+        repo = QLabel('<a style="color: {}" href="https://github.com/yrmuq/yucha">github.com/yrmuq/yucha</a>'.format(accent))
+        repo.setFixedHeight(22)
+        repo.setTextFormat(Qt.TextFormat.RichText)
+        repo.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        repo.setOpenExternalLinks(True)
+        about_layout.addWidget(description)
+        about_layout.addWidget(self._version)
+        about_layout.addWidget(repo)
         about_layout.addStretch(1)
-        about_layout.addWidget(thanks, 0, Qt.AlignmentFlag.AlignLeft)
         self.tabs.addTab(about, tr(39))
         self._dev_page = None
         if bool(appearance.get("devTab")):
@@ -2864,21 +2849,21 @@ class SettingsDialog(QDialog):
                     self._place_settings_bar(host, area, bar)
                 elif kind == QEvent.Type.Wheel and watched is area.viewport():
                     bar.bump()
-        if watched is getattr(self, "_logo", None) and kind == QEvent.Type.MouseButtonPress:
+        if watched is getattr(self, "_version", None) and kind == QEvent.Type.MouseButtonPress:
             if event.button() == Qt.MouseButton.LeftButton:
-                self._logo_pressed()
+                self._version_pressed()
                 return True
         return super().eventFilter(watched, event)
 
-    def _logo_pressed(self):
+    def _version_pressed(self):
         now = time.monotonic()
-        if now - self._logo_at > 2:
-            self._logo_n = 0
-        self._logo_at = now
-        self._logo_n += 1
-        if self._logo_n < 5:
+        if now - self._version_at > 2:
+            self._version_n = 0
+        self._version_at = now
+        self._version_n += 1
+        if self._version_n < 5:
             return
-        self._logo_n = 0
+        self._version_n = 0
         enabled = self.tabs.indexOf(self._dev_page) < 0
         self._store_dev_tab(enabled)
         if enabled:
@@ -2943,6 +2928,8 @@ class SettingsDialog(QDialog):
         action_row.addWidget(reset, 1)
         action_row.addWidget(export, 1)
         form.addRow(actions)
+        self._check_row(form, tr(32), self.fastforward, self.fastforward.sizeHint().height())
+        self._check_row(form, tr(33), self.slowdown, self.slowdown.sizeHint().height())
         self._dev_rows = {}
         for key, title in (
             ("ui", tr(78)),
@@ -3240,6 +3227,10 @@ class SettingsDialog(QDialog):
         window = self.parent()
         saved = deepcopy(self._theme_before)
         saved.update(dev={}, devTab=bool(window.app.store.data["appearance"].get("devTab")))
+        for box, key in ((self.fastforward, "fastforwardOnDesync"), (self.slowdown, "slowOnDesync")):
+            saved[key] = DEFAULTS["appearance"][key]
+            box.setChecked(saved[key])
+            window.app.store.data["appearance"][key] = saved[key]
         self._persist_reset(saved)
         window.app.store.data["appearance"]["dev"] = {}
         window.apply_dev({})
@@ -3329,7 +3320,8 @@ class SettingsDialog(QDialog):
         self._theme_timer.stop()
         combos = ((self.theme, "theme"), (self.style_pick, "style"),
                   (self.sub_font, "subFont"), (self.language, "language"),
-                  (self.overlay, "volumeOverlay"), (self.main_panel, "mainPanel"))
+                  (self.overlay, "volumeOverlay"), (self.main_panel, "mainPanel"),
+                  (self.youtube_quality, "youtubeQuality"))
         scales = ((self.chat_size, "chatFontSize"), (self.ui_size, "uiFontSize"),
                   (self.sub_size, "subFontSize"))
         boxes = ((self.autoplay, "autoplayNext"), (self.fastforward, "fastforwardOnDesync"),
@@ -3365,6 +3357,7 @@ class SettingsDialog(QDialog):
             self._apply_settings_edges()
         self._hide_dev_tab()
         window._apply_volume_max()
+        window._apply_youtube_quality()
         window._retranslate()
         self._apply_room_lock()
         self._apply_settings_font()
@@ -3511,6 +3504,7 @@ class SettingsDialog(QDialog):
             "volumeOverlay": self.overlay.currentData() or "horizontal",
             "mainPanel": self.main_panel.currentData() or "right",
             "language": self.language.currentData() or "English",
+            "youtubeQuality": self.youtube_quality.currentData(),
             "checkUpdates": self.check_updates.isChecked(),
             "style": self.style_pick.currentData() or "modern",
             "dev": deepcopy(self.parent()._dev),
@@ -3856,6 +3850,7 @@ class MainWindow(QMainWindow):
         self.resize(1280, 720)
         self.setMinimumSize(860, 520)
         self._build()
+        self._apply_youtube_quality()
         self._fill_from_store()
         self.apply_theme()
         self.set_panel(not app.store.has_connection())
@@ -4536,7 +4531,7 @@ class MainWindow(QMainWindow):
     def _pick_track(self, kind, track_id):
         if track_id is None:
             return
-        self._set(kind, track_id)
+        self._set("file-local-options/vid" if kind == "vid" else kind, track_id)
         if kind == "vid":
             self._close_popups(None)
         else:
@@ -4796,6 +4791,14 @@ class MainWindow(QMainWindow):
         self.ctl = getattr(listener, "mpvpipe", None)
         self._apply_volume_max()
         self._apply_subtitles()
+        self._apply_youtube_quality()
+
+    def _apply_youtube_quality(self):
+        selected = youtube_format(self.app.store.data["appearance"].get("youtubeQuality"))
+        if self.ctl is not None:
+            self._set("ytdl-format", selected)
+        elif self.video.mpv is not None:
+            self.video.mpv.ytdl_format = selected
 
     def _apply_subtitles(self):
         if self.ctl is None:
@@ -5581,6 +5584,8 @@ class MainWindow(QMainWindow):
                 "theme", "style", "accentColor", "accentColor2", "uiFontSize",
                 "chatFontSize", "subFont", "subFontSize", "subColor", "mainPanel")):
             self.apply_theme()
+        if before.get("youtubeQuality") != after.get("youtubeQuality"):
+            self._apply_youtube_quality()
         if before.get("volumeMax") != after.get("volumeMax"):
             self._apply_volume_max()
         if before.get("language") != after.get("language"):

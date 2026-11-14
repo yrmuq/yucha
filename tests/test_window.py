@@ -290,7 +290,7 @@ class WindowTests(unittest.TestCase):
         window.ctl.calls.clear()
         buttons[1].click()
         self.assertEqual([call for call in window.ctl.calls if call[0] != "get_property"],
-                         [("set_property", "vid", 2)])
+                         [("set_property", "file-local-options/vid", 2)])
         self.assertEqual(window.ctl.properties["time-pos"], 24)
         self.assertTrue(window.ctl.properties["pause"])
         self.assertFalse(window._quality_open)
@@ -1059,6 +1059,49 @@ class WindowTests(unittest.TestCase):
         dialog._accept()
         self.assertEqual(dialog.appearance["language"], "System")
 
+    def test_initial_youtube_quality_persists_without_reloading_current_playback(self):
+        window = self.window
+        window._apply_youtube_quality()
+        self.assertIn("height<=720", window.ctl.properties["ytdl-format"])
+        window.ctl.properties["vid"] = 9
+        window.ctl.calls.clear()
+        def edit(dialog):
+            self.assertEqual(dialog.youtube_quality.currentData(), 720)
+            self.assertEqual([dialog.youtube_quality.itemText(index) for index in range(5)],
+                             ["480p", "720p", "1080p", "2K", "4K"])
+            dialog.youtube_quality.setCurrentIndex(dialog.youtube_quality.findData(1080))
+            dialog._accept()
+            return QDialog.DialogCode.Accepted
+        with patch.object(SettingsDialog, "exec", edit):
+            window._open_settings()
+        self.assertEqual(ConfigStore().data["appearance"]["youtubeQuality"], 1080)
+        self.assertIn("height<=1080", window.ctl.properties["ytdl-format"])
+        self.assertEqual(window.ctl.properties["vid"], 9)
+        self.assertFalse(window.ctl.properties["pause"])
+        self.assertFalse(any(call[0] in ("loadfile", "stop", "seek") for call in window.ctl.calls))
+        self.app.store = ConfigStore()
+        restarted = self.make_window()
+        restarted._apply_youtube_quality()
+        self.assertIn("height<=1080", restarted.ctl.properties["ytdl-format"])
+
+    def test_advanced_sync_switches_move_to_dev_without_losing_values_and_reset_there(self):
+        self.store.data["appearance"].update(fastforwardOnDesync=False, slowOnDesync=False)
+        dialog = self.dialog()
+        self.assertTrue(dialog._dev_page.isAncestorOf(dialog.fastforward))
+        self.assertTrue(dialog._dev_page.isAncestorOf(dialog.slowdown))
+        self.assertFalse(dialog.tabs.widget(1).isAncestorOf(dialog.fastforward))
+        self.assertFalse(dialog.fastforward.isChecked())
+        self.assertFalse(dialog.slowdown.isChecked())
+        dialog._accept()
+        self.app.on_command({"c": "appearance", **dialog.appearance})
+        self.assertFalse(ConfigStore().data["appearance"]["fastforwardOnDesync"])
+        self.assertFalse(self.app.client._config["slowOnDesync"])
+        dialog = self.dialog()
+        dialog._reset_dev()
+        dialog.reject()
+        self.assertTrue(ConfigStore().data["appearance"]["fastforwardOnDesync"])
+        self.assertTrue(ConfigStore().data["appearance"]["slowOnDesync"])
+
     def test_space_in_readonly_chat_and_volume_popup_pauses_once(self):
         self.window.ready.setChecked(True)
         self.window.set_panel(True)
@@ -1531,7 +1574,7 @@ class WindowTests(unittest.TestCase):
         self.store.data["appearance"]["devTab"] = False
         dialog = self.dialog()
         for _ in range(5):
-            dialog._logo_pressed()
+            dialog._version_pressed()
         self.assertEqual(self.window._dev, {})
         dialog._accept()
         self.app.on_command({"c": "appearance", **dialog.appearance})
@@ -1653,7 +1696,7 @@ class WindowTests(unittest.TestCase):
         self.qt.processEvents()
         self.assertEqual(self.window.panel.width(), 380)
         for _ in range(5):
-            dialog._logo_pressed()
+            dialog._version_pressed()
         self.assertIsNotNone(dialog._dev_page)
         self.assertEqual(self.window._dev, {})
         dialog.gamma_size.setValue(18)
@@ -1723,7 +1766,7 @@ class WindowTests(unittest.TestCase):
                     self.assertEqual(dialog.reset_other.x(), form.contentsMargins().left())
                     self.assertEqual(dialog.reset_other.width(), dialog.reset_other.parentWidget().width()
                                      - form.contentsMargins().left() - form.contentsMargins().right())
-                    host = dialog.check_updates.parentWidget()
+                    host = dialog.update_group
                     reset_gap = dialog.reset_other.mapTo(dialog, QPoint()).y() - host.mapTo(dialog, QPoint(0, host.height())).y()
                     dialog.tabs.setCurrentIndex(0)
                     self.qt.processEvents()
@@ -1749,14 +1792,12 @@ class WindowTests(unittest.TestCase):
                     self.qt.processEvents()
                     about = dialog._about_content
                     texts = [label.text() for label in about.findChildren(QLabel)]
-                    self.assertIn(f'{repository}: <a href="https://github.com/yrmuq/yucha">{link}</a>', texts)
-                    self.assertIn(f'{version}: {__version__}', texts)
-                    thanks = about.layout().itemAt(about.layout().count() - 1).widget()
-                    for height in (375, 500):
-                        dialog._settings_h.setValue(height)
-                        self.qt.processEvents()
-                        expected = about.height() - about.layout().contentsMargins().bottom() - 1
-                        self.assertLessEqual(abs(thanks.geometry().bottom() - expected), 1)
+                    self.assertTrue(any('href="https://github.com/yrmuq/yucha">github.com/yrmuq/yucha</a>' in text for text in texts))
+                    self.assertIn(__version__, texts)
+                    self.assertIn(i18n.tr(145), texts)
+                    self.assertEqual(about.layout().itemAt(1).widget(), dialog._version)
+                    self.assertLess(dialog._version.y(), about.layout().itemAt(2).widget().y())
+                    self.assertTrue(dialog.tabs.widget(1).isAncestorOf(dialog.update_button))
                     dialog.reject()
                     dialog.hide()
         finally:
@@ -1781,11 +1822,11 @@ class WindowTests(unittest.TestCase):
         self.assertFalse(button.isChecked())
         dev_page = dialog._dev_page
         for _ in range(5):
-            dialog._logo_pressed()
+            dialog._version_pressed()
         self.assertEqual(dialog.tabs.indexOf(dev_page), -1)
         self.assertTrue(button.isHidden())
         for _ in range(5):
-            dialog._logo_pressed()
+            dialog._version_pressed()
         self.assertIs(dialog.tabs.currentWidget(), dev_page)
         self.assertFalse(button.isHidden())
         self.assertTrue(button.isChecked())

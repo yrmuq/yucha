@@ -53,11 +53,14 @@ yucha is a Linux media player for synchronized viewing of local files and YouTub
 | Physical `M` / `R` keys | Toggle mute / cycle repeat: episode, playlist, off. |
 | `Enter` | Open chat; send the message on the next press. |
 | Tracks icon / quality label | Choose audio language, subtitles, or YouTube quality. |
+| `Settings` → `General` → `YouTube quality` | Set the initial quality from `480p` to `4K`; default `720p`. New videos use the best available quality up to this limit. Manual quality selection applies to the current video. |
 | `Settings` → `Room` → `Connect YouTube` | Import cookies from a detected browser or selected profile; remove the imported copy with `Remove session`. |
 | `Left Click` / `Right Click` on a playlist item | Play from the beginning / remove the item. |
 | Fullscreen screen edge | Toggle the side panel. |
 
-Player shortcuts do not interrupt text entry. YouTube session import does not verify access to a particular video. Imported cookies and saved configuration use `0600` permissions. `Dev` settings store explicit overrides only; `Dev` → `Reset` clears those overrides without changing ordinary appearance settings.
+Player shortcuts do not interrupt text entry. YouTube session import does not verify access to a particular video. Imported cookies and saved configuration use `0600` permissions.
+
+Update controls are in `General`. Click the version in `About` five times to show or hide `Dev`, which contains `Forward if behind` and `Slow if ahead`. `Dev` stores explicit overrides only; its `Reset` clears those overrides and restores the advanced synchronization switches without changing ordinary appearance settings.
 
 </details>
 

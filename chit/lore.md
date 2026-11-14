@@ -9,7 +9,7 @@
 - Open the first added playlist item paused; later additions must leave current playback unchanged.
 - In a connected room, Space marks an unready user ready without directly toggling playback; once ready, Space toggles playback.
 - Preserve room credentials when resetting general settings; both Reset buttons save immediately and Cancel does not undo them.
-- Save only explicit Dev overrides; opening Dev must not seed its defaults, and resetting Dev must preserve ordinary appearance settings.
+- Save only explicit Dev overrides; opening Dev must not seed its defaults, and resetting Dev clears its overrides and advanced synchronization switches while preserving ordinary appearance settings.
 - Preserve manual side-panel placement until its reset arrow is used, dragging is disabled, or the app restarts; movement must respect the bottom controls.
 - Keep scrollbars outside their content using the chat's shared EdgeScroll style, including newly created scroll areas.
 - Do not publish Flatpak packages anywhere, including dev drafts, until the user explicitly requests it.
