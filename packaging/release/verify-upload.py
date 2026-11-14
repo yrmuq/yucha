@@ -18,7 +18,8 @@ def verify(tag, draft):
     prerelease = False if draft else int(tag.lstrip("v").split(".")[2]) > 0
     if release["draft"] != draft or release["prerelease"] != prerelease:
         raise SystemExit("Release channel flags do not match")
-    if draft and ("Commit: " + os.environ["GITHUB_SHA"]) not in release.get("body", ""):
+    if draft and (("Commit: " + os.environ["GITHUB_SHA"]) not in release.get("body", "")
+                  or release.get("target_commitish") != os.environ["GITHUB_SHA"]):
         raise SystemExit("Draft does not identify this source commit")
     assets = {asset["name"]: asset for asset in release["assets"]}
     files = {path.name: path for path in Path("dist").iterdir() if path.is_file()}

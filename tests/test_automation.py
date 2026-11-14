@@ -50,7 +50,7 @@ class AutomationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "asset"
             path.write_bytes(b"published package")
-            release = {"draft": True, "prerelease": False, "body": "Commit: source-sha", "assets": [
+            release = {"draft": True, "prerelease": False, "body": "Commit: source-sha", "target_commitish": "source-sha", "assets": [
                 {"name": path.name, "state": "uploaded", "digest": "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()}]}
             with patch.dict(os.environ, {"GITHUB_REPOSITORY": "test/project", "GITHUB_SHA": "source-sha"}), \
                     patch.object(Path, "iterdir", return_value=[path]), \
