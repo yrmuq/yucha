@@ -29,6 +29,7 @@ flatpak install --user --noninteractive dist/yucha-x86_64-test.flatpak
 flatpak run --command=sh org.yqhome.yucha//test -ec '
     export LD_LIBRARY_PATH=/app/lib/yucha/usr/lib/yucha
     export PYTHONPATH=/app/lib/yucha/payload
+    export YUCHA_LIBMPV=/app/lib/yucha/usr/lib/yucha/libmpv.so.2
     /app/lib/yucha/python/bin/python3 -c "import yucha; from yucha.engine import _import_mpv; print(yucha.__version__); _import_mpv()"
 '
 flatpak uninstall --user --noninteractive org.yqhome.yucha//test
