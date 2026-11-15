@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "third_party" / "syncplay"))
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QTimer, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QSize, QTimer, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QKeyEvent, QMouseEvent, QPainter, QPalette, QWheelEvent
 from PySide6.QtTest import QTest
 from PySide6.QtNetwork import QNetworkReply
@@ -1059,6 +1059,48 @@ class WindowTests(unittest.TestCase):
         dialog._accept()
         self.assertEqual(dialog.appearance["language"], "System")
 
+    def test_pip_preserves_playback_and_restores_window_after_key_minimize_and_close(self):
+        window = self.window
+        window.set_panel(True)
+        window.resize(860, 520)
+        before = window.geometry()
+        player = window.video
+        window.ctl.calls.clear()
+        QTest.keyClick(window.video, Qt.Key.Key_P)
+        self.qt.processEvents()
+        self.assertTrue(window._pip)
+        self.assertEqual(window.size(), QSize(480, 270))
+        self.assertTrue(window.windowFlags() & Qt.WindowType.WindowStaysOnTopHint)
+        self.assertFalse(window.panel.isVisible())
+        self.assertFalse(window.bar.isVisible())
+        self.assertTrue(window.pip_controls.isVisible())
+        self.assertIs(window.video, player)
+        window._follow_cursor()
+        window._place_overlays()
+        self.assertFalse(window.bar.isVisible())
+        with patch("yucha.window.QGuiApplication.platformName", return_value="xcb"):
+            event = QKeyEvent(QEvent.Type.KeyPress, 0x0417, Qt.KeyboardModifier.NoModifier,
+                              33, 0, 0, "з")
+            QApplication.sendEvent(window.video, event)
+        self.qt.processEvents()
+        self.assertFalse(window._pip)
+        self.assertEqual(window.size(), before.size())
+        self.assertTrue(window.panel.isVisible())
+        window.showMinimized()
+        self.qt.processEvents()
+        self.assertTrue(window._pip)
+        self.assertFalse(window.isMinimized())
+        window.close()
+        self.qt.processEvents()
+        self.assertFalse(window._pip)
+        self.assertTrue(window.isVisible())
+        window.video.shutdown.assert_not_called()
+        self.assertFalse(any(call[0] in ("loadfile", "stop", "seek", "cycle") for call in window.ctl.calls))
+        self.assertFalse(window.isMinimized())
+        with patch("yucha.window.QApplication.focusWidget", return_value=window.bar_message):
+            QTest.keyClick(window.bar_message, Qt.Key.Key_P)
+        self.assertFalse(window._pip)
+
     def test_initial_youtube_quality_persists_without_reloading_current_playback(self):
         window = self.window
         window._apply_youtube_quality()
@@ -1574,7 +1616,7 @@ class WindowTests(unittest.TestCase):
         self.store.data["appearance"]["devTab"] = False
         dialog = self.dialog()
         for _ in range(5):
-            dialog._version_pressed()
+            QTest.mouseClick(dialog._logo, Qt.MouseButton.LeftButton)
         self.assertEqual(self.window._dev, {})
         dialog._accept()
         self.app.on_command({"c": "appearance", **dialog.appearance})
@@ -1696,7 +1738,7 @@ class WindowTests(unittest.TestCase):
         self.qt.processEvents()
         self.assertEqual(self.window.panel.width(), 380)
         for _ in range(5):
-            dialog._version_pressed()
+            QTest.mouseClick(dialog._logo, Qt.MouseButton.LeftButton)
         self.assertIsNotNone(dialog._dev_page)
         self.assertEqual(self.window._dev, {})
         dialog.gamma_size.setValue(18)
@@ -1766,7 +1808,7 @@ class WindowTests(unittest.TestCase):
                     self.assertEqual(dialog.reset_other.x(), form.contentsMargins().left())
                     self.assertEqual(dialog.reset_other.width(), dialog.reset_other.parentWidget().width()
                                      - form.contentsMargins().left() - form.contentsMargins().right())
-                    host = dialog.update_group
+                    host = dialog.check_updates.parentWidget()
                     reset_gap = dialog.reset_other.mapTo(dialog, QPoint()).y() - host.mapTo(dialog, QPoint(0, host.height())).y()
                     dialog.tabs.setCurrentIndex(0)
                     self.qt.processEvents()
@@ -1792,12 +1834,13 @@ class WindowTests(unittest.TestCase):
                     self.qt.processEvents()
                     about = dialog._about_content
                     texts = [label.text() for label in about.findChildren(QLabel)]
-                    self.assertTrue(any('href="https://github.com/yrmuq/yucha">github.com/yrmuq/yucha</a>' in text for text in texts))
-                    self.assertIn(__version__, texts)
-                    self.assertIn(i18n.tr(145), texts)
-                    self.assertEqual(about.layout().itemAt(1).widget(), dialog._version)
-                    self.assertLess(dialog._version.y(), about.layout().itemAt(2).widget().y())
-                    self.assertTrue(dialog.tabs.widget(1).isAncestorOf(dialog.update_button))
+                    self.assertTrue(any('href="https://github.com/yrmuq/yucha">github</a>' in text for text in texts))
+                    self.assertIn(i18n.trf(42, __version__), texts)
+                    self.assertIn(i18n.tr(146) + ":", texts)
+                    self.assertIn(i18n.tr(147), texts)
+                    self.assertTrue(any('GPL-3.0-or-later</a>' in text for text in texts))
+                    self.assertFalse(dialog._logo.pixmap().isNull())
+                    self.assertTrue(about.isAncestorOf(dialog.update_button))
                     dialog.reject()
                     dialog.hide()
         finally:
@@ -1822,11 +1865,11 @@ class WindowTests(unittest.TestCase):
         self.assertFalse(button.isChecked())
         dev_page = dialog._dev_page
         for _ in range(5):
-            dialog._version_pressed()
+            QTest.mouseClick(dialog._logo, Qt.MouseButton.LeftButton)
         self.assertEqual(dialog.tabs.indexOf(dev_page), -1)
         self.assertTrue(button.isHidden())
         for _ in range(5):
-            dialog._version_pressed()
+            QTest.mouseClick(dialog._logo, Qt.MouseButton.LeftButton)
         self.assertIs(dialog.tabs.currentWidget(), dev_page)
         self.assertFalse(button.isHidden())
         self.assertTrue(button.isChecked())

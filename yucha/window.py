@@ -48,6 +48,7 @@ from PySide6.QtWidgets import (
     QFontComboBox,
     QFormLayout,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLayout,
@@ -2708,7 +2709,6 @@ class SettingsDialog(QDialog):
         update_layout.addWidget(self.update_button, 0, Qt.AlignmentFlag.AlignLeft)
         update_layout.addWidget(self.update_note)
         update_layout.addWidget(self.download_button, 0, Qt.AlignmentFlag.AlignLeft)
-        other_form.addRow(self.update_group)
         other_form.addRow(self.reset_other)
         self.tabs.insertTab(1, other, tr(30))
 
@@ -2716,26 +2716,91 @@ class SettingsDialog(QDialog):
         self._about_content = about
         self._about_page = about
         about_layout = QVBoxLayout(about)
-        about_layout.setContentsMargins(8, 8, 8, 8)
+        about_layout.setContentsMargins(23, 23, 23, 23)
+        self._keep_side(about_layout)
         about_layout.setSpacing(8)
-        description = QLabel(tr(145))
-        description.setWordWrap(True)
-        self._version = QLabel(__version__)
-        self._version.setFixedHeight(22)
-        self._version.setAccessibleName(trf(42, __version__))
-        self._version.installEventFilter(self)
-        self._version_n = 0
-        self._version_at = 0.0
+        top = QHBoxLayout()
+        top.setSpacing(20)
+        identity = QVBoxLayout()
+        identity.addStretch()
+        self._logo = QLabel()
+        self._logo.setFixedSize(100, 100)
+        self._logo.setPixmap(QPixmap(str(Path(__file__).resolve().parent / "icon.png")).scaled(
+            100, 100, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        self._logo.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._logo.installEventFilter(self)
+        identity.addWidget(self._logo, 0, Qt.AlignmentFlag.AlignHCenter)
+        name = QLabel("yucha")
+        name.setObjectName("heading")
+        identity.addWidget(name, 0, Qt.AlignmentFlag.AlignHCenter)
+        identity.addStretch()
+        top.addLayout(identity, 1)
+        details = QVBoxLayout()
+        details.setSpacing(8)
+        details.addStretch()
         accent = hex_color(appearance.get("accentColor"), "#9A3A52")
-        repo = QLabel('<a style="color: {}" href="https://github.com/yrmuq/yucha">github.com/yrmuq/yucha</a>'.format(accent))
-        repo.setFixedHeight(22)
-        repo.setTextFormat(Qt.TextFormat.RichText)
-        repo.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
-        repo.setOpenExternalLinks(True)
-        about_layout.addWidget(description)
-        about_layout.addWidget(self._version)
-        about_layout.addWidget(repo)
+        def link(text, url):
+            label = QLabel('<a style="color: {}" href="{}">{}</a>'.format(accent, url, html.escape(text)))
+            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+            label.setOpenExternalLinks(True)
+            label.setWordWrap(True)
+            return label
+        for title, text, url in (
+            (tr(75), "github", "https://github.com/yrmuq/yucha"),
+            (tr(146), "GPL-3.0-or-later", "https://github.com/yrmuq/yucha/blob/main/LICENSE"),
+        ):
+            details.addWidget(QLabel(title + ":"))
+            details.addWidget(link(text, url))
+        self._version = QLabel(trf(42, __version__))
+        details.addWidget(self._version)
+        self._logo_n = 0
+        self._logo_at = 0.0
+        details.addWidget(self.update_group)
+        details.addStretch()
+        top.addLayout(details, 1)
+        about_layout.addLayout(top)
         about_layout.addStretch(1)
+        parts = QWidget()
+        parts.setMinimumWidth(520)
+        grid = QGridLayout(parts)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(8)
+        for column, title in enumerate((tr(147), tr(148), tr(149))):
+            label = QLabel(title)
+            label.setObjectName("heading")
+            grid.addWidget(label, 0, column)
+        for row, (name, upstream, detail) in enumerate((
+            ("libmpv", "mpv-player/mpv", 150),
+            ("Syncplay", "Syncplay/syncplay", 151),
+            ("yt-dlp", "yt-dlp/yt-dlp", 152),
+            ("PySide6", "pyside/pyside-setup", 153),
+            ("python-mpv", "jaseg/python-mpv", 154),
+            ("Twisted", "twisted/twisted", 155),
+            ("CPython", "python/cpython", 156),
+            ("Node.js", "nodejs/node", 157),
+        ), 1):
+            grid.addWidget(QLabel(name), row, 0, Qt.AlignmentFlag.AlignTop)
+            grid.addWidget(link(upstream, "https://github.com/" + upstream), row, 1, Qt.AlignmentFlag.AlignTop)
+            label = QLabel(tr(detail))
+            label.setWordWrap(True)
+            grid.addWidget(label, row, 2, Qt.AlignmentFlag.AlignTop)
+        grid.setColumnStretch(2, 1)
+        parts_host = QWidget()
+        parts_layout = QVBoxLayout(parts_host)
+        parts_layout.setContentsMargins(0, 0, 0, 12)
+        parts_area = QScrollArea()
+        self._parts_area = parts_area
+        parts_area.setFrameShape(QFrame.Shape.NoFrame)
+        parts_area.setWidgetResizable(True)
+        parts_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        parts_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        parts_area.setWidget(parts)
+        parts_area.viewport().setAutoFillBackground(False)
+        parts.setAutoFillBackground(False)
+        parts_area.setFixedHeight(parts.sizeHint().height())
+        parts_layout.addWidget(parts_area)
+        about_layout.addWidget(parts_host)
         self.tabs.addTab(about, tr(39))
         self._dev_page = None
         if bool(appearance.get("devTab")):
@@ -2849,21 +2914,21 @@ class SettingsDialog(QDialog):
                     self._place_settings_bar(host, area, bar)
                 elif kind == QEvent.Type.Wheel and watched is area.viewport():
                     bar.bump()
-        if watched is getattr(self, "_version", None) and kind == QEvent.Type.MouseButtonPress:
+        if watched is getattr(self, "_logo", None) and kind == QEvent.Type.MouseButtonPress:
             if event.button() == Qt.MouseButton.LeftButton:
-                self._version_pressed()
+                self._logo_pressed()
                 return True
         return super().eventFilter(watched, event)
 
-    def _version_pressed(self):
+    def _logo_pressed(self):
         now = time.monotonic()
-        if now - self._version_at > 2:
-            self._version_n = 0
-        self._version_at = now
-        self._version_n += 1
-        if self._version_n < 5:
+        if now - self._logo_at > 2:
+            self._logo_n = 0
+        self._logo_at = now
+        self._logo_n += 1
+        if self._logo_n < 5:
             return
-        self._version_n = 0
+        self._logo_n = 0
         enabled = self.tabs.indexOf(self._dev_page) < 0
         self._store_dev_tab(enabled)
         if enabled:
@@ -3542,6 +3607,9 @@ class SettingsDialog(QDialog):
         self._fit_settings_pages()
 
     def _fit_settings_pages(self):
+        area = self._parts_area
+        parts = area.widget()
+        area.setFixedHeight(max(parts.sizeHint().height(), parts.heightForWidth(max(520, area.viewport().width()))))
         for _host, area, _bar in self._scrolls:
             page = area.widget()
             page.setMinimumHeight(0)
@@ -3807,6 +3875,8 @@ class MainWindow(QMainWindow):
         self._last_cursor = QPoint(-1, -1)
         self._panel_open = False
         self._bar_open = True
+        self._pip = False
+        self._pip_pending = False
         self._users = []
         self._chat_lines = []
         self._arm_play = None
@@ -3910,6 +3980,19 @@ class MainWindow(QMainWindow):
         self.board.repaint_frame = self.video.redraw
         self.video.notes = self.board.paint_on
         col.addWidget(self.video, 1)
+        self.pip_controls = QWidget(column)
+        self.pip_controls.setObjectName("bar")
+        self._overlay(self.pip_controls)
+        pip_layout = QHBoxLayout(self.pip_controls)
+        pip_layout.setContentsMargins(6, 6, 6, 6)
+        self.pip_play = IconButton("play")
+        self.pip_play.clicked.connect(self._toggle_pause)
+        self.pip_return = QPushButton(tr(158))
+        self.pip_return.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.pip_return.clicked.connect(self._leave_pip)
+        pip_layout.addWidget(self.pip_play)
+        pip_layout.addWidget(self.pip_return)
+        self.pip_controls.hide()
 
         self.bar = QWidget(column)
         self.bar.setObjectName("bar")
@@ -4223,6 +4306,18 @@ class MainWindow(QMainWindow):
             return
         width = self.stage.width()
         height = self.stage.height()
+        if self._pip:
+            for widget in (self.bar, self.panel, self.chat_line, self.volume_box,
+                           self.volume_pop, self.tracks_pop, self.quality_pop,
+                           self.user_scroll, self.file_scroll, self.chat_scroll):
+                widget.hide()
+            hint = self.pip_controls.sizeHint()
+            self.pip_controls.setGeometry(max(0, (width - hint.width()) // 2),
+                                          max(0, height - hint.height() - 6), hint.width(), hint.height())
+            self.pip_controls.show()
+            self.pip_controls.raise_()
+            return
+        self.pip_controls.hide()
         inset = self._bar_height()
         gap = FLOAT_GAP if self._is_modern() else 0
         bar_rect = self._bar_rect()
@@ -4340,7 +4435,7 @@ class MainWindow(QMainWindow):
         return False
 
     def _dismiss_panel(self, watched, event):
-        if not self._panel_open:
+        if self._pip or not self._panel_open:
             return
         if event.button() != Qt.MouseButton.LeftButton:
             return
@@ -4659,7 +4754,7 @@ class MainWindow(QMainWindow):
         self._apply_subtitles()
         self._refresh_osd()
         pal = _palette(theme, appearance.get("accentColor"))
-        for button in (self.play, self.ready, self.chat_btn, self.room, self.gear, self.panel_home, self.bar_send,
+        for button in (self.play, self.pip_play, self.ready, self.chat_btn, self.room, self.gear, self.panel_home, self.bar_send,
                        self.volume_btn, self.tracks_btn, self.quality_btn, self.files_add, self.link_add,
                        self.mute_h, self.mute_v):
             button.set_ink(pal["button_fg"], pal["on_fg"], pal["accent"])
@@ -4863,12 +4958,12 @@ class MainWindow(QMainWindow):
     def _slide_panel(self, animate):
         end = self._panel_rect()
         self.panel.setGeometry(end)
-        self.panel.setVisible(self._panel_open)
+        self.panel.setVisible(self._panel_open and not self._pip)
 
     def _slide_bar(self, animate):
         end = self._bar_rect()
         self.bar.setGeometry(end)
-        self.bar.setVisible(self._bar_open)
+        self.bar.setVisible(self._bar_open and not self._pip)
 
     def _panel_span(self, width):
         room = max(PANEL_MIN, width - 80)
@@ -5010,6 +5105,8 @@ class MainWindow(QMainWindow):
         self._open_chat_field()
 
     def _enter_chat(self):
+        if self._pip:
+            self._leave_pip()
         if not (self._chat_open and self.chat_line.isVisible()):
             self._open_chat_field()
             return
@@ -5067,6 +5164,8 @@ class MainWindow(QMainWindow):
         self.volume.blockSignals(False)
         self.volume_text.setText(str(level))
         self._sync_volume_slider(level)
+        if self._pip:
+            return
         self._volume_until = time.monotonic() + VOLUME_LIFE
         if self._volume_overlay() == "vertical":
             self.volume_box.hide()
@@ -5152,6 +5251,13 @@ class MainWindow(QMainWindow):
             return True
         # XKB adds eight to Linux key codes, independently of the layout.
         physical = event.nativeScanCode() if QGuiApplication.platformName() in ("xcb", "wayland", "wayland-egl") else 0
+        if key == int(Qt.Key.Key_P) or physical == 33:
+            if not event.isAutoRepeat():
+                if self._pip:
+                    self._leave_pip()
+                else:
+                    self._enter_pip()
+            return True
         if key == int(Qt.Key.Key_M) or physical == 58:
             if not event.isAutoRepeat():
                 self._toggle_mute()
@@ -5507,6 +5613,9 @@ class MainWindow(QMainWindow):
         reactor.callFromThread(client.toggleReady)
 
     def _toggle_full(self):
+        if self._pip:
+            self._leave_pip()
+            return
         if self.isFullScreen():
             self.showNormal()
         else:
@@ -5666,6 +5775,8 @@ class MainWindow(QMainWindow):
         self._refresh_osd()
 
     def _follow_cursor(self):
+        if self._pip:
+            return
         if self._panel_open or self._chat_open:
             self._set_bar(True)
             return
@@ -5910,6 +6021,7 @@ class MainWindow(QMainWindow):
         if paused is not None:
             self._paused = bool(paused)
             self.play.set_kind("play" if paused else "pause")
+            self.pip_play.set_kind("play" if paused else "pause")
         try:
             self._speed = float(self._get("speed") or 1)
         except (TypeError, ValueError):
@@ -6108,7 +6220,58 @@ class MainWindow(QMainWindow):
             return
         self._notes.show(summary, body)
 
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if (event.type() == QEvent.Type.WindowStateChange and self.isMinimized()
+                and not self._pip and not self._pip_pending and self._current_path):
+            self._pip_pending = True
+            QTimer.singleShot(0, self._minimized_pip)
+
+    def _minimized_pip(self):
+        self._pip_pending = False
+        if self.isMinimized() and not self._pip:
+            self._enter_pip()
+
+    def _enter_pip(self):
+        if self._pip or not self._current_path:
+            return
+        self._pip_saved = (self.saveGeometry(), self.windowFlags(),
+                           self.windowState() & ~Qt.WindowState.WindowMinimized)
+        self._pip = True
+        self._close_popups(None)
+        self.hide()
+        self.setWindowState(Qt.WindowState.WindowNoState)
+        self.setMinimumSize(320, 180)
+        # shortcut: native Wayland stacking follows the compositor until Qt exposes a PiP protocol.
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        self.setWindowTitle("yucha — " + tr(159))
+        self.resize(480, 270)
+        area = self.screen().availableGeometry()
+        self.move(area.right() - self.width() - 24, area.bottom() - self.height() - 24)
+        self.show()
+        self._place_overlays()
+        self.video.setFocus()
+
+    def _leave_pip(self):
+        if not self._pip:
+            return
+        geometry, flags, state = self._pip_saved
+        self.hide()
+        self.setWindowFlags(flags)
+        self.setWindowTitle("yucha")
+        self.setMinimumSize(860, 520)
+        self.restoreGeometry(geometry)
+        self.setWindowState(state)
+        self.show()
+        self._pip = False
+        self._place_overlays()
+        self.video.setFocus()
+
     def closeEvent(self, event):
+        if self._pip:
+            event.ignore()
+            self._leave_pip()
+            return
         self._ui_timer.stop()
         self._knob_timer.stop()
         self._awake.close()

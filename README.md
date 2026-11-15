@@ -31,6 +31,7 @@ yucha is a Linux media player for synchronized viewing of local files and YouTub
 - YouTube quality selection from `480p`, audio-language selection, and subtitles in the system language and English.
 - Browser-session import for YouTube; imported cookies are stored locally and can be removed.
 - Buffered YouTube ranges displayed in gray on the seek bar.
+- Picture-in-Picture with the same playback session, activated by a shortcut or minimizing the player.
 - Persistent appearance settings, system/light/dark themes, and system or manual interface language selection.
 - Background notifications and prevention of automatic sleep during playback.
 
@@ -47,7 +48,8 @@ yucha is a Linux media player for synchronized viewing of local files and YouTub
 | Playlist link icon | Add a YouTube URL. Each room participant needs the same video. |
 | `Space` | In a connected room, mark yourself ready first; once ready, toggle playback. Outside a room, toggle playback. |
 | `Right Click` on video / playback button | Toggle playback. |
-| `Double Click` | Toggle fullscreen. |
+| Physical `P` key / minimize with media open | Enter Picture-in-Picture. Press `P`, double-click the video, use `Return to player`, or close the small window to return. Playback and the room connection continue. |
+| `Double Click` | Toggle fullscreen outside Picture-in-Picture. |
 | `Left` / `Right` | Seek backward / forward by 5 seconds. |
 | `Up` / `Down` / wheel over video | Adjust volume. |
 | Physical `M` / `R` keys | Toggle mute / cycle repeat: episode, playlist, off. |
@@ -58,9 +60,9 @@ yucha is a Linux media player for synchronized viewing of local files and YouTub
 | `Left Click` / `Right Click` on a playlist item | Play from the beginning / remove the item. |
 | Fullscreen screen edge | Toggle the side panel. |
 
-Player shortcuts do not interrupt text entry. YouTube session import does not verify access to a particular video. Imported cookies and saved configuration use `0600` permissions.
+Player shortcuts do not interrupt text entry. Picture-in-Picture requests an always-on-top window; on native Wayland, use the window manager's `Keep Above` command if it does not support this request. YouTube session import does not verify access to a particular video. Imported cookies and saved configuration use `0600` permissions.
 
-Update controls are in `General`. Click the version in `About` five times to show or hide `Dev`, which contains `Forward if behind` and `Slow if ahead`. `Dev` stores explicit overrides only; its `Reset` clears those overrides and restores the advanced synchronization switches without changing ordinary appearance settings.
+Update controls are in `About`. Click its logo five times to show or hide `Dev`, which contains `Forward if behind` and `Slow if ahead`. `Dev` stores explicit overrides only; its `Reset` clears those overrides and restores the advanced synchronization switches without changing ordinary appearance settings.
 
 </details>
 
