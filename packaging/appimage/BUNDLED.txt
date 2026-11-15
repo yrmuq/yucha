@@ -21,10 +21,10 @@ What this image contains:
             third_party/syncplay/syncplay/resources/third-party-notices.txt.
     yucha does not patch these files and does not open Syncplay's window.
 
-  CPython 3.12.15
-    Build: https://github.com/astral-sh/python-build-standalone/releases/tag/20261013
+  CPython
+    Build: https://github.com/astral-sh/python-build-standalone
+    Exact archive and checksum: PY_URL and PY_SHA in packaging/appimage/build.sh
     License: Python Software Foundation License
-    File: cpython-3.12.15+20261013-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz
 
   libmpv
     Copied from the build machine's libmpv package, with the libraries
@@ -40,8 +40,15 @@ What this image contains:
     License: Unlicense. Package license files stay with the wheels.
     libmpv uses yt-dlp to obtain streams, audio tracks, and subtitles.
 
+  Fontconfig configuration
+    Copied from the same build system as the bundled Fontconfig library.
+    Source: https://fontconfig.org/
+    Copyright and permission notices: LICENSE.fontconfig.
+    System and user font directories remain in use.
+
   Node.js
-    Source: https://github.com/nodejs/node/tree/v24.22.2
+    Source: https://github.com/nodejs/node
+    Exact archive and checksum: NODE_URL and NODE_SHA in packaging/appimage/build.sh
     License: MIT, with third-party notices in LICENSE.node.
     Runs yt-dlp's YouTube challenge solver.
 

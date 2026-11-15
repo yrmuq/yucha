@@ -3,7 +3,10 @@
 """Labels from languages/*.ini. A line is `id = English original = text shown`."""
 
 import os
+import re
+from collections import Counter
 from pathlib import Path
+from string import Formatter
 
 ROOT = Path(__file__).resolve().parents[1]
 FOLDER = ROOT / "languages"
@@ -16,12 +19,14 @@ _codes = {"en": "English", "ru": "Russian"}
 
 def system_language():
     """The language file for this machine. An unknown language stays English."""
-    raw = os.environ.get("LC_ALL") or os.environ.get("LC_MESSAGES") or os.environ.get("LANG") or ""
-    code = raw.split(".")[0].split("_")[0].lower()
-    name = _codes.get(code, "English")
-    if name not in languages():
-        return "English"
-    return name
+    choices = os.environ.get("LANGUAGE", "").split(":")
+    choices.append(os.environ.get("LC_ALL") or os.environ.get("LC_MESSAGES") or os.environ.get("LANG") or "")
+    for raw in choices:
+        code = re.split(r"[_.@-]", raw.strip().lower())[0]
+        name = _codes.get(code)
+        if name in languages():
+            return name
+    return "English"
 
 
 def languages():
@@ -40,6 +45,8 @@ def use(name):
     global _phrases, _name
     base = _read(_file("English"))
     chosen = str(name or "").strip() or "English"
+    if chosen == "System":
+        chosen = system_language()
     path = _file(chosen)
     if path is None:
         chosen = "English"
@@ -50,7 +57,7 @@ def use(name):
     for number in set(base) | set(overlay):
         original = base.get(number, {}).get("en") or overlay.get(number, {}).get("en") or ""
         shown = overlay.get(number, {}).get("text") if number in overlay else ""
-        merged[number] = {"en": original, "text": shown or original}
+        merged[number] = {"en": original, "text": shown if shown and _same_fields(original, shown) else original}
     _name = chosen
     _phrases = merged
 
@@ -68,7 +75,17 @@ def tr(number):
     return row["text"] or row["en"] or str(number)
 
 
-def trf(number, *args):
+def _same_fields(original, translated):
+    def fields(pattern):
+        return Counter((name, spec, conversion) for _, name, spec, conversion in Formatter().parse(pattern)
+                       if name is not None)
+    try:
+        return fields(original) == fields(translated)
+    except ValueError:
+        return False
+
+
+def trf(number, *args, **kwargs):
     """Like tr, but keeps the English original when a translation drops a {}."""
     number = _number(number)
     row = _phrases.get(number)
@@ -76,13 +93,13 @@ def trf(number, *args):
         return "" if number is None else str(number)
     original = row["en"]
     pattern = row["text"] or original
-    if pattern.count("{}") != original.count("{}"):
+    if not _same_fields(original, pattern):
         pattern = original
     try:
-        return pattern.format(*args)
+        return pattern.format(*args, **kwargs)
     except (IndexError, KeyError, ValueError):
         try:
-            return original.format(*args)
+            return original.format(*args, **kwargs)
         except (IndexError, KeyError, ValueError):
             return original or str(number)
 

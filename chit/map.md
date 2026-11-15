@@ -3,33 +3,37 @@
 Read only the row the task needs. Do not read `third_party/` or `packaging/appimage/build/` unless the user asked to update that tree.
 
 ## Own code
-- `yucha/app.py` — starts Qt, builds the client, calls `launch_player`.
-- `yucha/window.py` — playlist, chat, seek, volume, settings; `EdgeScroll` and `ScrollEdges` standardize external scrollbars. Large. Search a class. Do not read the whole file.
-- `yucha/engine.py` — `Picture` draws the video through `libmpv`. This is the player.
+- `yucha/app.py` — starts Qt with shared OpenGL contexts for detached video, builds the client, calls `launch_player`.
+- `yucha/window.py` — playlist, chat, seek, volume, settings, Picture-in-Picture; `EdgeScroll` and `ScrollEdges` standardize external scrollbars. Large. Search a class. Do not read the whole file.
+- `yucha/engine.py` — `Picture` draws the video through `libmpv` and signals rejected YouTube sessions to the window. This is the player.
 - `yucha/youtube.py` — canonical YouTube URLs, track filtering, browser cookie import and private local storage, `yt-dlp` playback options.
 - `yucha/ytdl.py` — yt-dlp entry point; keeps extractor cookie changes in memory so it cannot overwrite imported sessions.
 - `yucha/session.py` — Syncplay client. `mpv --version`, then attach to the `libmpv` socket. Does not start a second player.
 - `yucha/player_ui.py` — methods Syncplay calls. Forwards them. Does not draw.
 - `yucha/bridge.py` — writes those calls to `events.jsonl` for the window.
-- `yucha/system.py` — open a file in an already running window, sleep inhibit, notifications.
+- `yucha/system.py` — open a file in an already running window, sleep inhibit, notifications, KDE window-menu activation.
 - `yucha/configstore.py` — saved host, room, and settings.
 - `yucha/i18n.py` — reads `languages/*.ini`. A line is `id = English original = text shown`.
 - `languages/` — English and Russian ini files. The id is a number.
 - `tests/test_guards.py`, `tests/test_system.py`, `tests/test_release.py`, `tests/test_color.py` — config, system, release, and room checks.
+- `tests/test_automation.py` — runtime-pin refresh and uploaded asset/channel verification.
 - `tests/test_window.py` — Qt control, settings, and overlay regressions. Runs offscreen without mpv or a room server.
 
 ## Packaging
 - `packaging/appimage/build.sh` — builds the image and `.zsync`, bundles `libmpv` and PipeWire client modules/config, stages a separate libva fallback, writes the `mpv --version` stub.
 - `packaging/appimage/build-ci.sh` — all CI builds use Debian 13 with glibc 2.41; tests run with the bundled Python and libraries.
+- `packaging/appimage/verify.py` — checks final update metadata, zsync contents and release checksums.
+- `packaging/flatpak/build-test.sh` — standalone x86_64 test builder, disconnected from publication workflows.
+- `.github/actions/build/` — shared desktop build and dependency cache.
 - `packaging/appimage/check-abi.py` — rejects ELF dependencies newer than glibc 2.41 before publication, including dependency prereleases.
-- `packaging/appimage/AppRun` — selects host libva when the loader accepts it, otherwise the staged fallback; sets driver and bundled PipeWire paths, `YUCHA_MPV`, and `YUCHA_LIBMPV`.
+- `packaging/appimage/AppRun` — selects matching Fontconfig defaults and host libva when the loader accepts it, otherwise the staged fallback; sets driver and bundled PipeWire paths, `YUCHA_MPV`, and `YUCHA_LIBMPV`.
 - `requirements.txt` — `PySide6_Essentials`, Twisted, `python-mpv`, and `yt-dlp` with its default dependencies.
-- `.github/workflows/appimage.yml` — builds a version tag. `X.Y.0` is a release. Any other `X.Y.Z` is a prerelease.
-- `.github/workflows/release.yml` — a merge from `dev` into `main` raises Y, publishes, then merges the published commit back into `dev`. An explicit `[refresh-release]` merge replaces the current release once.
-- `.github/workflows/dev.yml` — tests and updates the draft on a manual request or an explicit `[draft]` commit on `dev`. Ordinary pushes skip the build. It does not take a version number.
+- `.github/workflows/appimage.yml` — manual package checks without publication.
+- `.github/workflows/release.yml` — a merge from `dev` into `main` raises Y, publishes, then merges the published commit back into `dev`. Pending dependency changes block publication; successful publication refreshes the dev draft.
+- `.github/workflows/dev.yml` — tests every dev push and updates the existing draft without a tag; Flatpak publication is on hold, including drafts.
 - `.github/workflows/deps.yml` — Dependabot prerelease on `deps`. It does not change `main`.
-- `.github/workflows/pins.yml` — `appimagetool` pin, on the 28th. Same prerelease path, not `main`.
-- `packaging/release/` — version bump, notes, and synchronization of the published release into `dev`. Not the player.
+- `.github/workflows/pins.yml` — Python, Node.js and appimagetool pins, weekly on Friday. Preserves accumulated changes on `deps`.
+- `packaging/release/` — version allocation, notes, verified asset publication and safe synchronization of `main`, `dev` and `deps`. Not the player.
 
 ## Libraries
 - `libmpv` — decodes and draws. Debian 13 package copied at build time.

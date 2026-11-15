@@ -1,47 +1,39 @@
-# Copyright (C) 2026 yrmuq
-# SPDX-License-Identifier: GPL-3.0-or-later
-# Tested AppImage from dev, on manual request or an explicit [draft] commit.
-# It updates the draft release "yucha dev" and does not replace an X.Y.0 release.
-
 name: Development build
-
 on:
-  workflow_dispatch:
   push:
     branches: [dev]
-
+  workflow_dispatch:
 permissions:
   contents: write
-
 jobs:
-  appimage:
-    if: >-
-      github.ref == 'refs/heads/dev' &&
-      (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[draft]'))
+  build:
+    if: github.ref == 'refs/heads/dev'
     concurrency:
-      group: dev-draft
+      group: dev-build
       cancel-in-progress: true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Test and build
-        run: bash packaging/appimage/build-ci.sh
-
-      - name: Publish draft
+      - uses: ./.github/actions/build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ github.sha }}-${{ github.run_id }}
+          path: dist/*
+          if-no-files-found: error
+  publish:
+    needs: build
+    concurrency:
+      group: distribution-upload
+      queue: max
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-${{ github.sha }}-${{ github.run_id }}
+          path: dist
+      - name: Update existing draft
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          set -eu
-          printf '%s\n' 'Development build from dev. Not a release.' \
-            "Commit: $GITHUB_SHA" > notes.md
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          gh release delete dev --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
-          git tag -a dev -m "$(cat notes.md)"
-          git push origin refs/tags/dev
-          gh release create dev dist/yucha-x86_64.AppImage dist/yucha-x86_64.AppImage.zsync \
-            --repo "$GITHUB_REPOSITORY" \
-            --draft \
-            --title "yucha dev" \
-            --notes-file notes.md
+        run: bash packaging/release/draft.sh

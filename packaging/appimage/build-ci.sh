@@ -13,4 +13,5 @@ docker run --rm --mount "type=bind,src=$ROOT,dst=/src" --workdir /src \
             libmpv2 pipewire-bin libpipewire-0.3-modules libspa-0.2-modules \
             libegl1 libgl1 libxcb-cursor0 fonts-dejavu-core python3
         bash packaging/appimage/build.sh
+        chown -R "$(stat -c %u:%g /src)" /src/dist /src/packaging/appimage/build
     '

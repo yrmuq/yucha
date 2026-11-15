@@ -6,7 +6,7 @@ import sys
 import tempfile
 import unittest
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,7 +28,7 @@ class Guards(unittest.TestCase):
                                "sub": "bad", "face": {"bg": []},
                                "bar_buttons": {"volume": False, "tracks": "false"}})
         self.assertEqual(result["bar"], 160)
-        self.assertEqual(result["settings_w"], 450)
+        self.assertEqual(result["settings_w"], 580)
         self.assertEqual(result["panel_alpha"], 0)
         self.assertEqual(result["gamma"], 96)
         self.assertEqual(result["chat_max"], 2160)
@@ -55,7 +55,20 @@ class Guards(unittest.TestCase):
             self.assertEqual(original.strip(), shown.strip())
             self.assertNotIn(number.strip(), seen)
             seen.add(number.strip())
-        self.assertEqual(len(seen), 142)
+        self.assertEqual(len(seen), 164)
+
+    def test_system_locale_and_format_fields_preserve_translation_safety(self):
+        with patch.dict(os.environ, {"LANGUAGE": "de:ru-RU", "LC_ALL": "en_US.UTF-8"}):
+            self.assertEqual(i18n.system_language(), "Russian")
+            i18n.use("System")
+            self.assertEqual(i18n.current(), "Russian")
+        try:
+            for translated in ("{user}", "{name!r}", "{name:>10}", "{name"):
+                self.assertFalse(i18n._same_fields("{name}", translated))
+            self.assertTrue(i18n._same_fields("{name}: {0:.2f}", "{0:.2f} — {name}"))
+            self.assertIsNone(i18n._file("../English"))
+        finally:
+            i18n.use("English")
 
     def test_russian_keeps_the_same_ids(self):
         def rows(name):

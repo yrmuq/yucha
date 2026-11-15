@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import io
+import copy
 import json
 import os
 import sys
@@ -27,11 +28,31 @@ from yucha.session import RoomClient
 from yucha.youtube import (
     audio_tracks, cookie_file, detected_browsers, extract_youtube_cookies, has_account_cookies,
     playback_options, quality_label,
-    quality_tracks, save_cookies, subtitle_tracks, video_url,
+    quality_tracks, save_cookies, subtitle_tracks, video_url, youtube_format,
 )
 
 
 class YouTubeTests(unittest.TestCase):
+    def test_initial_quality_caps_video_and_falls_back_to_available_lower_resolution(self):
+        from yt_dlp import YoutubeDL
+        info = {"id": "test", "title": "Test", "formats": [
+            {"format_id": "audio", "url": "https://example.test/audio", "ext": "m4a",
+             "vcodec": "none", "acodec": "mp4a", "abr": 128},
+            *[{"format_id": str(height), "url": "https://example.test/" + str(height), "ext": "mp4",
+               "vcodec": "avc1", "acodec": "none", "height": height}
+              for height in (360, 480, 720, 1080, 1440, 2160, 4320)]]}
+        for limit in (480, 720, 1080, 1440, 2160):
+            with self.subTest(limit=limit), YoutubeDL({"format": youtube_format(limit), "quiet": True}) as downloader:
+                selected = downloader.process_ie_result(copy.deepcopy(info), download=False)
+                self.assertEqual([track["format_id"] for track in selected["requested_formats"]], [str(limit), "audio"])
+        for available, expected in ((480, "480"), (360, "360")):
+            reduced = copy.deepcopy(info)
+            reduced["formats"] = [track for track in reduced["formats"] if track.get("height", 0) <= available]
+            with YoutubeDL({"format": youtube_format(720), "quiet": True}) as downloader:
+                selected = downloader.process_ie_result(reduced, download=False)
+                self.assertEqual(selected["requested_formats"][0]["format_id"], expected)
+        self.assertEqual(youtube_format("invalid"), youtube_format(720))
+
     def test_playback_subtitle_options_pass_the_real_ytdlp_parser(self):
         from yt_dlp import YoutubeDL, parse_options
 

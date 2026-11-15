@@ -1,0 +1,13 @@
+name: Build desktop packages
+description: Test and package the supported x86_64 desktop targets
+runs:
+  using: composite
+  steps:
+    - uses: actions/cache@v4
+      with:
+        path: packaging/appimage/build/cache
+        key: desktop-${{ runner.os }}-${{ runner.arch }}-debian13-${{ hashFiles('requirements.txt', 'packaging/appimage/build.sh', 'packaging/appimage/build-ci.sh') }}
+    - shell: bash
+      run: bash packaging/appimage/build-ci.sh
+    - shell: bash
+      run: python3 packaging/appimage/verify.py dist

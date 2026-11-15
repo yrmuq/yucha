@@ -12,7 +12,12 @@ from urllib.parse import parse_qs, urlsplit
 
 from PySide6.QtCore import QLocale
 
-from yucha.configstore import config_dir
+from yucha.configstore import config_dir, youtube_quality
+
+
+def youtube_format(height=720):
+    height = youtube_quality(height)
+    return "bestvideo[height<={0}]+bestaudio/best[height<={0}]".format(height)
 
 
 def cookie_file():

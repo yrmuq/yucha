@@ -11,6 +11,12 @@ on:
 
 permissions:
   contents: write
+  actions: write
+
+concurrency:
+  group: distribution-upload
+  queue: max
+  cancel-in-progress: false
 
 jobs:
   cut:
@@ -42,7 +48,7 @@ jobs:
 
       - name: Build
         if: steps.tag.outputs.version != ''
-        run: bash packaging/appimage/build-ci.sh
+        uses: ./.github/actions/build
 
       - name: Publish
         if: steps.tag.outputs.version != ''
@@ -52,13 +58,7 @@ jobs:
           set -eu
           ver="${{ steps.tag.outputs.version }}"
           git push origin HEAD
-          if [ "${{ steps.tag.outputs.refresh }}" = "true" ]; then
-            git push origin \
-              --force-with-lease="refs/tags/v${ver}:${{ steps.tag.outputs.previous_tag }}" \
-              "refs/tags/v${ver}"
-          else
-            git push origin "refs/tags/v${ver}"
-          fi
+          git push origin "refs/tags/v${ver}"
           bash packaging/release/publish.sh "v${ver}"
 
       - name: Sync published release into dev
@@ -67,3 +67,24 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           bash packaging/release/sync-dev.sh
+
+      - name: Refresh the dev draft
+        if: steps.tag.outputs.version != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run dev.yml --ref dev
+
+  sync-deps:
+    needs: cut
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Preserve pending dependency changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          bash packaging/release/sync-deps.sh

@@ -1,17 +1,22 @@
 # Copyright (C) 2026 yrmuq
 # SPDX-License-Identifier: GPL-3.0-or-later
-# The 28th, 09:00 UTC: refresh the appimagetool pin Dependabot cannot see.
+# Fridays, 09:00 UTC: refresh tool/runtime pins Dependabot cannot see.
 # The result is a dependency prerelease on deps, not a commit on main.
 
 name: Pins
 
 on:
   schedule:
-    - cron: "0 9 28 * *"
+    - cron: "0 9 * * 5"
   workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:
+  group: distribution-upload
+  queue: max
+  cancel-in-progress: false
 
 jobs:
   pins:
@@ -22,6 +27,12 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
+
+      - name: Preserve accumulated dependency updates
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          bash packaging/release/sync-deps.sh
 
       - name: Update pin
         id: pins
@@ -48,11 +59,12 @@ jobs:
           GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -eu
+          set -euo pipefail
           git add packaging/appimage/build.sh
-          git commit -m "Update the pinned appimagetool."
+          git commit -m "Update pinned desktop runtimes and packaging tools"
           ver="$(bash packaging/release/prerelease.sh | tail -n 1)"
-          bash packaging/appimage/build-ci.sh
-          git push --force origin HEAD:refs/heads/deps
+          git push origin HEAD:refs/heads/deps
           git push origin "refs/tags/v${ver}"
+          bash packaging/appimage/build-ci.sh
+          git push origin HEAD:refs/heads/deps
           bash packaging/release/publish.sh "v${ver}"

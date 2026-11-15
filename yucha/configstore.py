@@ -7,7 +7,11 @@ import math
 import os
 from pathlib import Path
 
-from yucha.i18n import system_language
+YOUTUBE_QUALITIES = (480, 720, 1080, 1440, 2160)
+
+
+def youtube_quality(value):
+    return value if type(value) is int and value in YOUTUBE_QUALITIES else 720
 
 
 def config_dir():
@@ -65,7 +69,7 @@ def dev_settings(value):
         "panel": (380, 240, 900), "bar": (57, 36, 160),
         "bar_alpha": (90, 0, 100), "panel_alpha": (90, 0, 100),
         "osd_alpha": (90, 0, 100), "bar_inset": (30, 0, 40),
-        "settings_h": (375, 240, 900), "settings_w": (450, 360, 1100),
+        "settings_h": (545, 240, 900), "settings_w": (580, 360, 1100),
         "settings_pad": (23, 0, 160), "settings_top": (23, 0, 160),
         "gamma": (10, 1, 96),
         "chat_max": (340, 0, 2160), "bar_min": (500, 0, 3840),
@@ -189,7 +193,8 @@ DEFAULTS = {
         "volumeMax": 100,
         "volumeOverlay": "horizontal",
         "mainPanel": "right",
-        "language": "English",
+        "language": "System",
+        "youtubeQuality": 720,
         "subFont": "sans-serif",
         "subFontSize": 55,
         "subColor": "#FFFFFF",
@@ -204,11 +209,8 @@ DEFAULTS = {
 class ConfigStore(object):
     def __init__(self):
         self.path = config_dir() / "config.json"
-        fresh = not self.path.is_file()
         self.data = json.loads(json.dumps(DEFAULTS))
         self.load()
-        if fresh:
-            self.data["appearance"]["language"] = system_language()
 
     def load(self):
         if not self.path.is_file():
@@ -221,6 +223,7 @@ class ConfigStore(object):
             if isinstance(loaded.get(section), dict):
                 self.data[section].update(loaded[section])
         look = self.data["appearance"]
+        look["youtubeQuality"] = youtube_quality(look.get("youtubeQuality"))
         look["uiFontSize"] = bounded_int(look.get("uiFontSize"), 13, 10, 16)
         look["chatFontSize"] = bounded_int(look.get("chatFontSize"), 17, 14, 20)
         look["checkUpdates"] = bool(look.get("checkUpdates", True))

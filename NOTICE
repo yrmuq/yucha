@@ -27,8 +27,8 @@ Unmodified source snapshots are in this repository:
                         controls.
 
   An AppImage built by packaging/appimage/build.sh bundles
-  CPython 3.12.15, the stripped install_only build from
-  python-build-standalone release 20261013, and the unmodified
+  CPython, the stripped install_only build pinned in that script from
+  python-build-standalone, and the unmodified
   Syncplay client. It does not bundle a third-party mpv program.
   The picture is drawn by libmpv copied from the build machine's
   libmpv package, with the libraries that package needs.

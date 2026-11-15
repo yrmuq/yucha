@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT / "third_party" / "syncplay"))
 from twisted.internet import reactor
 
 from yucha.bridge import Bridge
-from yucha.configstore import ConfigStore, bounded_int, dev_settings, font_name, hex_color, port_number, runtime_dir
+from yucha.configstore import ConfigStore, bounded_int, dev_settings, font_name, hex_color, port_number, runtime_dir, youtube_quality
 from yucha.i18n import languages, tr, use
 from yucha.player_ui import PlayerUI
 from yucha.session import launch_player, make_client, submit_login
@@ -124,9 +124,10 @@ class App(object):
             appearance["mainPanel"] = "left" if side == "left" else "right"
             language = command.get("language", appearance.get("language") or "English")
             language = str(language or "English")
-            if language not in languages():
+            if language != "System" and language not in languages():
                 language = "English"
             appearance["language"] = language
+            appearance["youtubeQuality"] = youtube_quality(command.get("youtubeQuality", appearance.get("youtubeQuality")))
             appearance["subFont"] = font_name(command.get("subFont", appearance.get("subFont")))
             appearance["subFontSize"] = bounded_int(command.get("subFontSize"), 55, 52, 58)
             appearance["subColor"] = hex_color(command.get("subColor"), "#FFFFFF")
@@ -173,7 +174,9 @@ def main():
 
     # Qt may contact the portal during construction; register the desktop ID first.
     QApplication.setApplicationName("yucha")
-    QGuiApplication.setDesktopFileName("yucha")
+    QGuiApplication.setDesktopFileName(os.environ.get("FLATPAK_ID") or "yucha")
+    # Keep libmpv's rendering context when moving the video between windows.
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     qt = QApplication([])
     icon = Path(__file__).resolve().parent / "icon.png"
     if icon.is_file():

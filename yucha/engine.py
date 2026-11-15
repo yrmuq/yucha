@@ -16,7 +16,7 @@ from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QSizePolicy
 
 from yucha.i18n import trf
-from yucha.youtube import playback_options
+from yucha.youtube import playback_options, youtube_format
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "third_party" / "syncplay" / "syncplay" / "resources" / "syncplayintf.lua"
@@ -83,6 +83,7 @@ class Picture(QOpenGLWidget):
     arrowPressed = Signal(int)
     filesDropped = Signal(list)
     enterPressed = Signal()
+    youtubeAuthRequired = Signal()
 
     def __init__(self, runtime, parent=None):
         super().__init__(parent)
@@ -106,11 +107,19 @@ class Picture(QOpenGLWidget):
             pass
         self._start_engine()
 
+    def _on_log(self, level, prefix, text):
+        _player_log(level, prefix, text)
+        if (prefix == "ytdl_hook" and "sign in to confirm" in text.casefold()
+                and "not a bot" in text.casefold() and not self.youtube_auth_failed):
+            self.youtube_auth_failed = True
+            self.youtubeAuthRequired.emit()
+
     def _start_engine(self):
+        self.youtube_auth_failed = False
         mpv = _import_mpv()
         self._mpv_mod = mpv
         self.mpv = mpv.MPV(
-            log_handler=_player_log,
+            log_handler=self._on_log,
             loglevel="warn",
             vo="libmpv",
             idle="yes",
@@ -123,7 +132,7 @@ class Picture(QOpenGLWidget):
             demuxer_max_bytes="512MiB",
             ytdl="yes",
             # libmpv merges streams itself; yt-dlp otherwise prefers 360p without ffmpeg.
-            ytdl_format="bestvideo+bestaudio/best",
+            ytdl_format=youtube_format(),
             script_opts="ytdl_hook-all_formats=yes",
             input_terminal="no",
             terminal="no",
@@ -131,6 +140,10 @@ class Picture(QOpenGLWidget):
             input_ipc_server=str(self.ipc_path),
             term_playing_msg=PLAYING_MSG,
         )
+        @self.mpv.event_callback("start-file")
+        def on_start(_event):
+            self.youtube_auth_failed = False
+
         # Retry a transient CDN denial twice (immediately, then after one second).
         self.mpv.stream_lavf_o = {"reconnect_on_http_error": "403", "reconnect_delay_max": "1"}
         self.mpv.ytdl_raw_options = playback_options()

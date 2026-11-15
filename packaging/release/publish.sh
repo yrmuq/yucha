@@ -8,6 +8,10 @@ set -eu
 TAG="${1:?tag}"
 ROOT="$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
+if [ -f dist/yucha-x86_64-test.flatpak ]; then
+    echo "Flatpak publication is on hold until explicitly requested." >&2
+    exit 1
+fi
 
 case "$TAG" in
     *-test)
@@ -21,7 +25,8 @@ printf '%s\n' "$VER" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || {
     echo "tag ${TAG} is not a version" >&2
     exit 1
 }
-git fetch origin "+refs/tags/${TAG}:refs/tags/${TAG}" 2>/dev/null || true
+git fetch origin "refs/tags/${TAG}:refs/tags/${TAG}"
+python3 packaging/appimage/verify.py dist
 git tag -l --format='%(contents)' "$TAG" > notes.md
 if ! grep -q '[^[:space:]]' notes.md; then
     echo "the annotated tag message is the release notes, and it is empty" >&2
@@ -44,20 +49,9 @@ case "$VER" in
 esac
 
 if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-    gh release upload "$TAG" dist/yucha-x86_64.AppImage dist/yucha-x86_64.AppImage.zsync \
-        --repo "$GITHUB_REPOSITORY" \
-        --clobber
-    # shellcheck disable=SC2086
-    gh release edit "$TAG" \
-        --repo "$GITHUB_REPOSITORY" \
-        $extra \
-        --title "$title" \
-        --notes-file notes.md
-else
-    # shellcheck disable=SC2086
-    gh release create "$TAG" dist/yucha-x86_64.AppImage dist/yucha-x86_64.AppImage.zsync \
-        --repo "$GITHUB_REPOSITORY" \
-        $extra \
-        --title "$title" \
-        --notes-file notes.md
+    python3 packaging/release/verify-upload.py "$TAG" false
+    exit 0
 fi
+# shellcheck disable=SC2086
+gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" $extra --title "$title" --notes-file notes.md
+python3 packaging/release/verify-upload.py "$TAG" false

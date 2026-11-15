@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import json
+import hashlib
 import importlib.util
 import os
 import shutil
@@ -13,6 +14,29 @@ from unittest.mock import patch
 
 
 class AppImageTests(unittest.TestCase):
+    def test_update_pair_and_checksums_reject_modified_release_bytes(self):
+        script = Path(__file__).resolve().parents[1] / "packaging/appimage/verify.py"
+        spec = importlib.util.spec_from_file_location("verify_appimage", script)
+        verify = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(verify)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            image = root / "yucha-x86_64.AppImage"
+            image.write_bytes(b"ELF test fixture")
+            (root / (image.name + ".zsync")).write_text(
+                "Filename: {0}\nURL: {0}\nLength: {1}\nSHA-1: {2}\n\n".format(
+                    image.name, image.stat().st_size, hashlib.sha1(image.read_bytes()).hexdigest()))
+            with patch.object(verify.subprocess, "check_output", return_value=
+                              "gh-releases-zsync|yrmuq|yucha|latest|" + image.name + ".zsync"):
+                verify.verify(root, write=True)
+                verify.verify(root)
+                (root / "SHA256SUMS").write_text("incorrect checksum\n")
+                with self.assertRaisesRegex(SystemExit, "checksums"):
+                    verify.verify(root)
+                image.write_bytes(b"different release bytes")
+                with self.assertRaisesRegex(SystemExit, "zsync"):
+                    verify.verify(root, write=True)
+
     def test_abi_gate_rejects_newer_dependencies_but_ignores_provided_versions(self):
         script = Path(__file__).resolve().parents[1] / "packaging/appimage/check-abi.py"
         spec = importlib.util.spec_from_file_location("check_abi", script)

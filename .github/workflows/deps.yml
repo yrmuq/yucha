@@ -15,7 +15,8 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: dependency-prerelease
+  group: distribution-upload
+  queue: max
   cancel-in-progress: false
 
 jobs:
@@ -25,7 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: main
           fetch-depth: 0
           fetch-tags: true
 
@@ -37,24 +38,31 @@ jobs:
           GIT_COMMITTER_NAME: github-actions[bot]
           GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
         run: |
-          git fetch origin main
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          bash packaging/release/sync-deps.sh
+          git fetch origin "${{ github.event.pull_request.head.sha }}"
+          git merge --no-ff FETCH_HEAD -m "Merge grouped dependency updates into deps"
           ver="$(bash packaging/release/prerelease.sh | tail -n 1)"
           echo "version=${ver}" >> "$GITHUB_OUTPUT"
+          # Reserve the version permanently, even if the following build fails.
+          git push origin HEAD:refs/heads/deps
+          git push origin "refs/tags/v${ver}"
 
       - name: Build
-        run: bash packaging/appimage/build-ci.sh
+        uses: ./.github/actions/build
 
       - name: Publish and drop the previous prerelease
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -eu
+          set -euo pipefail
           ver="${{ steps.tag.outputs.version }}"
           major="$(printf '%s\n' "$ver" | awk -F. '{ print $1 }')"
           minor="$(printf '%s\n' "$ver" | awk -F. '{ print $2 }')"
           patch="$(printf '%s\n' "$ver" | awk -F. '{ print $3 }')"
-          git push --force origin HEAD:refs/heads/deps
-          git push origin "refs/tags/v${ver}"
+          git push origin HEAD:refs/heads/deps
           bash packaging/release/publish.sh "v${ver}"
           gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,isPrerelease \
             | python3 -c 'import json,sys; [print(i["tagName"]) for i in json.load(sys.stdin) if i["isPrerelease"]]' \
