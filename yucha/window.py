@@ -2030,9 +2030,9 @@ class IconButton(QPushButton):
             painter.translate(cx, cy)
             if kind == "seek_forward":
                 painter.scale(-1, 1)
-            painter.drawArc(QRectF(-9, -9, 18, 18), 45 * 16, 270 * 16)
-            painter.drawLine(QPointF(6, 6), QPointF(1, 6))
-            painter.drawLine(QPointF(6, 6), QPointF(6, 11))
+            painter.drawArc(QRectF(-9, -9, 18, 18), 225 * 16, 270 * 16)
+            painter.drawLine(QPointF(-6, -6), QPointF(-1, -6))
+            painter.drawLine(QPointF(-6, -6), QPointF(-6, -11))
             painter.restore()
             font = QFont(self.font())
             font.setPixelSize(10)

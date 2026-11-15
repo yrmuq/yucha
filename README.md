@@ -38,7 +38,7 @@ yucha is a Linux media player for synchronized viewing of local files and YouTub
 ---
 
 <details>
-<summary>Controls & Shortcuts</summary>
+<summary><h2>Controls & Shortcuts</h2></summary>
 
 | Input | Action |
 | --- | --- |
