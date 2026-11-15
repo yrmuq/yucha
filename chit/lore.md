@@ -16,6 +16,7 @@
 - Do not publish Flatpak packages anywhere, including dev drafts, until the user explicitly requests it.
 
 ## Compatibility Workarounds
+- Pair AppImage Fontconfig defaults with the bundled library until compatibility with newer host syntax is verified; Fedora configs use unsupported generic-family syntax, while system and user font directories must remain accessible.
 - Keep AppImage native dependencies compatible with glibc 2.41; the earlier newer baseline prevented startup on the test environment, and raising this floor requires an explicit compatibility decision.
 
 ## External Compatibility Constraints

@@ -10,12 +10,25 @@ from contextlib import redirect_stderr
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from yucha.engine import Picture, _hardware_decoding
+from yucha.engine import Picture, _hardware_decoding, _player_log
 
 
 class EngineTests(unittest.TestCase):
+    def test_youtube_auth_log_reports_once_and_keeps_unrelated_errors_in_stderr(self):
+        engine = SimpleNamespace(youtube_auth_failed=False, youtubeAuthRequired=Mock())
+        bot = "ERROR: [youtube] video: Sign in to confirm you’re not a bot."
+        with redirect_stderr(io.StringIO()) as output:
+            Picture._on_log(engine, "error", "ytdl_hook", bot)
+            Picture._on_log(engine, "error", "ytdl_hook", bot)
+            Picture._on_log(engine, "error", "ffmpeg", "HTTP error 403 Forbidden")
+            Picture._on_log(engine, "error", "ytdl_hook", "Sign in to confirm your age.")
+        engine.youtubeAuthRequired.emit.assert_called_once_with()
+        self.assertTrue(engine.youtube_auth_failed)
+        self.assertIn("HTTP error 403 Forbidden", output.getvalue())
+        self.assertIn("confirm your age", output.getvalue())
+
     def test_cdn_denial_is_retried_without_leaving_video_missing_or_retrying_forever(self):
         video = b"YUV4MPEG2 W2 H2 F25:1 Ip A1:1 C420jpeg\n" + (b"FRAME\n" + bytes([128]) * 6) * 50
         for retry, permanent, expected_requests in ((False, False, 1), (True, False, 2), (True, True, 3)):
@@ -41,7 +54,7 @@ class EngineTests(unittest.TestCase):
                 try:
                     with tempfile.TemporaryDirectory() as runtime, \
                             patch.dict(os.environ, {"XDG_CONFIG_HOME": runtime}):
-                        engine = SimpleNamespace(ipc_path=Path(runtime) / "mpv.sock")
+                        engine = SimpleNamespace(ipc_path=Path(runtime) / "mpv.sock", _on_log=_player_log)
                         Picture._start_engine(engine)
                         player = engine.mpv
                         try:
@@ -77,7 +90,7 @@ class EngineTests(unittest.TestCase):
         from yt_dlp import YoutubeDL
 
         with tempfile.TemporaryDirectory() as runtime, patch.dict(os.environ, {"XDG_CONFIG_HOME": runtime}):
-            engine = SimpleNamespace(ipc_path=Path(runtime) / "mpv.sock")
+            engine = SimpleNamespace(ipc_path=Path(runtime) / "mpv.sock", _on_log=_player_log)
             Picture._start_engine(engine)
             try:
                 info = {"id": "test", "title": "Test", "formats": [
@@ -111,7 +124,7 @@ class EngineTests(unittest.TestCase):
     def test_playback_failure_reaches_stderr_with_terminal_disabled(self):
         with tempfile.TemporaryDirectory() as runtime, redirect_stderr(io.StringIO()) as output, \
                 patch.dict(os.environ, {"XDG_CONFIG_HOME": runtime}):
-            engine = SimpleNamespace(ipc_path=Path(runtime) / "mpv.sock")
+            engine = SimpleNamespace(ipc_path=Path(runtime) / "mpv.sock", _on_log=_player_log)
             Picture._start_engine(engine)
             try:
                 ended = threading.Event()

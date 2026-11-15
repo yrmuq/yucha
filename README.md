@@ -60,7 +60,7 @@ yucha is a Linux media player for synchronized viewing of local files and YouTub
 | `Left Click` / `Right Click` on a playlist item | Play from the beginning / remove the item. |
 | Fullscreen screen edge | Toggle the side panel. |
 
-Player shortcuts do not interrupt text entry. Picture-in-Picture requests an always-on-top window; on native Wayland, use the window manager's `Keep Above` command if it does not support this request. YouTube session import does not verify access to a particular video. Imported cookies and saved configuration use `0600` permissions.
+Player shortcuts do not interrupt text entry. Picture-in-Picture requests an always-on-top window; on native Wayland, use the window manager's `Keep Above` command if it does not support this request. YouTube session import does not verify access to a particular video. If YouTube reports that the saved session has expired or was rejected, import cookies again through `Connect YouTube`. Imported cookies and saved configuration use `0600` permissions.
 
 Update controls are in `About`. Click its logo five times to show or hide `Dev`, which contains `Forward if behind` and `Slow if ahead`. `Dev` stores explicit overrides only; its `Reset` clears those overrides and restores the advanced synchronization switches without changing ordinary appearance settings.
 

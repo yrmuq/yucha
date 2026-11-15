@@ -43,10 +43,12 @@ class PictureStub(QWidget):
     arrowPressed = Signal(int)
     filesDropped = Signal(list)
     enterPressed = Signal()
+    youtubeAuthRequired = Signal()
 
     def __init__(self, runtime):
         super().__init__()
         self.error = None
+        self.youtube_auth_failed = False
         self.mpv = None
         self.redraw = Mock()
         self.shutdown = Mock()
@@ -1058,6 +1060,24 @@ class WindowTests(unittest.TestCase):
         dialog.language.setCurrentIndex(dialog.language.findData("System"))
         dialog._accept()
         self.assertEqual(dialog.appearance["language"], "System")
+
+    def test_youtube_auth_failure_explains_cookie_refresh_without_hiding_other_errors(self):
+        window = self.window
+        notice = i18n.trf(161, i18n.tr(15), i18n.tr(16), i18n.tr(124))
+        window.video.youtube_auth_failed = True
+        window._add_chat("", "Failed to recognize file format.")
+        window.video.youtubeAuthRequired.emit()
+        window._add_chat("", "Failed to recognize file format.")
+        text = window.chat.toPlainText()
+        self.assertEqual(text.count(notice), 1)
+        self.assertNotIn("Failed to recognize file format", text)
+        window._add_chat("", "HTTP error 403 Forbidden")
+        self.assertIn("HTTP error 403 Forbidden", window.chat.toPlainText())
+        window._add_chat("other", "Failed to recognize file format.")
+        self.assertIn("other: Failed to recognize file format.", window.chat.toPlainText())
+        window.video.youtube_auth_failed = False
+        window._add_chat("", "Failed to recognize file format.")
+        self.assertTrue(window.chat.toPlainText().endswith("Failed to recognize file format."))
 
     def test_pip_detaches_video_without_reloading_and_restores_controls_immediately(self):
         window = self.window

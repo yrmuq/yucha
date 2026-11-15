@@ -5,7 +5,7 @@ Read only the row the task needs. Do not read `third_party/` or `packaging/appim
 ## Own code
 - `yucha/app.py` — starts Qt with shared OpenGL contexts for detached video, builds the client, calls `launch_player`.
 - `yucha/window.py` — playlist, chat, seek, volume, settings, Picture-in-Picture; `EdgeScroll` and `ScrollEdges` standardize external scrollbars. Large. Search a class. Do not read the whole file.
-- `yucha/engine.py` — `Picture` draws the video through `libmpv`. This is the player.
+- `yucha/engine.py` — `Picture` draws the video through `libmpv` and signals rejected YouTube sessions to the window. This is the player.
 - `yucha/youtube.py` — canonical YouTube URLs, track filtering, browser cookie import and private local storage, `yt-dlp` playback options.
 - `yucha/ytdl.py` — yt-dlp entry point; keeps extractor cookie changes in memory so it cannot overwrite imported sessions.
 - `yucha/session.py` — Syncplay client. `mpv --version`, then attach to the `libmpv` socket. Does not start a second player.
@@ -26,7 +26,7 @@ Read only the row the task needs. Do not read `third_party/` or `packaging/appim
 - `packaging/flatpak/build-test.sh` — standalone x86_64 test builder, disconnected from publication workflows.
 - `.github/actions/build/` — shared desktop build and dependency cache.
 - `packaging/appimage/check-abi.py` — rejects ELF dependencies newer than glibc 2.41 before publication, including dependency prereleases.
-- `packaging/appimage/AppRun` — selects host libva when the loader accepts it, otherwise the staged fallback; sets driver and bundled PipeWire paths, `YUCHA_MPV`, and `YUCHA_LIBMPV`.
+- `packaging/appimage/AppRun` — selects matching Fontconfig defaults and host libva when the loader accepts it, otherwise the staged fallback; sets driver and bundled PipeWire paths, `YUCHA_MPV`, and `YUCHA_LIBMPV`.
 - `requirements.txt` — `PySide6_Essentials`, Twisted, `python-mpv`, and `yt-dlp` with its default dependencies.
 - `.github/workflows/appimage.yml` — manual package checks without publication.
 - `.github/workflows/release.yml` — a merge from `dev` into `main` raises Y, publishes, then merges the published commit back into `dev`. Pending dependency changes block publication; successful publication refreshes the dev draft.

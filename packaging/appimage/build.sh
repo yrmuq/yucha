@@ -197,7 +197,13 @@ for pattern in ("libva.so*", "libva-drm.so*", "libva-x11.so*", "libva-wayland.so
 print("bundled libmpv from", src)
 PY
 
+mkdir -p "$APPDIR/usr/etc/fonts"
+# Host configurations may use syntax newer than the bundled Fontconfig library.
+cp -aL /etc/fonts/fonts.conf /etc/fonts/conf.d "$APPDIR/usr/etc/fonts/"
+cp /usr/share/doc/fontconfig-config/copyright "$APPDIR/payload/LICENSE.fontconfig"
+
 QT_QPA_PLATFORM=offscreen PYTHONNOUSERSITE=1 PYTHONPATH="$APPDIR/payload" \
+    FONTCONFIG_PATH="$APPDIR/usr/etc/fonts" FONTCONFIG_FILE="$APPDIR/usr/etc/fonts/fonts.conf" \
     YUCHA_LIBMPV="$APPDIR/usr/lib/yucha/libmpv.so.2" \
     LD_LIBRARY_PATH="$APPDIR/usr/lib/yucha${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
     "$APPDIR/python/bin/python3" -m unittest discover -s "$ROOT/tests" -v

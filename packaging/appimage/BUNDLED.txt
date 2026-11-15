@@ -40,6 +40,12 @@ What this image contains:
     License: Unlicense. Package license files stay with the wheels.
     libmpv uses yt-dlp to obtain streams, audio tracks, and subtitles.
 
+  Fontconfig configuration
+    Copied from the same build system as the bundled Fontconfig library.
+    Source: https://fontconfig.org/
+    Copyright and permission notices: LICENSE.fontconfig.
+    System and user font directories remain in use.
+
   Node.js
     Source: https://github.com/nodejs/node
     Exact archive and checksum: NODE_URL and NODE_SHA in packaging/appimage/build.sh

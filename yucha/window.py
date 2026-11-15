@@ -4086,6 +4086,7 @@ class MainWindow(QMainWindow):
         self.video.arrowPressed.connect(self._on_arrow)
         self.video.filesDropped.connect(self._add_dropped)
         self.video.enterPressed.connect(self._enter_chat)
+        self.video.youtubeAuthRequired.connect(self._youtube_auth_required)
         self.board.repaint_frame = self.video.redraw
         self.video.notes = self.board.paint_on
         col.addWidget(self.video, 1)
@@ -6098,8 +6099,14 @@ class MainWindow(QMainWindow):
         bad = _palette(_shown_theme(self.app.store.data["appearance"].get("theme")))["bad"]
         self.chat.append(_spans_html(spans, me, mine, other, bad))
 
+    def _youtube_auth_required(self):
+        self._add_chat("", trf(161, tr(15), tr(16), tr(124)))
+
     def _add_chat(self, user, text):
         if not text or _hidden_line(text):
+            return
+        if (not user and self.video.youtube_auth_failed and
+                text.strip().rstrip(".").casefold() == "failed to recognize file format"):
             return
         alone = not user and text.strip().rstrip(".!").casefold() in ("you're alone in the room", "you are alone in the room")
         if alone:

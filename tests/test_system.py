@@ -2,6 +2,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import os
+import json
+import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -47,6 +50,56 @@ class SystemTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls._app = QApplication.instance() or QApplication([])
+
+    def test_appimage_fontconfig_uses_matching_rules_and_discovers_system_fonts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "usr/etc/fonts"
+            config.mkdir(parents=True)
+            shutil.copy2("/etc/fonts/fonts.conf", config / "fonts.conf")
+            shutil.copytree("/etc/fonts/conf.d", config / "conf.d")
+            launcher = root / "AppRun"
+            shutil.copy2(ROOT / "packaging/appimage/AppRun", launcher)
+            launcher.chmod(0o755)
+            probe = root / "probe.py"
+            probe.write_text("""import ctypes, json, os
+class FontSet(ctypes.Structure):
+    _fields_ = [('nfont', ctypes.c_int), ('sfont', ctypes.c_int), ('fonts', ctypes.c_void_p)]
+fc = ctypes.CDLL('libfontconfig.so.1')
+fc.FcInitLoadConfigAndFonts.restype = ctypes.c_void_p
+fc.FcConfigGetFonts.argtypes = [ctypes.c_void_p, ctypes.c_int]
+fc.FcConfigGetFonts.restype = ctypes.POINTER(FontSet)
+config = fc.FcInitLoadConfigAndFonts()
+assert config
+fc.FcConfigGetFontDirs.argtypes = [ctypes.c_void_p]
+fc.FcConfigGetFontDirs.restype = ctypes.c_void_p
+fc.FcStrListNext.argtypes = [ctypes.c_void_p]
+fc.FcStrListNext.restype = ctypes.c_char_p
+directories = fc.FcConfigGetFontDirs(config)
+paths = []
+while path := fc.FcStrListNext(directories):
+    paths.append(path.decode())
+print(json.dumps({'file': os.environ['FONTCONFIG_FILE'], 'path': os.environ['FONTCONFIG_PATH'],
+                  'fonts': fc.FcConfigGetFonts(config, 0).contents.nfont, 'directories': paths}))
+""")
+            python = root / "python/bin/python3"
+            python.parent.mkdir(parents=True)
+            python.write_text('#!/bin/sh\nif [ "$1" = "-I" ]; then exit 0; fi\nexec ' +
+                              shlex.quote(sys.executable) + ' ' + shlex.quote(str(probe)) + '\n')
+            python.chmod(0o755)
+            environment = {key: value for key, value in os.environ.items()
+                           if key not in ("FONTCONFIG_FILE", "FONTCONFIG_PATH", "FC_DEBUG")}
+            environment.update(XDG_CACHE_HOME=str(root / "cache"), XDG_CONFIG_HOME=str(root / "config"),
+                               XDG_DATA_HOME=str(root / "data"))
+            result = subprocess.run([str(launcher)], env=environment, text=True, capture_output=True, check=True)
+            found = json.loads(result.stdout)
+            self.assertEqual(found["file"], str(config / "fonts.conf"))
+            self.assertEqual(found["path"], str(config))
+            self.assertGreater(found["fonts"], 0)
+            self.assertIn("/usr/share/fonts", found["directories"])
+            self.assertIn(str(root / "data/fonts"), found["directories"])
+            self.assertNotIn("Fontconfig warning", result.stderr)
+            self.assertNotIn("Fontconfig error", result.stderr)
 
     def test_media_paths(self):
         self.assertEqual(media_paths(["--help", "film.mkv"]), ["film.mkv"])
