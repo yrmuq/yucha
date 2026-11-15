@@ -21,6 +21,16 @@ def load(name):
 
 
 class AutomationTests(unittest.TestCase):
+    def test_stable_refresh_rejects_runtime_changes_and_nonstable_channels(self):
+        rebuild = load("rebuild")
+        release = {"tag_name": "v0.11.0", "draft": False, "prerelease": False}
+        self.assertEqual(rebuild.validate(release, "0.11.0", [".github/workflows/dev.yml"]), "v0.11.0")
+        with self.assertRaisesRegex(SystemExit, "sources must match"):
+            rebuild.validate(release, "0.11.0", ["yucha/window.py"])
+        for changes in ({"draft": True}, {"prerelease": True}, {"tag_name": "v0.11.1"}):
+            with self.subTest(changes=changes), self.assertRaisesRegex(SystemExit, "existing stable"):
+                rebuild.validate({**release, **changes}, "0.11.0", [])
+
     def test_runtime_updater_refreshes_all_pins_with_upstream_checksums(self):
         pins = load("pin-tools")
         payload = b"upstream archive fixture"

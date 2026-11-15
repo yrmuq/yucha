@@ -28,7 +28,8 @@ Read only the row the task needs. Do not read `third_party/` or `packaging/appim
 - `packaging/appimage/check-abi.py` — rejects ELF dependencies newer than glibc 2.41 before publication, including dependency prereleases.
 - `packaging/appimage/AppRun` — selects matching Fontconfig defaults and host libva when the loader accepts it, otherwise the staged fallback; sets driver and bundled PipeWire paths, `YUCHA_MPV`, and `YUCHA_LIBMPV`.
 - `requirements.txt` — `PySide6_Essentials`, Twisted, `python-mpv`, and `yt-dlp` with its default dependencies.
-- `.github/workflows/appimage.yml` — manual package checks without publication.
+- `.github/workflows/appimage.yml` — manual package checks; an explicit `refresh_stable` request can refresh stable assets after automation-only changes.
+- `packaging/release/rebuild.py` — optional manual stable asset refresh from `main`, allowed only when application and packaging sources still match the existing stable tag; does not move the tag or change the version.
 - `.github/workflows/release.yml` — a merge from `dev` into `main` raises Y, publishes, then merges the published commit back into `dev`. Pending dependency changes block publication; successful publication refreshes the dev draft.
 - `.github/workflows/dev.yml` — tests every dev push and updates the existing draft without a tag; Flatpak publication is on hold, including drafts.
 - `.github/workflows/deps.yml` — Dependabot prerelease on `deps`. It does not change `main`.
