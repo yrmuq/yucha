@@ -20,7 +20,7 @@
 
 yucha is a Linux media player for synchronized viewing of local files and YouTube videos. It embeds `libmpv` for playback and the `Syncplay` client for rooms, playlists, and chat, keeping playback and room controls in one Qt window.
 
-![yucha application and General settings](assets/screenshot.png)
+![yucha application and General settings](assets/screenshot.webp)
 
 ---
 
