@@ -1100,8 +1100,7 @@ class WindowTests(unittest.TestCase):
         self.assertIs(player.window(), pip)
         self.assertIsNone(player.notes)
         with patch.object(pip.controls, "underMouse", return_value=False), \
-                patch.object(pip.close_button, "underMouse", return_value=False), \
-                patch.object(pip.grip, "underMouse", return_value=False):
+                patch.object(pip.close_button, "underMouse", return_value=False):
             pip.hide_controls()
         self.assertTrue(pip.controls.isHidden())
         move = QMouseEvent(QEvent.Type.MouseMove, QPointF(100, 100), QPointF(pip.mapToGlobal(QPoint(100, 100))),
@@ -1141,6 +1140,69 @@ class WindowTests(unittest.TestCase):
         with patch("yucha.window.QApplication.focusWidget", return_value=window.bar_message):
             QTest.keyClick(window.bar_message, Qt.Key.Key_P)
         self.assertFalse(window._pip)
+
+    def test_pip_buttons_seek_ten_seconds_and_right_click_opens_kde_menu(self):
+        window = self.window
+        window._enter_pip()
+        self.qt.processEvents()
+        pip = window._pip_window
+        self.assertIs(pip.controls.layout().itemAt(0).widget(), pip.play)
+        self.assertEqual([pip.controls.layout().itemAt(index).widget().kind for index in range(1, 4)],
+                         ["seek_back", "seek_forward", "arrow_up"])
+        self.assertEqual(pip._hide_timer.interval(), 3000)
+        window.ctl.calls.clear()
+        pip.back.click()
+        pip.forward.click()
+        seeks = [call for call in window.ctl.calls if call[0] == "seek"]
+        self.assertEqual(seeks, [("seek", "-10", "relative"), ("seek", "10", "relative")])
+        window.ctl.calls.clear()
+        with patch("yucha.window.show_window_menu") as menu, \
+                patch.object(pip, "isActiveWindow", return_value=True):
+            point = QPointF(100, 100)
+            event = QMouseEvent(QEvent.Type.MouseButtonPress, point, QPointF(pip.mapToGlobal(QPoint(100, 100))),
+                                Qt.MouseButton.RightButton, Qt.MouseButton.RightButton, Qt.KeyboardModifier.NoModifier)
+            QApplication.sendEvent(window.video, event)
+            menu.assert_called_once_with()
+        self.assertNotIn(("cycle", "pause"), window.ctl.calls)
+        pip.return_button.click()
+        self.assertFalse(window._pip)
+
+    def test_pip_resizes_from_all_edges_and_corners_without_moving_opposite_edges(self):
+        window = self.window
+        window._enter_pip()
+        self.qt.processEvents()
+        pip = window._pip_window
+        for point, edges in (
+            (QPoint(1, 135), Qt.Edge.LeftEdge),
+            (QPoint(478, 135), Qt.Edge.RightEdge),
+            (QPoint(240, 1), Qt.Edge.TopEdge),
+            (QPoint(240, 268), Qt.Edge.BottomEdge),
+            (QPoint(1, 1), Qt.Edge.LeftEdge | Qt.Edge.TopEdge),
+            (QPoint(478, 1), Qt.Edge.RightEdge | Qt.Edge.TopEdge),
+            (QPoint(1, 268), Qt.Edge.LeftEdge | Qt.Edge.BottomEdge),
+            (QPoint(478, 268), Qt.Edge.RightEdge | Qt.Edge.BottomEdge),
+        ):
+            with self.subTest(edges=edges):
+                pip.resize(480, 270)
+                self.qt.processEvents()
+                before = pip.geometry()
+                start = pip.mapToGlobal(point)
+                def send(kind, position, button, buttons):
+                    local = QPointF(window.video.mapFromGlobal(position))
+                    event = QMouseEvent(kind, local, QPointF(position), button, buttons, Qt.KeyboardModifier.NoModifier)
+                    QApplication.sendEvent(window.video, event)
+                with patch.object(pip.windowHandle(), "startSystemResize", return_value=False) as resize:
+                    send(QEvent.Type.MouseButtonPress, start, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton)
+                    resize.assert_called_once_with(edges)
+                    send(QEvent.Type.MouseMove, start + QPoint(20, 15), Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton)
+                    send(QEvent.Type.MouseButtonRelease, start + QPoint(20, 15), Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton)
+                self.assertEqual(pip.width(), before.width() + (20 if edges & Qt.Edge.RightEdge else -20 if edges & Qt.Edge.LeftEdge else 0))
+                self.assertEqual(pip.height(), before.height() + (15 if edges & Qt.Edge.BottomEdge else -15 if edges & Qt.Edge.TopEdge else 0))
+                if edges & Qt.Edge.LeftEdge:
+                    self.assertEqual(pip.geometry().right(), before.right())
+                if edges & Qt.Edge.TopEdge:
+                    self.assertEqual(pip.geometry().bottom(), before.bottom())
+        window._leave_pip()
 
     def test_initial_youtube_quality_persists_without_reloading_current_playback(self):
         window = self.window
@@ -1743,7 +1805,7 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(tuple(field.text() for field in dialog._room_fields), fields)
         self.assertEqual(self.window._dev, {})
         self.assertEqual(dialog.tabs.indexOf(dialog._dev_page), -1)
-        self.assertEqual((dialog._page_w, dialog._page_h), (450, 375))
+        self.assertEqual((dialog._page_w, dialog._page_h), (580, 545))
         self.assertEqual(self.window._panel_width, 380)
         self.assertEqual(self.window.ctl.properties["volume-max"], 100)
         saved = ConfigStore().data
@@ -1763,7 +1825,7 @@ class WindowTests(unittest.TestCase):
         dialog = self.dialog()
         dialog._reset_standard()
         self.assertEqual(dialog._side_layouts[0][0].contentsMargins().left(), 23)
-        self.assertEqual((dialog._page_w, dialog._page_h), (450, 375))
+        self.assertEqual((dialog._page_w, dialog._page_h), (580, 545))
         dialog.reject()
         self.assertEqual(ConfigStore().data["appearance"]["dev"], {})
 
@@ -1842,7 +1904,7 @@ class WindowTests(unittest.TestCase):
                     self.assertEqual(dialog._dev_rows["alfa"]["size"].value(), 10)
                     self.assertEqual(self.window.chat.font().pointSize(), 10)
                     self.assertEqual(dialog.port.font().pointSize(), 10)
-                    self.assertEqual(dialog._page_h, 375)
+                    self.assertEqual(dialog._page_h, 545)
                     self.assertEqual([dialog.overlay.itemText(index) for index in (0, 1)], [horizontal, vertical])
                     form = dialog.reset_other.parentWidget().layout()
                     self.assertEqual(form.getWidgetPosition(dialog.reset_other)[1], QFormLayout.ItemRole.SpanningRole)
@@ -1954,7 +2016,7 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(dialog._dev_rows["alfa"]["size"].value(), 10)
         self.assertEqual(self.window.chat.font().pointSize(), 10)
         self.assertEqual(dialog.port.font().pointSize(), 10)
-        self.assertEqual(dialog._page_h, 375)
+        self.assertEqual(dialog._page_h, 545)
         dialog.reject()
 
 

@@ -47,8 +47,9 @@ yucha is a Linux media player for synchronized viewing of local files and YouTub
 | `Drag & Drop` / `Open With` / playlist `+` | Add local media. The first item opens paused; later additions leave playback unchanged. |
 | Playlist link icon | Add a YouTube URL. Each room participant needs the same video. |
 | `Space` | In a connected room, mark yourself ready first; once ready, toggle playback. Outside a room, toggle playback. |
-| `Right Click` on video / playback button | Toggle playback. |
-| Physical `P` key / minimize with media open | Move the video into a separate frameless window. Drag the video to move it; use the corner grip to resize it. Controls appear on hover. Press `P`, double-click the video, use `Return to player`, or close the small window to return. Playback and the room connection continue. |
+| `Right Click` on main video / playback button | Toggle playback. |
+| `Right Click` on Picture-in-Picture | Open the KDE window menu, including `Keep Above`. |
+| Physical `P` key / minimize with media open | Move the video into a separate frameless window. Drag the video to move it; drag any edge or corner to resize it. Controls appear on hover and remain visible for three seconds. Press `P`, double-click the video, use the up-arrow button, or close the small window to return. Playback and the room connection continue. |
 | `Double Click` | Toggle fullscreen outside Picture-in-Picture. |
 | `Left` / `Right` | Seek backward / forward by 5 seconds. |
 | `Up` / `Down` / wheel over video | Adjust volume. |

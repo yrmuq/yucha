@@ -11,7 +11,7 @@ Read only the row the task needs. Do not read `third_party/` or `packaging/appim
 - `yucha/session.py` — Syncplay client. `mpv --version`, then attach to the `libmpv` socket. Does not start a second player.
 - `yucha/player_ui.py` — methods Syncplay calls. Forwards them. Does not draw.
 - `yucha/bridge.py` — writes those calls to `events.jsonl` for the window.
-- `yucha/system.py` — open a file in an already running window, sleep inhibit, notifications.
+- `yucha/system.py` — open a file in an already running window, sleep inhibit, notifications, KDE window-menu activation.
 - `yucha/configstore.py` — saved host, room, and settings.
 - `yucha/i18n.py` — reads `languages/*.ini`. A line is `id = English original = text shown`.
 - `languages/` — English and Russian ini files. The id is a number.

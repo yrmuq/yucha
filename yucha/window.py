@@ -60,7 +60,6 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QScrollBar,
     QSizePolicy,
-    QSizeGrip,
     QSlider,
     QStyle,
     QStyleOptionSlider,
@@ -76,7 +75,7 @@ from yucha.configstore import DEFAULTS, YOUTUBE_QUALITIES, dev_settings, font_na
 from yucha.engine import Picture
 from yucha.i18n import languages, tr, trf
 from yucha.player_ui import replace_seek_toast, room_file_notes
-from yucha.system import Notifier, SleepInhibit, join_line, people_joined
+from yucha.system import Notifier, SleepInhibit, join_line, people_joined, show_window_menu
 from yucha.youtube import (
     audio_tracks, cookie_file, detected_browsers, extract_youtube_cookies, has_account_cookies,
     playback_options, quality_label,
@@ -166,8 +165,8 @@ def _dev_values(appearance, overrides=None):
         "panel_alpha": 90,
         "osd_alpha": 90,
         "bar_inset": 30,
-        "settings_h": 375,
-        "settings_w": 450,
+        "settings_h": 545,
+        "settings_w": 580,
         "settings_pad": 23,
         "settings_top": 23,
         "slider_numbers": False,
@@ -2016,6 +2015,23 @@ class IconButton(QPushButton):
             painter.drawLine(QPointF(cx - 8, cy), QPointF(cx + 8, cy))
             painter.drawLine(QPointF(cx + 8 * direction, cy), QPointF(cx + 2 * direction, cy - 6))
             painter.drawLine(QPointF(cx + 8 * direction, cy), QPointF(cx + 2 * direction, cy + 6))
+        elif kind == "arrow_up":
+            painter.drawLine(QPointF(cx, cy + 8), QPointF(cx, cy - 8))
+            painter.drawLine(QPointF(cx, cy - 8), QPointF(cx - 6, cy - 2))
+            painter.drawLine(QPointF(cx, cy - 8), QPointF(cx + 6, cy - 2))
+        elif kind in ("seek_back", "seek_forward"):
+            painter.save()
+            painter.translate(cx, cy)
+            if kind == "seek_forward":
+                painter.scale(-1, 1)
+            painter.drawArc(QRectF(-9, -9, 18, 18), 45 * 16, 270 * 16)
+            painter.drawLine(QPointF(6, 6), QPointF(1, 6))
+            painter.drawLine(QPointF(6, 6), QPointF(6, 11))
+            painter.restore()
+            font = QFont(self.font())
+            font.setPixelSize(10)
+            painter.setFont(font)
+            painter.drawText(QRectF(cx - 7, cy - 6, 14, 12), Qt.AlignmentFlag.AlignCenter, "10")
         elif kind == "gear":
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(color)
@@ -2833,18 +2849,18 @@ class SettingsDialog(QDialog):
         if getattr(self, "_settings_h_saved", False):
             self._page_h = self._settings_h.value()
         else:
-            self._page_h = int(self._saved_dev.get("settings_h", 375))
+            self._page_h = int(self._saved_dev.get("settings_h", 545))
             if hasattr(self, "_settings_h"):
                 self._settings_h.blockSignals(True)
-                self._settings_h.setValue(375)
+                self._settings_h.setValue(545)
                 self._settings_h.blockSignals(False)
         if getattr(self, "_settings_w_saved", False):
             self._page_w = self._settings_w.value()
         else:
-            self._page_w = int(self._saved_dev.get("settings_w", 450))
+            self._page_w = int(self._saved_dev.get("settings_w", 580))
             if hasattr(self, "_settings_w"):
                 self._settings_w.blockSignals(True)
-                self._settings_w.setValue(450)
+                self._settings_w.setValue(580)
                 self._settings_w.blockSignals(False)
         kept = []
         for index in range(self.tabs.count()):
@@ -3083,14 +3099,14 @@ class SettingsDialog(QDialog):
         self._settings_h_saved = saved_h >= 240
         self._settings_h = QuietSpin()
         self._settings_h.setRange(240, 900)
-        self._settings_h.setValue(saved_h if self._settings_h_saved else 375)
+        self._settings_h.setValue(saved_h if self._settings_h_saved else 545)
         self._settings_h.valueChanged.connect(self._set_settings_height)
         form.addRow(tr(96), self._settings_h)
         saved_w = int(seed.get("settings_w") or 0)
         self._settings_w_saved = saved_w >= 360
         self._settings_w = QuietSpin()
         self._settings_w.setRange(360, 1100)
-        self._settings_w.setValue(saved_w if self._settings_w_saved else 450)
+        self._settings_w.setValue(saved_w if self._settings_w_saved else 580)
         self._settings_w.valueChanged.connect(self._set_settings_width)
         form.addRow(tr(97), self._settings_w)
         self._settings_pad = QuietSpin()
@@ -3263,7 +3279,7 @@ class SettingsDialog(QDialog):
         self._bar_alpha.setValue(int(seed.get("bar_alpha", 90)))
         self._panel_alpha.setValue(int(seed.get("panel_alpha", 90)))
         self._osd_alpha.setValue(int(seed.get("osd_alpha", 90)))
-        self._settings_h.setValue(int(seed.get("settings_h") or 375))
+        self._settings_h.setValue(int(seed.get("settings_h") or 545))
         self._settings_w.setValue(int(seed.get("settings_w") or self._settings_w.value()))
         self._settings_pad.setValue(int(seed.get("settings_pad", 23)))
         self._settings_top.setValue(int(seed.get("settings_top", 23)))
@@ -3427,8 +3443,8 @@ class SettingsDialog(QDialog):
             self._fill_dev(self._dev_seed())
         else:
             self._dev_loading = True
-            self._set_settings_height(375)
-            self._set_settings_width(450)
+            self._set_settings_height(545)
+            self._set_settings_width(580)
             self._dev_loading = False
             self._apply_settings_edges()
         self._hide_dev_tab()
@@ -3886,41 +3902,57 @@ class PipWindow(QWidget):
         buttons.setContentsMargins(6, 6, 6, 6)
         self.play = IconButton("play")
         self.play.clicked.connect(owner._toggle_pause)
-        self.return_button = QPushButton(tr(158))
+        self.back = IconButton("seek_back")
+        self.back.clicked.connect(lambda: owner._seek_by(-10))
+        self.forward = IconButton("seek_forward")
+        self.forward.clicked.connect(lambda: owner._seek_by(10))
+        self.return_button = IconButton("arrow_up")
+        self.return_button.setToolTip(tr(158))
+        self.return_button.setAccessibleName(tr(158))
+        for button, phrase in ((self.back, 162), (self.forward, 163)):
+            button.setToolTip(tr(phrase))
+            button.setAccessibleName(tr(phrase))
         self.return_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.return_button.clicked.connect(owner._leave_pip)
         buttons.addWidget(self.play)
+        buttons.addWidget(self.back)
+        buttons.addWidget(self.forward)
         buttons.addWidget(self.return_button)
         self.close_button = QPushButton("×", self)
         self.close_button.setFixedSize(28, 28)
-        self.close_button.setStyleSheet("padding: 0;")
+        self.close_button.setStyleSheet("padding: 0; border-radius: 14px;")
         self.close_button.setToolTip(tr(140))
         self.close_button.setAccessibleName(tr(140))
         self.close_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.close_button.clicked.connect(self.close)
-        self.grip = QSizeGrip(self)
-        self.grip.setFixedSize(14, 14)
         self._hide_timer = QTimer(self)
         self._hide_timer.setSingleShot(True)
-        self._hide_timer.setInterval(1500)
+        self._hide_timer.setInterval(3000)
         self._hide_timer.timeout.connect(self.hide_controls)
-        self._drag_offset = None
+        self._drag_start = None
+        self._drag_rect = None
+        self._resize_edges = Qt.Edge(0)
+        self._menu_pending = False
+        for widget in (self, self.controls, self.play, self.back, self.forward,
+                       self.return_button, self.close_button):
+            widget.installEventFilter(self)
+            widget.setMouseTracking(True)
         owner.video.setMouseTracking(True)
         owner.video.installEventFilter(self)
         self.setMouseTracking(True)
 
     def reveal_controls(self):
         self._place_controls()
-        for widget in (self.controls, self.close_button, self.grip):
+        for widget in (self.controls, self.close_button):
             widget.show()
             widget.raise_()
-        self._hide_timer.start(1500)
+        self._hide_timer.start(3000)
 
     def hide_controls(self):
-        if self.controls.underMouse() or self.close_button.underMouse() or self.grip.underMouse():
-            self._hide_timer.start(1500)
+        if self.controls.underMouse() or self.close_button.underMouse():
+            self._hide_timer.start(3000)
             return
-        for widget in (self.controls, self.close_button, self.grip):
+        for widget in (self.controls, self.close_button):
             widget.hide()
 
     def _place_controls(self):
@@ -3928,7 +3960,6 @@ class PipWindow(QWidget):
         self.controls.setGeometry(max(0, (self.width() - hint.width()) // 2),
                                   max(0, self.height() - hint.height() - 8), hint.width(), hint.height())
         self.close_button.move(self.width() - 36, 8)
-        self.grip.move(self.width() - 14, self.height() - 14)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -3940,25 +3971,105 @@ class PipWindow(QWidget):
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        self._hide_timer.start(100)
+        self._menu_pending = False
+        self._hide_timer.start(3000)
         super().leaveEvent(event)
 
+    def hideEvent(self, event):
+        self._menu_pending = False
+        self._drag_start = None
+        self._hide_timer.stop()
+        super().hideEvent(event)
+
+    def _edges_at(self, point):
+        edges = Qt.Edge(0)
+        if point.x() < 6:
+            edges |= Qt.Edge.LeftEdge
+        elif point.x() >= self.width() - 6:
+            edges |= Qt.Edge.RightEdge
+        if point.y() < 6:
+            edges |= Qt.Edge.TopEdge
+        elif point.y() >= self.height() - 6:
+            edges |= Qt.Edge.BottomEdge
+        return edges
+
+    def _request_menu(self):
+        self._menu_pending = True
+        self.raise_()
+        self.activateWindow()
+        self._open_menu_if_active()
+
+    def _open_menu_if_active(self):
+        if self._menu_pending and self.isActiveWindow():
+            self._menu_pending = False
+            show_window_menu()
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.ActivationChange:
+            self._open_menu_if_active()
+
+    def _resize_fallback(self, point):
+        delta = point - self._drag_start
+        rect = QRect(self._drag_rect)
+        if self._resize_edges & Qt.Edge.LeftEdge:
+            rect.setLeft(min(rect.right() - self.minimumWidth() + 1, rect.left() + delta.x()))
+        if self._resize_edges & Qt.Edge.RightEdge:
+            rect.setRight(max(rect.left() + self.minimumWidth() - 1, rect.right() + delta.x()))
+        if self._resize_edges & Qt.Edge.TopEdge:
+            rect.setTop(min(rect.bottom() - self.minimumHeight() + 1, rect.top() + delta.y()))
+        if self._resize_edges & Qt.Edge.BottomEdge:
+            rect.setBottom(max(rect.top() + self.minimumHeight() - 1, rect.bottom() + delta.y()))
+        self.setGeometry(rect)
+
     def eventFilter(self, watched, event):
-        if watched is not self.owner.video or watched.window() is not self:
+        if not isinstance(watched, QWidget) or watched.window() is not self:
             return super().eventFilter(watched, event)
         kind = event.type()
+        if kind == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.RightButton:
+            self._request_menu()
+            return True
+        if kind == QEvent.Type.ContextMenu:
+            return True
         if kind == QEvent.Type.MouseMove:
             self.reveal_controls()
-            if self._drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
-                self.move(event.globalPosition().toPoint() - self._drag_offset)
+            point = event.globalPosition().toPoint()
+            if self._drag_start is not None and event.buttons() & Qt.MouseButton.LeftButton:
+                if self._resize_edges:
+                    self._resize_fallback(point)
+                else:
+                    self.move(self._drag_rect.topLeft() + point - self._drag_start)
                 return True
+            edges = self._edges_at(self.mapFromGlobal(point))
+            cursors = {
+                Qt.Edge.LeftEdge: Qt.CursorShape.SizeHorCursor,
+                Qt.Edge.RightEdge: Qt.CursorShape.SizeHorCursor,
+                Qt.Edge.TopEdge: Qt.CursorShape.SizeVerCursor,
+                Qt.Edge.BottomEdge: Qt.CursorShape.SizeVerCursor,
+                Qt.Edge.TopEdge | Qt.Edge.LeftEdge: Qt.CursorShape.SizeFDiagCursor,
+                Qt.Edge.BottomEdge | Qt.Edge.RightEdge: Qt.CursorShape.SizeFDiagCursor,
+                Qt.Edge.TopEdge | Qt.Edge.RightEdge: Qt.CursorShape.SizeBDiagCursor,
+                Qt.Edge.BottomEdge | Qt.Edge.LeftEdge: Qt.CursorShape.SizeBDiagCursor,
+            }
+            if edges:
+                watched.setCursor(cursors[edges])
+            elif watched is self.owner.video:
+                watched.unsetCursor()
         elif kind == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
-            watched.setFocus(Qt.FocusReason.MouseFocusReason)
-            if not self.windowHandle().startSystemMove():
-                self._drag_offset = event.globalPosition().toPoint() - self.pos()
-            return True
-        elif kind == QEvent.Type.MouseButtonRelease:
-            self._drag_offset = None
+            point = event.globalPosition().toPoint()
+            edges = self._edges_at(self.mapFromGlobal(point))
+            if edges or watched is self.owner.video:
+                self._drag_start = None
+                self.owner.video.setFocus(Qt.FocusReason.MouseFocusReason)
+                handle = self.windowHandle()
+                started = handle.startSystemResize(edges) if edges else handle.startSystemMove()
+                if not started:
+                    self._drag_start = point
+                    self._drag_rect = self.geometry()
+                    self._resize_edges = edges
+                return True
+        elif kind == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
+            self._drag_start = None
         return super().eventFilter(watched, event)
 
     def closeEvent(self, event):
@@ -4863,7 +4974,8 @@ class MainWindow(QMainWindow):
         self._apply_subtitles()
         self._refresh_osd()
         pal = _palette(theme, appearance.get("accentColor"))
-        for button in (self.play, self.pip_play, self.ready, self.chat_btn, self.room, self.gear, self.panel_home, self.bar_send,
+        for button in (self.play, self.pip_play, self._pip_window.back, self._pip_window.forward,
+                       self.pip_return, self.ready, self.chat_btn, self.room, self.gear, self.panel_home, self.bar_send,
                        self.volume_btn, self.tracks_btn, self.quality_btn, self.files_add, self.link_add,
                        self.mute_h, self.mute_v):
             button.set_ink(pal["button_fg"], pal["on_fg"], pal["accent"])
@@ -5762,7 +5874,11 @@ class MainWindow(QMainWindow):
             widget.setText(shown)
 
     def _retranslate(self):
-        self.pip_return.setText(tr(158))
+        self.pip_return.setToolTip(tr(158))
+        self.pip_return.setAccessibleName(tr(158))
+        for button, phrase in ((self._pip_window.back, 162), (self._pip_window.forward, 163)):
+            button.setToolTip(tr(phrase))
+            button.setAccessibleName(tr(phrase))
         self._pip_window.setWindowTitle("yucha — " + tr(159))
         self._pip_window.close_button.setToolTip(tr(140))
         self._pip_window.close_button.setAccessibleName(tr(140))

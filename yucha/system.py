@@ -1,6 +1,6 @@
 # Copyright (C) 2026 yrmuq
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Desktop integration that is the same on GNOME and KDE.
+"""Desktop integration for GNOME and KDE.
 
 Sleep and notifications use the freedesktop session bus both desktops
 already provide. A second launch hands its files to the open window.
@@ -305,6 +305,16 @@ class Notifier(object):
             5000,
         ])
         bus.asyncCall(msg)
+
+
+def show_window_menu():
+    bus = QDBusConnection.sessionBus()
+    if not bus.isConnected():
+        return
+    message = QDBusMessage.createMethodCall(
+        "org.kde.kglobalaccel", "/component/kwin", "org.kde.kglobalaccel.Component", "invokeShortcut")
+    message.setArguments(["Window Operations Menu"])
+    bus.asyncCall(message)
 
 
 def _call(service, path, interface, method, args):

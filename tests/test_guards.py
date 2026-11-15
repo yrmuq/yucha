@@ -28,7 +28,7 @@ class Guards(unittest.TestCase):
                                "sub": "bad", "face": {"bg": []},
                                "bar_buttons": {"volume": False, "tracks": "false"}})
         self.assertEqual(result["bar"], 160)
-        self.assertEqual(result["settings_w"], 450)
+        self.assertEqual(result["settings_w"], 580)
         self.assertEqual(result["panel_alpha"], 0)
         self.assertEqual(result["gamma"], 96)
         self.assertEqual(result["chat_max"], 2160)
@@ -55,7 +55,7 @@ class Guards(unittest.TestCase):
             self.assertEqual(original.strip(), shown.strip())
             self.assertNotIn(number.strip(), seen)
             seen.add(number.strip())
-        self.assertEqual(len(seen), 161)
+        self.assertEqual(len(seen), 163)
 
     def test_system_locale_and_format_fields_preserve_translation_safety(self):
         with patch.dict(os.environ, {"LANGUAGE": "de:ru-RU", "LC_ALL": "en_US.UTF-8"}):

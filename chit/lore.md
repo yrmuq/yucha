@@ -20,6 +20,7 @@
 - Keep AppImage native dependencies compatible with glibc 2.41; the earlier newer baseline prevented startup on the test environment, and raising this floor requires an explicit compatibility decision.
 
 ## External Compatibility Constraints
+- KDE's `Window Operations Menu` action targets the active window; activate PiP before invoking that untranslated KGlobalAccel action.
 - Syncplay must attach to the embedded libmpv socket; its mpv version probe must report the bundled library version without starting another player.
 - Compare local room media by size and duration, and YouTube media by canonical watch URL; direct expiring stream URLs must not become shared file identities.
 - Preserve the intentional ability to connect without TLS; if the certificate bundle cannot load, warn about the unencrypted connection and still connect.
