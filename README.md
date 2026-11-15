@@ -39,7 +39,8 @@
 
 ---
 
-## Controls & Shortcuts
+<details>
+<summary>Controls & Shortcuts</summary>
 
 | Input | Action |
 | :--- | :--- |
@@ -64,6 +65,8 @@
 | `Mouse Wheel` (Playlist) | Scroll through episodes. |
 | `Left Click` (Playlist) | Play selected file from `0:00`. |
 | `Right Click` (Playlist) | Remove file from playlist. |
+
+</details>
 
 ---
 
