@@ -1642,10 +1642,16 @@ class SeekBar(QSlider):
         if event.button() == Qt.MouseButton.LeftButton and self.isSliderDown():
             self._jump(event.position().x())
             self.setSliderDown(False)
-            self.sliderReleased.emit()
             event.accept()
             return
         super().mouseReleaseEvent(event)
+
+    def hideEvent(self, event):
+        # Cancel a scrub when its window hides without seeking on dismissal.
+        blocked = self.blockSignals(True)
+        self.setSliderDown(False)
+        self.blockSignals(blocked)
+        super().hideEvent(event)
 
     def _jump(self, x):
         span = max(1, self.width() - 1)
@@ -3925,6 +3931,14 @@ class PipWindow(QWidget):
         self.close_button.setAccessibleName(tr(140))
         self.close_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.close_button.clicked.connect(self.close)
+        self.progress = SeekBar(Qt.Orientation.Horizontal)
+        self.progress.setParent(self)
+        self.progress.setRange(0, SEEK_STEPS)
+        self.progress.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.progress.setEnabled(False)
+        self.progress.setToolTip(tr(164))
+        self.progress.setAccessibleName(tr(164))
+        self.progress.sliderReleased.connect(lambda: owner._seek_released(self.progress))
         self._hide_timer = QTimer(self)
         self._hide_timer.setSingleShot(True)
         self._hide_timer.setInterval(3000)
@@ -3934,7 +3948,7 @@ class PipWindow(QWidget):
         self._resize_edges = Qt.Edge(0)
         self._menu_pending = False
         for widget in (self, self.controls, self.play, self.back, self.forward,
-                       self.return_button, self.close_button):
+                       self.return_button, self.close_button, self.progress):
             widget.installEventFilter(self)
             widget.setMouseTracking(True)
         owner.video.setMouseTracking(True)
@@ -3943,22 +3957,24 @@ class PipWindow(QWidget):
 
     def reveal_controls(self):
         self._place_controls()
-        for widget in (self.controls, self.close_button):
+        for widget in (self.controls, self.close_button, self.progress):
             widget.show()
             widget.raise_()
         self._hide_timer.start(3000)
 
     def hide_controls(self):
-        if self.controls.underMouse() or self.close_button.underMouse():
+        if (self.controls.underMouse() or self.close_button.underMouse()
+                or self.progress.underMouse() or self.progress.isSliderDown()):
             self._hide_timer.start(3000)
             return
-        for widget in (self.controls, self.close_button):
+        for widget in (self.controls, self.close_button, self.progress):
             widget.hide()
 
     def _place_controls(self):
         hint = self.controls.sizeHint()
         self.controls.setGeometry(max(0, (self.width() - hint.width()) // 2),
                                   max(0, self.height() - hint.height() - 8), hint.width(), hint.height())
+        self.progress.setGeometry(16, max(0, self.controls.y() - 24), max(1, self.width() - 32), 20)
         self.close_button.move(self.width() - 36, 8)
 
     def resizeEvent(self, event):
@@ -5668,7 +5684,8 @@ class MainWindow(QMainWindow):
         self._refresh_files()
 
     def _play_path(self, path, start=False):
-        self.slider.set_buffered([], 0)
+        for slider in (self.slider, self._pip_window.progress):
+            slider.set_buffered([], 0)
         if path != self._current_path and (self._tracks_open or self._quality_open):
             self._close_popups(None)
         self._current_path = path
@@ -5840,13 +5857,15 @@ class MainWindow(QMainWindow):
         else:
             self.showFullScreen()
 
-    def _seek_released(self):
+    def _seek_released(self, slider=None):
         if self._duration <= 0:
             return
-        at = self._duration * (self.slider.value() / float(SEEK_STEPS))
+        slider = self.slider if slider is None else slider
+        at = self._duration * (slider.value() / float(SEEK_STEPS))
         self._pos_at = at
         self._pos_when = time.monotonic()
         self._cmd("seek", str(at), "absolute")
+        self._move_knob()
 
     def _connection_changed(self, values):
         old = self.app.store.data["connection"]
@@ -5874,6 +5893,8 @@ class MainWindow(QMainWindow):
             widget.setText(shown)
 
     def _retranslate(self):
+        self._pip_window.progress.setToolTip(tr(164))
+        self._pip_window.progress.setAccessibleName(tr(164))
         self.pip_return.setToolTip(tr(158))
         self.pip_return.setAccessibleName(tr(158))
         for button, phrase in ((self._pip_window.back, 162), (self._pip_window.forward, 163)):
@@ -6268,7 +6289,7 @@ class MainWindow(QMainWindow):
             position = float(position or 0)
         except (TypeError, ValueError):
             position = 0
-        if not self.slider.isSliderDown():
+        if not any(slider.isSliderDown() for slider in (self.slider, self._pip_window.progress)):
             self._pos_at = position
             self._pos_when = time.monotonic()
         self.total.setText(_clock(self._duration))
@@ -6286,7 +6307,8 @@ class MainWindow(QMainWindow):
         ranges = cache.get("seekable-ranges", []) if isinstance(cache, dict) else []
         if isinstance(cache, dict) and not any(stream.get("type") == "video" for stream in cache.get("ts-per-stream", [])):
             ranges = []
-        self.slider.set_buffered(ranges, self._duration)
+        for slider in (self.slider, self._pip_window.progress):
+            slider.set_buffered(ranges, self._duration)
         if self._arm_play and self._duration > 0:
             same = current == self._arm_play or Path(str(current)).name == Path(self._arm_play).name
             if same and current:
@@ -6364,11 +6386,13 @@ class MainWindow(QMainWindow):
         if key == getattr(self, "_chapter_key", None):
             return
         self._chapter_key = key
-        self.slider.set_chapters(times, self._duration)
+        for slider in (self.slider, self._pip_window.progress):
+            slider.set_chapters(times, self._duration)
 
     def _shown_position(self):
-        if self.slider.isSliderDown() and self._duration > 0:
-            return self._duration * (self.slider.value() / float(SEEK_STEPS))
+        for slider in (self.slider, self._pip_window.progress):
+            if slider.isSliderDown() and self._duration > 0:
+                return self._duration * (slider.value() / float(SEEK_STEPS))
         extra = 0.0
         if not self._paused:
             extra = (time.monotonic() - self._pos_when) * self._speed
@@ -6379,11 +6403,12 @@ class MainWindow(QMainWindow):
 
     def _move_knob(self):
         shown = self._shown_position()
-        if not self.slider.isSliderDown() and self._duration > 0:
-            value = int(round(shown / self._duration * SEEK_STEPS))
-            value = max(0, min(SEEK_STEPS, value))
-            if value != self.slider.value():
-                self.slider.setValue(value)
+        self._pip_window.progress.setEnabled(self._duration > 0)
+        value = int(round(shown / self._duration * SEEK_STEPS)) if self._duration > 0 else 0
+        value = max(0, min(SEEK_STEPS, value))
+        for slider in (self.slider, self._pip_window.progress):
+            if not slider.isSliderDown() and value != slider.value():
+                slider.setValue(value)
         self.elapsed.setText(_clock(shown))
 
     def _refresh_osd(self):

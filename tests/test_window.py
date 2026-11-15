@@ -1044,6 +1044,7 @@ class WindowTests(unittest.TestCase):
                                 {"start": "bad", "end": 70}, {"start": 80, "end": float("nan")}]}})
         window._refresh_transport()
         self.assertEqual(window.slider._buffered, [(0, .5), (.75, 1)])
+        self.assertEqual(window._pip_window.progress._buffered, window.slider._buffered)
         rendered = window.slider.grab().toImage()
         self.assertTrue(any(rendered.pixelColor(x, rendered.height() // 2).name() == "#808080"
                             for x in range(rendered.width())))
@@ -1100,7 +1101,8 @@ class WindowTests(unittest.TestCase):
         self.assertIs(player.window(), pip)
         self.assertIsNone(player.notes)
         with patch.object(pip.controls, "underMouse", return_value=False), \
-                patch.object(pip.close_button, "underMouse", return_value=False):
+                patch.object(pip.close_button, "underMouse", return_value=False), \
+                patch.object(pip.progress, "underMouse", return_value=False):
             pip.hide_controls()
         self.assertTrue(pip.controls.isHidden())
         move = QMouseEvent(QEvent.Type.MouseMove, QPointF(100, 100), QPointF(pip.mapToGlobal(QPoint(100, 100))),
@@ -1140,6 +1142,50 @@ class WindowTests(unittest.TestCase):
         with patch("yucha.window.QApplication.focusWidget", return_value=window.bar_message):
             QTest.keyClick(window.bar_message, Qt.Key.Key_P)
         self.assertFalse(window._pip)
+
+    def test_pip_progress_tracks_playback_and_seeks_once_without_interrupting_pause(self):
+        window = self.window
+        window._enter_pip()
+        self.qt.processEvents()
+        pip = window._pip_window
+        window.ctl.properties.update({"pause": True, "duration": 120, "time-pos": 30})
+        window._refresh_transport()
+        self.assertTrue(pip.progress.isEnabled())
+        self.assertEqual(pip.progress.value(), pip.progress.maximum() // 4)
+        pip.progress.setSliderDown(True)
+        pip.progress.setValue(pip.progress.maximum() * 3 // 4)
+        window._refresh_transport()
+        self.assertEqual(window.slider.value(), pip.progress.value())
+        self.assertEqual(window.elapsed.text(), "1:30")
+        pip.hide_controls()
+        self.assertTrue(pip.progress.isVisible())
+        pip.progress.setSliderDown(False)
+        self.assertTrue(window.ctl.properties["pause"])
+        for slider in (pip.progress, window.slider):
+            window.ctl.calls.clear()
+            QTest.mouseClick(slider, Qt.MouseButton.LeftButton,
+                             pos=QPoint(slider.width() // 2, slider.height() // 2))
+            seeks = [call for call in window.ctl.calls if call[0] == "seek"]
+            self.assertEqual(len(seeks), 1)
+            self.assertEqual(seeks[0][2], "absolute")
+            self.assertAlmostEqual(float(seeks[0][1]), 60, delta=1)
+            self.assertEqual(pip.progress.value(), window.slider.value())
+            self.assertTrue(window.ctl.properties["pause"])
+        pip.resize(320, 180)
+        self.qt.processEvents()
+        self.assertGreaterEqual(pip.progress.x(), 6)
+        self.assertLess(pip.progress.geometry().bottom(), pip.controls.y())
+        window.ctl.properties["duration"] = 0
+        window._refresh_transport()
+        self.assertFalse(pip.progress.isEnabled())
+        self.assertEqual(pip.progress.value(), 0)
+        window.ctl.properties["duration"] = 120
+        window._refresh_transport()
+        pip.progress.setSliderDown(True)
+        window.ctl.calls.clear()
+        window._leave_pip()
+        self.assertFalse(pip.progress.isSliderDown())
+        self.assertFalse(any(call[0] == "seek" for call in window.ctl.calls))
 
     def test_pip_buttons_seek_ten_seconds_and_right_click_opens_kde_menu(self):
         window = self.window
