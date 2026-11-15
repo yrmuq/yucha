@@ -1,6 +1,11 @@
 name: Package checks
 on:
   workflow_dispatch:
+    inputs:
+      refresh_stable:
+        description: Replace current stable assets after automation-only updates
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -9,3 +14,41 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/build
+      - uses: actions/upload-artifact@v7
+        with:
+          name: desktop-${{ github.sha }}-${{ github.run_id }}
+          path: dist/*
+          if-no-files-found: error
+  refresh:
+    if: inputs.refresh_stable && github.ref == 'refs/heads/main'
+    needs: appimage
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    concurrency:
+      group: distribution-upload
+      queue: max
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v8
+        with:
+          name: desktop-${{ github.sha }}-${{ github.run_id }}
+          path: dist
+      - name: Refresh existing stable assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 packaging/release/rebuild.py
+      - name: Preserve dependency branch state
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          bash packaging/release/sync-dev.sh
+          bash packaging/release/sync-deps.sh
+      - name: Refresh the dev draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run dev.yml --ref dev
