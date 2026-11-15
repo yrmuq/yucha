@@ -60,6 +60,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QScrollBar,
     QSizePolicy,
+    QSizeGrip,
     QSlider,
     QStyle,
     QStyleOptionSlider,
@@ -2760,12 +2761,14 @@ class SettingsDialog(QDialog):
         top.addLayout(details, 1)
         about_layout.addLayout(top)
         about_layout.addStretch(1)
-        parts = QWidget()
+        about_layout.addSpacing(24)
+        parts = QFrame()
+        parts.setObjectName("partstable")
+        parts.setStyleSheet("QFrame#partstable { border: 1px solid " + look["border"] + "; }")
         parts.setMinimumWidth(520)
         grid = QGridLayout(parts)
         grid.setContentsMargins(0, 0, 0, 0)
-        grid.setHorizontalSpacing(8)
-        grid.setVerticalSpacing(8)
+        grid.setSpacing(0)
         for column, title in enumerate((tr(147), tr(148), tr(149))):
             label = QLabel(title)
             label.setObjectName("heading")
@@ -2785,6 +2788,14 @@ class SettingsDialog(QDialog):
             label = QLabel(tr(detail))
             label.setWordWrap(True)
             grid.addWidget(label, row, 2, Qt.AlignmentFlag.AlignTop)
+        for index in range(grid.count()):
+            item = grid.itemAt(index)
+            row, column, _rows, _columns = grid.getItemPosition(index)
+            label = item.widget()
+            grid.setAlignment(label, Qt.AlignmentFlag(0))
+            label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+            label.setStyleSheet("padding: 6px; border: none; border-right: {}px solid {}; border-bottom: {}px solid {};".format(
+                int(column < 2), look["border"], int(row < 8), look["border"]))
         grid.setColumnStretch(2, 1)
         parts_host = QWidget()
         parts_layout = QVBoxLayout(parts_host)
@@ -3857,6 +3868,104 @@ class SettingsDialog(QDialog):
         self.vol_up.setEnabled(self.volume_max < VOLUME_MAX)
 
 
+class PipWindow(QWidget):
+    def __init__(self, owner):
+        # shortcut: native Wayland stacking follows the compositor until Qt exposes a PiP protocol.
+        super().__init__(None, Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint |
+                         Qt.WindowType.WindowStaysOnTopHint)
+        self.owner = owner
+        self.setObjectName("pipwindow")
+        self.setWindowTitle("yucha — " + tr(159))
+        self.setMinimumSize(320, 180)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.controls = QWidget(self)
+        self.controls.setObjectName("bar")
+        owner._overlay(self.controls)
+        buttons = QHBoxLayout(self.controls)
+        buttons.setContentsMargins(6, 6, 6, 6)
+        self.play = IconButton("play")
+        self.play.clicked.connect(owner._toggle_pause)
+        self.return_button = QPushButton(tr(158))
+        self.return_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.return_button.clicked.connect(owner._leave_pip)
+        buttons.addWidget(self.play)
+        buttons.addWidget(self.return_button)
+        self.close_button = QPushButton("×", self)
+        self.close_button.setFixedSize(28, 28)
+        self.close_button.setStyleSheet("padding: 0;")
+        self.close_button.setToolTip(tr(140))
+        self.close_button.setAccessibleName(tr(140))
+        self.close_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.close_button.clicked.connect(self.close)
+        self.grip = QSizeGrip(self)
+        self.grip.setFixedSize(14, 14)
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.setInterval(1500)
+        self._hide_timer.timeout.connect(self.hide_controls)
+        self._drag_offset = None
+        owner.video.setMouseTracking(True)
+        owner.video.installEventFilter(self)
+        self.setMouseTracking(True)
+
+    def reveal_controls(self):
+        self._place_controls()
+        for widget in (self.controls, self.close_button, self.grip):
+            widget.show()
+            widget.raise_()
+        self._hide_timer.start(1500)
+
+    def hide_controls(self):
+        if self.controls.underMouse() or self.close_button.underMouse() or self.grip.underMouse():
+            self._hide_timer.start(1500)
+            return
+        for widget in (self.controls, self.close_button, self.grip):
+            widget.hide()
+
+    def _place_controls(self):
+        hint = self.controls.sizeHint()
+        self.controls.setGeometry(max(0, (self.width() - hint.width()) // 2),
+                                  max(0, self.height() - hint.height() - 8), hint.width(), hint.height())
+        self.close_button.move(self.width() - 36, 8)
+        self.grip.move(self.width() - 14, self.height() - 14)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "controls"):
+            self._place_controls()
+
+    def enterEvent(self, event):
+        self.reveal_controls()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hide_timer.start(100)
+        super().leaveEvent(event)
+
+    def eventFilter(self, watched, event):
+        if watched is not self.owner.video or watched.window() is not self:
+            return super().eventFilter(watched, event)
+        kind = event.type()
+        if kind == QEvent.Type.MouseMove:
+            self.reveal_controls()
+            if self._drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
+                self.move(event.globalPosition().toPoint() - self._drag_offset)
+                return True
+        elif kind == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+            watched.setFocus(Qt.FocusReason.MouseFocusReason)
+            if not self.windowHandle().startSystemMove():
+                self._drag_offset = event.globalPosition().toPoint() - self.pos()
+            return True
+        elif kind == QEvent.Type.MouseButtonRelease:
+            self._drag_offset = None
+        return super().eventFilter(watched, event)
+
+    def closeEvent(self, event):
+        event.ignore()
+        self.owner._leave_pip()
+
+
 class MainWindow(QMainWindow):
     release_ready = Signal()
 
@@ -3980,19 +4089,26 @@ class MainWindow(QMainWindow):
         self.board.repaint_frame = self.video.redraw
         self.video.notes = self.board.paint_on
         col.addWidget(self.video, 1)
-        self.pip_controls = QWidget(column)
-        self.pip_controls.setObjectName("bar")
-        self._overlay(self.pip_controls)
-        pip_layout = QHBoxLayout(self.pip_controls)
-        pip_layout.setContentsMargins(6, 6, 6, 6)
-        self.pip_play = IconButton("play")
-        self.pip_play.clicked.connect(self._toggle_pause)
-        self.pip_return = QPushButton(tr(158))
-        self.pip_return.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.pip_return.clicked.connect(self._leave_pip)
-        pip_layout.addWidget(self.pip_play)
-        pip_layout.addWidget(self.pip_return)
-        self.pip_controls.hide()
+        self._pip_window = PipWindow(self)
+        self.destroyed.connect(self._pip_window.deleteLater)
+        self.pip_controls = self._pip_window.controls
+        self.pip_play = self._pip_window.play
+        self.pip_return = self._pip_window.return_button
+        self._pip_placeholder = QWidget()
+        placeholder = QVBoxLayout(self._pip_placeholder)
+        placeholder.addStretch()
+        note = QLabel()
+        self._mark(note, 160)
+        note.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        note.setWordWrap(True)
+        placeholder.addWidget(note)
+        restore = QPushButton()
+        self._mark(restore, 158)
+        restore.clicked.connect(self._leave_pip)
+        placeholder.addWidget(restore, 0, Qt.AlignmentFlag.AlignHCenter)
+        placeholder.addStretch()
+        col.addWidget(self._pip_placeholder, 1)
+        self._pip_placeholder.hide()
 
         self.bar = QWidget(column)
         self.bar.setObjectName("bar")
@@ -4263,11 +4379,13 @@ class MainWindow(QMainWindow):
         return popup
 
     def eventFilter(self, watched, event):
-        if not isinstance(watched, QWidget) or watched.window() is not self:
+        if not isinstance(watched, QWidget) or watched.window() not in (self, getattr(self, "_pip_window", None)):
             return super().eventFilter(watched, event)
         kind = event.type()
         if kind == QEvent.Type.KeyPress and self._player_key(event):
             return True
+        if watched.window() is self._pip_window:
+            return super().eventFilter(watched, event)
         if self._grip is not None and (
                 kind == QEvent.Type.UngrabMouse and watched is self.panel or
                 kind == QEvent.Type.WindowDeactivate and watched is self):
@@ -4306,18 +4424,6 @@ class MainWindow(QMainWindow):
             return
         width = self.stage.width()
         height = self.stage.height()
-        if self._pip:
-            for widget in (self.bar, self.panel, self.chat_line, self.volume_box,
-                           self.volume_pop, self.tracks_pop, self.quality_pop,
-                           self.user_scroll, self.file_scroll, self.chat_scroll):
-                widget.hide()
-            hint = self.pip_controls.sizeHint()
-            self.pip_controls.setGeometry(max(0, (width - hint.width()) // 2),
-                                          max(0, height - hint.height() - 6), hint.width(), hint.height())
-            self.pip_controls.show()
-            self.pip_controls.raise_()
-            return
-        self.pip_controls.hide()
         inset = self._bar_height()
         gap = FLOAT_GAP if self._is_modern() else 0
         bar_rect = self._bar_rect()
@@ -4435,7 +4541,7 @@ class MainWindow(QMainWindow):
         return False
 
     def _dismiss_panel(self, watched, event):
-        if self._pip or not self._panel_open:
+        if not self._panel_open:
             return
         if event.button() != Qt.MouseButton.LeftButton:
             return
@@ -4751,6 +4857,8 @@ class MainWindow(QMainWindow):
         if ink:
             self.setStyleSheet(self.styleSheet() + " QLabel {{ color: {}; }}".format(ink))
         self.setFont(font)
+        self._pip_window.setFont(font)
+        self._pip_window.setStyleSheet(self.styleSheet() + " QWidget#pipwindow { background: black; }")
         self._apply_subtitles()
         self._refresh_osd()
         pal = _palette(theme, appearance.get("accentColor"))
@@ -4958,12 +5066,12 @@ class MainWindow(QMainWindow):
     def _slide_panel(self, animate):
         end = self._panel_rect()
         self.panel.setGeometry(end)
-        self.panel.setVisible(self._panel_open and not self._pip)
+        self.panel.setVisible(self._panel_open)
 
     def _slide_bar(self, animate):
         end = self._bar_rect()
         self.bar.setGeometry(end)
-        self.bar.setVisible(self._bar_open and not self._pip)
+        self.bar.setVisible(self._bar_open)
 
     def _panel_span(self, width):
         room = max(PANEL_MIN, width - 80)
@@ -5105,8 +5213,6 @@ class MainWindow(QMainWindow):
         self._open_chat_field()
 
     def _enter_chat(self):
-        if self._pip:
-            self._leave_pip()
         if not (self._chat_open and self.chat_line.isVisible()):
             self._open_chat_field()
             return
@@ -5655,6 +5761,10 @@ class MainWindow(QMainWindow):
             widget.setText(shown)
 
     def _retranslate(self):
+        self.pip_return.setText(tr(158))
+        self._pip_window.setWindowTitle("yucha — " + tr(159))
+        self._pip_window.close_button.setToolTip(tr(140))
+        self._pip_window.close_button.setAccessibleName(tr(140))
         self.panel_home.setToolTip(tr(114))
         self.panel_home.setAccessibleName(tr(114))
         self._translate_media_buttons()
@@ -5775,8 +5885,6 @@ class MainWindow(QMainWindow):
         self._refresh_osd()
 
     def _follow_cursor(self):
-        if self._pip:
-            return
         if self._panel_open or self._chat_open:
             self._set_bar(True)
             return
@@ -6222,10 +6330,11 @@ class MainWindow(QMainWindow):
 
     def changeEvent(self, event):
         super().changeEvent(event)
-        if (event.type() == QEvent.Type.WindowStateChange and self.isMinimized()
-                and not self._pip and not self._pip_pending and self._current_path):
-            self._pip_pending = True
-            QTimer.singleShot(0, self._minimized_pip)
+        if event.type() == QEvent.Type.WindowStateChange and self.isMinimized():
+            self._pip_restore_state = event.oldState() & ~Qt.WindowState.WindowMinimized
+            if not self._pip and not self._pip_pending and self._current_path:
+                self._pip_pending = True
+                QTimer.singleShot(0, self._minimized_pip)
 
     def _minimized_pip(self):
         self._pip_pending = False
@@ -6235,43 +6344,54 @@ class MainWindow(QMainWindow):
     def _enter_pip(self):
         if self._pip or not self._current_path:
             return
-        self._pip_saved = (self.saveGeometry(), self.windowFlags(),
-                           self.windowState() & ~Qt.WindowState.WindowMinimized)
+        if not self.isMinimized():
+            self._pip_restore_state = self.windowState()
         self._pip = True
         self._close_popups(None)
-        self.hide()
-        self.setWindowState(Qt.WindowState.WindowNoState)
-        self.setMinimumSize(320, 180)
-        # shortcut: native Wayland stacking follows the compositor until Qt exposes a PiP protocol.
-        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
-        self.setWindowTitle("yucha — " + tr(159))
-        self.resize(480, 270)
+        self.video.hide()
+        self.stage.layout().removeWidget(self.video)
+        self.video.setParent(self._pip_window)
+        self._pip_window.layout().addWidget(self.video)
+        self.video.notes = None
+        self._pip_placeholder.show()
         area = self.screen().availableGeometry()
-        self.move(area.right() - self.width() - 24, area.bottom() - self.height() - 24)
-        self.show()
-        self._place_overlays()
+        self._pip_window.resize(480, 270)
+        self._pip_window.move(area.right() - 480 - 24, area.bottom() - 270 - 24)
+        self._pip_window.show()
+        self.video.show()
+        self.video.redraw()
         self.video.setFocus()
+        self._pip_window.reveal_controls()
 
     def _leave_pip(self):
         if not self._pip:
             return
-        geometry, flags, state = self._pip_saved
-        self.hide()
-        self.setWindowFlags(flags)
-        self.setWindowTitle("yucha")
-        self.setMinimumSize(860, 520)
-        self.restoreGeometry(geometry)
-        self.setWindowState(state)
-        self.show()
         self._pip = False
+        self.video.hide()
+        self._pip_window.layout().removeWidget(self.video)
+        self.video.setParent(self.stage)
+        self.stage.layout().insertWidget(0, self.video, 1)
+        self.video.notes = self.board.paint_on
+        self._pip_window.hide()
+        self._pip_placeholder.hide()
+        self.video.show()
+        self.stage.layout().activate()
+        if self.isMinimized():
+            self.setWindowState(self._pip_restore_state)
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        self._last_move = time.monotonic()
+        self._set_bar(True)
         self._place_overlays()
+        self.video.redraw()
+        self.centralWidget().update()
+        self.bar.update()
+        self.panel.update()
         self.video.setFocus()
 
     def closeEvent(self, event):
-        if self._pip:
-            event.ignore()
-            self._leave_pip()
-            return
+        self._pip_window.hide()
         self._ui_timer.stop()
         self._knob_timer.stop()
         self._awake.close()

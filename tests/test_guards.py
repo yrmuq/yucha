@@ -55,7 +55,7 @@ class Guards(unittest.TestCase):
             self.assertEqual(original.strip(), shown.strip())
             self.assertNotIn(number.strip(), seen)
             seen.add(number.strip())
-        self.assertEqual(len(seen), 159)
+        self.assertEqual(len(seen), 160)
 
     def test_system_locale_and_format_fields_preserve_translation_safety(self):
         with patch.dict(os.environ, {"LANGUAGE": "de:ru-RU", "LC_ALL": "en_US.UTF-8"}):

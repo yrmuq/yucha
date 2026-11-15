@@ -31,7 +31,7 @@ yucha is a Linux media player for synchronized viewing of local files and YouTub
 - YouTube quality selection from `480p`, audio-language selection, and subtitles in the system language and English.
 - Browser-session import for YouTube; imported cookies are stored locally and can be removed.
 - Buffered YouTube ranges displayed in gray on the seek bar.
-- Picture-in-Picture with the same playback session, activated by a shortcut or minimizing the player.
+- Frameless Picture-in-Picture in a separate window with the same playback session, activated by a shortcut or minimizing the player.
 - Persistent appearance settings, system/light/dark themes, and system or manual interface language selection.
 - Background notifications and prevention of automatic sleep during playback.
 
@@ -48,7 +48,7 @@ yucha is a Linux media player for synchronized viewing of local files and YouTub
 | Playlist link icon | Add a YouTube URL. Each room participant needs the same video. |
 | `Space` | In a connected room, mark yourself ready first; once ready, toggle playback. Outside a room, toggle playback. |
 | `Right Click` on video / playback button | Toggle playback. |
-| Physical `P` key / minimize with media open | Enter Picture-in-Picture. Press `P`, double-click the video, use `Return to player`, or close the small window to return. Playback and the room connection continue. |
+| Physical `P` key / minimize with media open | Move the video into a separate frameless window. Drag the video to move it; use the corner grip to resize it. Controls appear on hover. Press `P`, double-click the video, use `Return to player`, or close the small window to return. Playback and the room connection continue. |
 | `Double Click` | Toggle fullscreen outside Picture-in-Picture. |
 | `Left` / `Right` | Seek backward / forward by 5 seconds. |
 | `Up` / `Down` / wheel over video | Adjust volume. |

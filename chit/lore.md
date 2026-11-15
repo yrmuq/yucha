@@ -11,7 +11,7 @@
 - Preserve room credentials when resetting general settings; both Reset buttons save immediately and Cancel does not undo them.
 - Save only explicit Dev overrides; opening Dev must not seed its defaults, and resetting Dev clears its overrides and advanced synchronization switches while preserving ordinary appearance settings.
 - Preserve manual side-panel placement until its reset arrow is used, dragging is disabled, or the app restarts; movement must respect the bottom controls.
-- Reuse the active player and room connection in Picture-in-Picture; returning must preserve playback position and the previous window state.
+- Detach the same video widget into a separate frameless Picture-in-Picture window; keep the main window usable, preserve playback and room connection, and show its controls immediately on return.
 - Keep scrollbars outside their content using the chat's shared EdgeScroll style, including newly created scroll areas.
 - Do not publish Flatpak packages anywhere, including dev drafts, until the user explicitly requests it.
 

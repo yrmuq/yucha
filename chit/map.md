@@ -3,7 +3,7 @@
 Read only the row the task needs. Do not read `third_party/` or `packaging/appimage/build/` unless the user asked to update that tree.
 
 ## Own code
-- `yucha/app.py` — starts Qt, builds the client, calls `launch_player`.
+- `yucha/app.py` — starts Qt with shared OpenGL contexts for detached video, builds the client, calls `launch_player`.
 - `yucha/window.py` — playlist, chat, seek, volume, settings, Picture-in-Picture; `EdgeScroll` and `ScrollEdges` standardize external scrollbars. Large. Search a class. Do not read the whole file.
 - `yucha/engine.py` — `Picture` draws the video through `libmpv`. This is the player.
 - `yucha/youtube.py` — canonical YouTube URLs, track filtering, browser cookie import and private local storage, `yt-dlp` playback options.

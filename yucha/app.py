@@ -175,6 +175,8 @@ def main():
     # Qt may contact the portal during construction; register the desktop ID first.
     QApplication.setApplicationName("yucha")
     QGuiApplication.setDesktopFileName(os.environ.get("FLATPAK_ID") or "yucha")
+    # Keep libmpv's rendering context when moving the video between windows.
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     qt = QApplication([])
     icon = Path(__file__).resolve().parent / "icon.png"
     if icon.is_file():
